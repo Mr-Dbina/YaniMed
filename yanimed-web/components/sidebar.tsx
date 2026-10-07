@@ -29,14 +29,23 @@ export function Sidebar({
   const { theme, setTheme } = useTheme();
   const { isCollapsed, toggle } = useSidebarStore();
   const [mounted, setMounted] = useState(false);
+  const [isPreview, setIsPreview] = useState(false);
 
   useEffect(() => setMounted(true), []);
 
+  useEffect(() => {
+    if (!isCollapsed) setIsPreview(false);
+  }, [isCollapsed]);
+
   const activeTheme = mounted ? theme : "light";
+  const isVisuallyCollapsed = isCollapsed && !isPreview;
 
   return (
     <>
-      <aside className={`sidebar${isCollapsed ? " sidebar--collapsed" : ""}`}>
+      <aside
+        className={`sidebar${isVisuallyCollapsed ? " sidebar--collapsed" : ""}`}
+        onMouseLeave={() => setIsPreview(false)}
+      >
         <div className="sidebar__inner">
           <div className="sidebar__header">
             <span className="sidebar__brand">YaniMed</span>
@@ -141,11 +150,12 @@ export function Sidebar({
         </div>
       </aside>
 
-      {isCollapsed && (
+      {isVisuallyCollapsed && (
         <button
           type="button"
           aria-label="Expand sidebar"
           onClick={toggle}
+          onMouseEnter={() => setIsPreview(true)}
           className="sidebar-expand"
         >
           <img src="/images/layout.png" alt="Expand sidebar" width={18} height={18} className="icon-mono" />

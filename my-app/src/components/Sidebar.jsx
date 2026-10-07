@@ -24,14 +24,22 @@ export function Sidebar({
   // default ("light") for the first render so the active pill matches the
   // pre-hydration markup instead of flashing/desyncing.
   const [mounted, setMounted] = useState(false);
+  const [isPreview, setIsPreview] = useState(false);
   useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    if (!isCollapsed) setIsPreview(false);
+  }, [isCollapsed]);
   const activeTheme = mounted ? theme : "light";
+  const isVisuallyCollapsed = isCollapsed && !isPreview;
   // No next/navigation in this Create React App project; use the browser location.
   const pathname = window.location.pathname;
 
   return (
     <>
-    <aside className={`sidebar${isCollapsed ? " sidebar--collapsed" : ""}`}>
+    <aside
+      className={`sidebar${isVisuallyCollapsed ? " sidebar--collapsed" : ""}`}
+      onMouseLeave={() => setIsPreview(false)}
+    >
         <div className="sidebar__inner">
           <div className="sidebar__header">
             <span className="sidebar__brand">YaniMed</span>
@@ -122,8 +130,14 @@ export function Sidebar({
         </div>
     </aside>
 
-      {isCollapsed && (
-        <button type="button" aria-label="Expand sidebar" onClick={toggle} className="sidebar-expand">
+      {isVisuallyCollapsed && (
+        <button
+          type="button"
+          aria-label="Expand sidebar"
+          onClick={toggle}
+          onMouseEnter={() => setIsPreview(true)}
+          className="sidebar-expand"
+        >
           <img src="/images/layout.png" alt="Expand sidebar" width={18} height={18} className="icon-mono" />
         </button>
       )}
