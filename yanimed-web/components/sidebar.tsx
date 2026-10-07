@@ -29,7 +29,6 @@ export function Sidebar({
   const { theme, setTheme } = useTheme();
   const isCollapsed = useSidebarStore((state) => state.isCollapsed);
   const isPreview = useSidebarStore((state) => state.isPreview);
-  const toggle = useSidebarStore((state) => state.toggle);
   const setPreview = useSidebarStore((state) => state.setPreview);
   const [mounted, setMounted] = useState(false);
 
@@ -52,14 +51,6 @@ export function Sidebar({
             </button>
             <button type="button" aria-label="Notifications" className="icon-button">
               <img src="/images/notification.png" alt="Notifications" width={18} height={18} className="icon-mono" />
-            </button>
-            <button
-              type="button"
-              aria-label="Collapse sidebar"
-              onClick={toggle}
-              className="icon-button"
-            >
-              <img src="/images/layout.png" alt="Collapse sidebar" width={18} height={18} className="icon-mono" />
             </button>
           </div>
         </div>
