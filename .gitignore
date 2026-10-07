@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Create React App
+build/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs / OS
+*.log
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo

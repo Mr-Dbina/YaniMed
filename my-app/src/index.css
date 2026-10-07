@@ -1,0 +1,65 @@
+/*
+ * YaniMed semantic color tokens.
+ *
+ * Values are raw HSL triplets (no hsl() wrapper) so they can be composed as
+ * hsl(var(--token)) / hsl(var(--token) / <alpha>) anywhere in the app.
+ *
+ * Adding a new semantic color (e.g. --accent, --success, --destructive):
+ *   1. add the raw triplet to :root below,
+ *   2. add its dark counterpart to .dark,
+ *   3. consume it via hsl(var(--accent)).
+ * (There is no tailwind.config.ts in this Create React App project, so tokens are
+ * used directly from CSS rather than mapped into Tailwind utilities.)
+ */
+
+:root {
+  /* Light theme: warm cream surfaces with near-black warm ink. */
+  --background: 40 33% 97%;
+  --foreground: 24 10% 10%;
+  --card: 40 40% 99%;
+  --card-foreground: 24 10% 10%;
+  --muted: 40 22% 92%;
+  --muted-foreground: 30 8% 42%;
+  --border: 36 16% 87%;
+}
+
+.dark {
+  /* Dark theme: same warm hue family as light, inverted lightness. */
+  --background: 24 10% 10%;
+  --foreground: 40 33% 96%;
+  --card: 24 10% 13%;
+  --card-foreground: 40 33% 96%;
+  --muted: 24 8% 18%;
+  --muted-foreground: 35 12% 66%;
+  --border: 24 8% 22%;
+}
+
+*,
+::before,
+::after {
+  border-color: hsl(var(--border));
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}

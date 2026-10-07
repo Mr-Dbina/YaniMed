@@ -1,0 +1,46 @@
+.pdf-dropzone {
+  display: flex;
+  min-height: 230px;
+  width: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1.5px dashed hsl(var(--border));
+  border-radius: 12px;
+  background: transparent;
+  padding: 24px;
+  color: hsl(var(--foreground));
+  text-align: center;
+  cursor: pointer;
+}
+
+.pdf-dropzone:hover {
+  background: hsl(var(--muted) / 0.4);
+}
+
+.pdf-dropzone--active {
+  border-color: hsl(var(--foreground) / 0.4);
+  background: hsl(var(--muted) / 0.5);
+}
+
+.pdf-dropzone__input {
+  display: none;
+}
+
+.pdf-dropzone__icon {
+  display: inline-flex;
+  margin-bottom: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+.pdf-dropzone__primary {
+  font-size: 16px;
+  word-break: break-word;
+}
+
+.pdf-dropzone__secondary {
+  font-size: 15px;
+  color: hsl(var(--muted-foreground));
+}

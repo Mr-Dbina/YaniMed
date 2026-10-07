@@ -1,0 +1,251 @@
+.sidebar {
+  --sidebar-bg: hsl(var(--background));
+  --sidebar-fg: hsl(var(--foreground));
+  --sidebar-muted: hsl(var(--muted));
+  --sidebar-muted-fg: hsl(var(--muted-foreground));
+  --sidebar-border: hsl(var(--border));
+
+  display: flex;
+  height: 100vh;
+  flex-shrink: 0;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  border-right: 1px solid hsl(var(--border) / 0.5);
+  background: var(--sidebar-bg);
+  box-sizing: border-box;
+  padding: 20px 16px;
+  transition: all 200ms ease-in-out;
+}
+
+.sidebar:not(.sidebar--collapsed) {
+  width: 240px;
+  opacity: 1;
+}
+
+.sidebar--collapsed {
+  width: 0;
+  border-right: 0;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+}
+
+.sidebar__inner {
+  width: 208px;
+}
+
+.sidebar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.sidebar__brand {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+  color: var(--sidebar-fg);
+}
+
+.sidebar__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--sidebar-muted-fg);
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: inherit;
+}
+
+.icon-button:hover {
+  background: var(--sidebar-muted);
+}
+
+.sidebar__new {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+  color: var(--sidebar-fg);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sidebar__new:hover {
+  background: var(--sidebar-muted);
+}
+
+.sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar__link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  font-size: 15px;
+  color: var(--sidebar-muted-fg);
+  text-decoration: none;
+}
+
+.sidebar__link:hover {
+  background: var(--sidebar-muted);
+}
+
+.sidebar__link--active {
+  background: var(--sidebar-muted);
+  color: var(--sidebar-fg);
+}
+
+.sidebar__subjects {
+  margin-top: 24px;
+}
+
+.sidebar__subjects-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  margin-bottom: 4px;
+}
+
+.sidebar__subjects-label {
+  font-size: 14px;
+  color: var(--sidebar-muted-fg);
+}
+
+.sidebar__subjects-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 2px;
+  color: var(--sidebar-muted-fg);
+  cursor: pointer;
+}
+
+.sidebar__subjects-add:hover {
+  background: var(--sidebar-muted);
+  color: var(--sidebar-fg);
+}
+
+.sidebar__subject {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 15px;
+  text-align: left;
+  color: var(--sidebar-muted-fg);
+  cursor: pointer;
+}
+
+.sidebar__subject:hover {
+  background: var(--sidebar-muted);
+}
+
+.sidebar__subject--active {
+  color: var(--sidebar-fg);
+}
+
+.sidebar__subject-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__footer {
+  display: flex;
+  width: 208px;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid hsl(var(--border) / 0.5);
+  padding-top: 16px;
+  font-size: 15px;
+  color: var(--sidebar-muted-fg);
+}
+
+.sidebar__footer-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  border-radius: 9999px;
+  background: var(--sidebar-muted);
+  padding: 2px;
+}
+
+.theme-toggle__option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  padding: 6px;
+  border-radius: 9999px;
+  cursor: pointer;
+}
+
+.theme-toggle__option--active {
+  background: var(--sidebar-bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.sidebar-expand {
+  position: fixed;
+  left: 12px;
+  top: 16px;
+  z-index: 50;
+  border: 0;
+  background: transparent;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sidebar-expand:hover {
+  background: var(--sidebar-muted);
+}
+
+/* The icon assets are solid black; invert them so they stay legible on the
+   dark theme's warm-dark surfaces. Applies to every monochrome glyph. */
+html.dark .icon-mono {
+  filter: invert(1);
+}
