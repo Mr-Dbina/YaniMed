@@ -19,26 +19,21 @@ export function Sidebar({
   onAddSubject,
 }) {
   const { theme, setTheme } = useTheme();
-  const { isCollapsed, toggle } = useSidebar();
+  const { isCollapsed, isPreview, toggle, setPreview } = useSidebar();
   // next-themes only knows the persisted theme after mount; fall back to the
   // default ("light") for the first render so the active pill matches the
   // pre-hydration markup instead of flashing/desyncing.
   const [mounted, setMounted] = useState(false);
-  const [isPreview, setIsPreview] = useState(false);
   useEffect(() => setMounted(true), []);
-  useEffect(() => {
-    if (!isCollapsed) setIsPreview(false);
-  }, [isCollapsed]);
   const activeTheme = mounted ? theme : "light";
   const isVisuallyCollapsed = isCollapsed && !isPreview;
   // No next/navigation in this Create React App project; use the browser location.
   const pathname = window.location.pathname;
 
   return (
-    <>
     <aside
       className={`sidebar${isVisuallyCollapsed ? " sidebar--collapsed" : ""}`}
-      onMouseLeave={() => setIsPreview(false)}
+      onMouseLeave={() => setPreview(false)}
     >
         <div className="sidebar__inner">
           <div className="sidebar__header">
@@ -129,18 +124,5 @@ export function Sidebar({
           </div>
         </div>
     </aside>
-
-      {isVisuallyCollapsed && (
-        <button
-          type="button"
-          aria-label="Expand sidebar"
-          onClick={toggle}
-          onMouseEnter={() => setIsPreview(true)}
-          className="sidebar-expand"
-        >
-          <img src="/images/layout.png" alt="Expand sidebar" width={18} height={18} className="icon-mono" />
-        </button>
-      )}
-    </>
   );
 }

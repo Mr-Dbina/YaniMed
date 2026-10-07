@@ -4,10 +4,16 @@ const SidebarContext = createContext(null);
 
 export function SidebarProvider({ children }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const toggle = () => setIsCollapsed((value) => !value);
+  const [isPreview, setIsPreview] = useState(false);
+
+  const toggle = () => {
+    setIsCollapsed((value) => !value);
+    setIsPreview(false);
+  };
+  const setPreview = (value) => setIsPreview(value);
 
   return (
-    <SidebarContext.Provider value={{ isCollapsed, toggle }}>
+    <SidebarContext.Provider value={{ isCollapsed, isPreview, toggle, setPreview }}>
       {children}
     </SidebarContext.Provider>
   );

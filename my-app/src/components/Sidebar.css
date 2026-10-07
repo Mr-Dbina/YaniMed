@@ -228,11 +228,11 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
-.sidebar-expand {
-  position: fixed;
-  left: 12px;
-  top: 16px;
-  z-index: 50;
+.sidebar-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
   border: 0;
   background: transparent;
   padding: 6px;
@@ -240,8 +240,8 @@
   cursor: pointer;
 }
 
-.sidebar-expand:hover {
-  background: var(--sidebar-muted);
+.sidebar-toggle:hover {
+  background: hsl(var(--muted));
 }
 
 /* The icon assets are solid black; invert them so they stay legible on the

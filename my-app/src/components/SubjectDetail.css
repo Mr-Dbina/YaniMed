@@ -24,7 +24,7 @@
   justify-content: space-between;
 }
 
-.subject-detail__topbar .subject-detail__breadcrumb {
+.subject-detail__topbar .subject-detail__crumb-row {
   margin-bottom: 0;
 }
 
@@ -98,11 +98,17 @@
   background: hsl(var(--muted));
 }
 
+.subject-detail__crumb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 28px;
+}
+
 .subject-detail__breadcrumb {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 28px;
   font-size: 16px;
 }
 
