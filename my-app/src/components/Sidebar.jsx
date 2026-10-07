@@ -19,7 +19,7 @@ export function Sidebar({
   onAddSubject,
 }) {
   const { theme, setTheme } = useTheme();
-  const { isCollapsed, isPreview, setPreview } = useSidebar();
+  const { isCollapsed, isPreview, toggle, setPreview } = useSidebar();
   // next-themes only knows the persisted theme after mount; fall back to the
   // default ("light") for the first render so the active pill matches the
   // pre-hydration markup instead of flashing/desyncing.
@@ -33,6 +33,9 @@ export function Sidebar({
   return (
     <aside
       className={`sidebar${isVisuallyCollapsed ? " sidebar--collapsed" : ""}`}
+      onMouseEnter={() => {
+        if (isCollapsed) setPreview(true);
+      }}
       onMouseLeave={() => setPreview(false)}
     >
         <div className="sidebar__inner">
@@ -44,6 +47,9 @@ export function Sidebar({
               </button>
               <button type="button" aria-label="Notifications" className="icon-button">
                 <img src="/images/notification.png" alt="Notifications" width={18} height={18} className="icon-mono" />
+              </button>
+              <button type="button" aria-label="Collapse sidebar" onClick={toggle} className="icon-button">
+                <img src="/images/layout.png" alt="Collapse sidebar" width={18} height={18} className="icon-mono" />
               </button>
             </div>
           </div>

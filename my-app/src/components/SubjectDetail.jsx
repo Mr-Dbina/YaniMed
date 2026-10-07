@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { PdfDropzone } from "./PdfDropzone";
 import { SetInstructionsModal } from "./SetInstructionsModal";
 import { DeleteSubjectModal } from "./DeleteSubjectModal";
-import { SidebarToggle } from "./SidebarToggle";
 import { useSidebar } from "./SidebarContext";
 import "./SubjectDetail.css";
 
@@ -50,17 +49,14 @@ export function SubjectDetail({ subject, onUpdateSubject, onDeleteSubject, onBac
 
   const isChat = Boolean(subject.file);
 
-  const crumbRow = (
-    <div className="subject-detail__crumb-row">
-      <SidebarToggle />
-      <nav className="subject-detail__breadcrumb">
-        <button type="button" className="subject-detail__crumb-link" onClick={onBack}>
-          Subjects
-        </button>
-        <span className="subject-detail__crumb-sep">/</span>
-        <span className="subject-detail__crumb-current">{subject.name}</span>
-      </nav>
-    </div>
+  const breadcrumb = (
+    <nav className="subject-detail__breadcrumb">
+      <button type="button" className="subject-detail__crumb-link" onClick={onBack}>
+        Subjects
+      </button>
+      <span className="subject-detail__crumb-sep">/</span>
+      <span className="subject-detail__crumb-current">{subject.name}</span>
+    </nav>
   );
 
   const menu = (
@@ -130,7 +126,7 @@ export function SubjectDetail({ subject, onUpdateSubject, onDeleteSubject, onBac
       {isChat ? (
         <>
           <div className="subject-detail__topbar">
-            {crumbRow}
+            {breadcrumb}
             {menu}
           </div>
 
@@ -160,7 +156,7 @@ export function SubjectDetail({ subject, onUpdateSubject, onDeleteSubject, onBac
         </>
       ) : (
         <>
-          {crumbRow}
+          {breadcrumb}
 
           <div className="subject-detail__header">
             {isRenaming ? (

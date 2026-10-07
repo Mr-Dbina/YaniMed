@@ -5,7 +5,6 @@ import type { KeyboardEvent } from "react";
 import { PdfDropzone } from "@/components/pdf-dropzone";
 import { SetInstructionsModal } from "@/components/set-instructions-modal";
 import { DeleteSubjectModal } from "@/components/delete-subject-modal";
-import { SidebarToggle } from "@/components/sidebar-toggle";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import type { Subject } from "@/lib/types";
 
@@ -65,17 +64,14 @@ export function SubjectDetail({
 
   const isChat = Boolean(subject.file);
 
-  const crumbRow = (
-    <div className="subject-detail__crumb-row">
-      <SidebarToggle />
-      <nav className="subject-detail__breadcrumb">
-        <button type="button" className="subject-detail__crumb-link" onClick={onBack}>
-          Subjects
-        </button>
-        <span className="subject-detail__crumb-sep">/</span>
-        <span className="subject-detail__crumb-current">{subject.name}</span>
-      </nav>
-    </div>
+  const breadcrumb = (
+    <nav className="subject-detail__breadcrumb">
+      <button type="button" className="subject-detail__crumb-link" onClick={onBack}>
+        Subjects
+      </button>
+      <span className="subject-detail__crumb-sep">/</span>
+      <span className="subject-detail__crumb-current">{subject.name}</span>
+    </nav>
   );
 
   const menu = (
@@ -145,7 +141,7 @@ export function SubjectDetail({
       {isChat ? (
         <>
           <div className="subject-detail__topbar">
-            {crumbRow}
+            {breadcrumb}
             {menu}
           </div>
 
@@ -175,7 +171,7 @@ export function SubjectDetail({
         </>
       ) : (
         <>
-          {crumbRow}
+          {breadcrumb}
 
           <div className="subject-detail__header">
             {isRenaming ? (
