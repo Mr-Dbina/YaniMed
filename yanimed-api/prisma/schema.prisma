@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")  // Supabase pooler (port 6543) for runtime
+  directUrl = env("DIRECT_URL")    // Supabase direct connection (port 5432) for migrations
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING // extraction / OCR / chunking / embedding in progress
+  READY
+  FAILED
+}
+
+enum ExtractionMethod {
+  TEXT // pdfjs-dist text layer
+  OCR  // Tesseract.js fallback
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+// How an ASSISTANT message was produced
+enum AnswerMode {
+  GENERATED      // OmniRoute model answered from retrieved chunks
+  RETRIEVAL_ONLY // all free providers failed -> raw passages shown
+  NOT_FOUND      // no supporting evidence in the uploaded PDFs
+}
+
+model Subject {
+  id           String     @id @default(uuid())
+  name         String
+  instructions String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  documents    Document[]
+  chats        Chat[]
+}
+
+model Document {
+  id           String         @id @default(uuid())
+  subjectId    String
+  subject      Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  title        String
+  fileUrl      String         // R2 object key
+  fileSize     Int
+  pageCount    Int?
+  status       DocumentStatus @default(UPLOADED)
+  errorMessage String?
+
+  // resumable background processing
+  processedPages Int            @default(0) // last page fully extracted+chunked
+  embeddedChunks Int            @default(0)
+  ocrPages       Int            @default(0)
+
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  chunks       Chunk[]
+  citations    MessageCitation[]
+
+  @@index([subjectId])
+  @@index([status])
+}
+
+model Chunk {
+  id               String           @id @default(uuid())
+  documentId       String
+  document         Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  content          String
+  page             Int              // original PDF page, set at extraction time
+  chapterGuess     String?
+  chapterConfirmed String?
+  chunkIndex       Int
+
+  extractionMethod ExtractionMethod @default(TEXT)
+  needsReview      Boolean          @default(false) // poor OCR / low-quality text flag
+
+  embeddingModel   String?          // e.g. "gemini-embedding-001@768"; null = not embedded yet
+
+  // Added/managed outside Prisma's type system. Declared so `migrate dev`
+  // doesn't see them as drift and try to drop them. Read/write via $queryRaw.
+  embedding        Unsupported("vector(768)")?
+  tsv              Unsupported("tsvector")?
+
+  createdAt        DateTime         @default(now())
+
+  citations        MessageCitation[]
+
+  @@unique([documentId, chunkIndex]) // idempotent re-processing on resume
+  @@index([documentId])
+  @@index([documentId, page])
+}
+
+model Chat {
+  id         String    @id @default(uuid())
+  subjectId  String
+  subject    Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  title      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  messages   Message[]
+
+  @@index([subjectId])
+}
+
+model Message {
+  id         String      @id @default(uuid())
+  chatId     String
+  chat       Chat        @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  role       MessageRole
+  content    String
+  edited     Boolean     @default(false)
+
+  // ASSISTANT-only
+  answerMode AnswerMode?
+  provider   String?     // which OmniRoute provider answered
+  model      String?     // which model answered
+
+  rating     Int?        // 1 / -1 / null
+
+  createdAt  DateTime    @default(now())
+
+  citations  MessageCitation[]
+
+  @@index([chatId])
+}
+
+// Backend-verified citations (document + page checked against retrieved chunks)
+model MessageCitation {
+  id         String    @id @default(uuid())
+  messageId  String
+  message    Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  documentId String
+  document   Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkId    String?
+  chunk      Chunk?    @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  page       Int       // snapshot, survives chunk re-processing
+  chapter    String?   // snapshot of chapterConfirmed ?? chapterGuess
+
+  @@index([messageId])
+  @@index([documentId, page])
+}
