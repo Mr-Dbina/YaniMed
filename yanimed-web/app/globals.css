@@ -886,18 +886,3 @@ html.dark .empty-state__button img {
 .subject-detail__add:hover {
   background: hsl(var(--muted));
 }
-
-.subject-detail__instruction-text {
-  margin: 0;
-  font-size: 20px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.subject-detail__instruction-empty {
-  margin: 0;
-  font-size: 20px;
-  line-height: 1.5;
-  color: hsl(var(--muted-foreground));
-}

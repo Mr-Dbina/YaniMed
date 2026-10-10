@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { PdfDropzone } from "@/components/pdf-dropzone";
-import { SetInstructionsModal } from "@/components/set-instructions-modal";
 import { DeleteSubjectModal } from "@/components/delete-subject-modal";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import type { Subject } from "@/lib/types";
@@ -22,7 +21,6 @@ export function SubjectDetail({
   onBack,
 }: SubjectDetailProps) {
   const isCollapsed = useSidebarStore((state) => state.isCollapsed);
-  const [isInstructionsOpen, setIsInstructionsOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -55,11 +53,6 @@ export function SubjectDetail({
   const confirmDelete = () => {
     setIsDeleteOpen(false);
     onDeleteSubject(subject.id);
-  };
-
-  const handleSaveInstructions = (text: string) => {
-    onUpdateSubject(subject.id, { instructions: text });
-    setIsInstructionsOpen(false);
   };
 
   const isChat = Boolean(subject.file);
@@ -195,28 +188,6 @@ export function SubjectDetail({
           </div>
 
           <div className="subject-detail__card">
-            <div className="subject-detail__section-header">
-              <h2 className="subject-detail__section-title">Instructions</h2>
-              <button
-                type="button"
-                className="subject-detail__add"
-                aria-label="Set subject instructions"
-                onClick={() => setIsInstructionsOpen(true)}
-              >
-                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
-              </button>
-            </div>
-
-            {subject.instructions ? (
-              <p className="subject-detail__instruction-text">{subject.instructions}</p>
-            ) : (
-              <p className="subject-detail__instruction-empty">
-                Add instructions to tailor YaniMed&rsquo;s responses
-              </p>
-            )}
-
             <h2 className="subject-detail__section-title">Context</h2>
             <PdfDropzone
               file={subject.file}
@@ -225,14 +196,6 @@ export function SubjectDetail({
           </div>
         </>
       )}
-
-      <SetInstructionsModal
-        open={isInstructionsOpen}
-        onOpenChange={setIsInstructionsOpen}
-        subjectName={subject.name}
-        value={subject.instructions}
-        onSave={handleSaveInstructions}
-      />
 
       <DeleteSubjectModal
         open={isDeleteOpen}
