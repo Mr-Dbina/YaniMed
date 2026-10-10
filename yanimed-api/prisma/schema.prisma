@@ -86,8 +86,13 @@ model Chunk {
 
   embeddingModel   String?          // e.g. "gemini-embedding-001@768"; null = not embedded yet
 
-  // Added/managed outside Prisma's type system. Declared so `migrate dev`
-  // doesn't see them as drift and try to drop them. Read/write via $queryRaw.
+  // Added/managed outside Prisma's type system. Read/write via $queryRaw.
+  //
+  // NOTE: Prisma cannot model indexes on Unsupported() columns, so it will
+  // always report chunk_embedding_idx / chunk_tsv_idx as droppable drift.
+  // The indexes are created by 20261010120000_align_schema_and_pgvector.
+  // => Apply migrations with `npm run db:migrate` (migrate deploy) only.
+  //    NEVER `prisma migrate dev`, it would silently drop hybrid-search indexes.
   embedding        Unsupported("vector(768)")?
   tsv              Unsupported("tsvector")?
 
