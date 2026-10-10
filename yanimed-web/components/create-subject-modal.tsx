@@ -46,6 +46,7 @@ export function CreateSubjectModal({
   const handleSubmit = () => {
     if (!canCreate) return;
     onSubmit({ name: name.trim(), file });
+    onOpenChange(false);
   };
 
   return (
