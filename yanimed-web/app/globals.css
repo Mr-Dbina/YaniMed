@@ -1,4 +1,4 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -82,8 +82,7 @@ html.dark .icon-mono {
   height: 100vh;
   flex-shrink: 0;
   flex-direction: column;
-  justify-content: space-between;
-  overflow: hidden;
+  overflow: visible;
   border-right: 1px solid hsl(var(--border) / 0.5);
   background: var(--sidebar-bg);
   box-sizing: border-box;
@@ -96,16 +95,23 @@ html.dark .icon-mono {
   opacity: 1;
 }
 
+/* Collapsed collapses to 12px, so the 208px content column must be clipped
+   here rather than on .sidebar - otherwise the Settings dropdown (280px)
+   could not open past the sidebar edge. */
 .sidebar--collapsed {
   width: 12px;
   border-right: 0;
   padding-left: 0;
   padding-right: 0;
+  overflow: hidden;
   opacity: 0;
 }
 
 .sidebar__inner {
   width: 208px;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .sidebar__header {
@@ -260,21 +266,151 @@ html.dark .icon-mono {
   white-space: nowrap;
 }
 
-.sidebar__footer {
-  display: flex;
-  width: 208px;
+.sidebar__subject-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
   align-items: center;
+  border-radius: 8px;
+}
+
+.sidebar__subject-row:hover {
+  background: var(--sidebar-muted);
+}
+
+.sidebar__subject-row .sidebar__subject {
+  min-width: 0;
+}
+
+.sidebar__subject-row:hover .sidebar__subject {
+  background: transparent;
+}
+
+.sidebar__subject-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  padding: 6px;
+  border-radius: 6px;
+  color: var(--sidebar-muted-fg);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.sidebar__subject-row:hover .sidebar__subject-more,
+.sidebar__subject-more:focus-visible,
+.sidebar__subject-more[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.sidebar__subject-more:hover {
+  background: hsl(var(--muted));
+}
+
+.sidebar__subject-rename {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--background));
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--sidebar-fg);
+}
+
+.sidebar__subject-preview {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  margin: 0;
+  padding: 0 8px 6px 34px;
+  font-size: 13px;
+  color: var(--sidebar-muted-fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__subject-menu {
+  position: absolute;
+  top: calc(100% - 4px);
+  right: 4px;
+  z-index: 40;
+  display: flex;
+  min-width: 140px;
+  flex-direction: column;
+  border: 1px solid hsl(var(--border) / 0.8);
+  border-radius: 12px;
+  background: hsl(var(--card));
+  padding: 4px;
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -4px rgba(0, 0, 0, 0.1);
+}
+
+.sidebar__subject-menu-item {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+  text-align: left;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.sidebar__subject-menu-item:hover {
+  background: hsl(var(--muted));
+}
+
+.sidebar__subject-menu-item--danger {
+  color: #b91c1c;
+}
+
+/* Bottom block: Settings (the dropdown trigger) stacked above Appearance.
+   No divider above the block - the only rule line lives between the two rows. */
+/* Shared by every lucide icon in the sidebar so they inherit the row's text
+   colour and never get squeezed by a flex parent. */
+.sidebar__icon {
+  flex-shrink: 0;
+  color: currentColor;
+}
+
+.sidebar__bottom {
+  width: 208px;
+  flex-shrink: 0;
+  padding-top: 8px;
+}
+
+/* Shared by the Settings trigger and the Appearance row so the two can never
+   drift apart - icon column, gap, padding and colour all live here. */
+.sidebar__row {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 12px;
+  border-radius: 12px;
+  padding: 11px 12px;
+  font-size: 16px;
+  color: var(--sidebar-muted-fg);
+}
+
+/* The single remaining divider, between Settings and Appearance. */
+.sidebar__footer {
   justify-content: space-between;
   border-top: 1px solid hsl(var(--border) / 0.5);
-  padding-top: 16px;
-  font-size: 15px;
-  color: var(--sidebar-muted-fg);
+  margin-top: 4px;
+  cursor: default;
 }
 
 .sidebar__footer-label {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
 
 .theme-toggle {
@@ -299,6 +435,568 @@ html.dark .icon-mono {
 .theme-toggle__option--active {
   background: var(--sidebar-bg);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Settings menu */
+.settings-menu {
+  position: relative;
+  width: 100%;
+}
+
+/* Opens above the trigger, flush at bottom-full. There is deliberately NO gap:
+   padding-top is the invisible hover bridge, so the pointer travelling from
+   the row up into the panel never crosses dead space. Left/right edges are
+   pinned to the wrapper, so the panel can never exceed the sidebar column. */
+.settings-menu__panel {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  box-sizing: border-box;
+  padding-top: 8px;
+}
+
+.settings-menu__surface {
+  display: flex;
+  max-height: min(60vh, 420px);
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 6px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1);
+  animation: settings-menu-in 150ms ease-out;
+}
+
+.dark .settings-menu__surface {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: #26221f;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+}
+
+@keyframes settings-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-menu__surface {
+    animation: none;
+  }
+}
+
+/* Settings layout: flex row, both panes scroll independently. No positioning. */
+.settings-layout {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Settings nav - always expanded at its fixed width. */
+.settings-nav {
+  display: flex;
+  width: 378px;
+  flex-shrink: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  box-sizing: border-box;
+  border-right: 1px solid hsl(var(--border) / 0.5);
+  padding: 24px 16px;
+}
+
+.settings-nav__back {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  color: hsl(var(--foreground));
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.settings-nav__back:hover {
+  background: hsl(var(--muted));
+}
+
+.settings-nav__search {
+  display: flex;
+  height: 38px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  border-radius: 9999px;
+  background: hsl(var(--muted));
+  margin-top: 16px;
+  padding: 0 14px;
+  color: hsl(var(--muted-foreground));
+}
+
+.settings-nav__search-input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  color: hsl(var(--foreground));
+}
+
+.settings-nav__search-input:focus {
+  outline: none;
+}
+
+.settings-nav__group {
+  margin: 20px 0 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.settings-nav__items {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-nav__item {
+  display: flex;
+  height: 38px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 12px;
+  border-radius: 12px;
+  padding: 0 12px;
+  font-size: 15px;
+  color: hsl(var(--foreground));
+  text-decoration: none;
+}
+
+.settings-nav__item:hover {
+  background: hsl(var(--muted));
+}
+
+.settings-nav__item--active {
+  background: #ebe8e2;
+}
+
+.dark .settings-nav__item--active {
+  background: hsl(var(--muted));
+}
+
+.settings-nav__empty {
+  margin: 0;
+  padding: 10px;
+  font-size: 14px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Settings content pane */
+.settings-layout__main {
+  flex: 1;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 28px 48px 64px;
+}
+
+.settings-page-title {
+  max-width: 1000px;
+  margin: 0 0 28px;
+  font-size: 32px;
+  font-weight: 500;
+  color: hsl(var(--foreground));
+}
+
+/* Cards and rows.
+   The card owns the horizontal padding, so the row rules below land inset from
+   the card edges without any positioning. */
+.setting-card {
+  max-width: 1000px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 24px;
+  background: hsl(var(--card));
+  padding: 0 24px;
+}
+
+.dark .setting-card {
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+.setting-card + .setting-card {
+  margin-top: 12px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 0;
+}
+
+.setting-row + .setting-row {
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.dark .setting-row + .setting-row {
+  border-top-color: rgba(255, 255, 255, 0.09);
+}
+
+.setting-row__text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.setting-row__text--narrow {
+  max-width: 60%;
+}
+
+.setting-row__label {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 24px;
+  color: hsl(var(--foreground));
+}
+
+.setting-row__description {
+  margin-top: 2px;
+  font-size: 15px;
+  line-height: 22px;
+  color: hsl(var(--muted-foreground));
+}
+
+.setting-row__control {
+  display: flex;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* Stack the control under the text once the row gets tight. */
+@media (max-width: 640px) {
+  .setting-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .setting-row__text--narrow {
+    max-width: 100%;
+  }
+
+  .setting-row__control {
+    align-self: flex-start;
+  }
+}
+
+.setting-card__footnote {
+  margin: 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  padding: 16px 0;
+  font-size: 15px;
+  line-height: 22px;
+  color: hsl(var(--muted-foreground));
+}
+
+.dark .setting-card__footnote {
+  border-top-color: rgba(255, 255, 255, 0.09);
+}
+
+.setting-section-title {
+  max-width: 1000px;
+  margin: 36px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.setting-section-description {
+  max-width: 1000px;
+  margin: 6px 0 14px;
+  font-size: 15px;
+  color: hsl(var(--muted-foreground));
+}
+
+.setting-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.setting-link:hover {
+  text-decoration: underline;
+}
+
+.dark .setting-link {
+  color: #7aa2f7;
+}
+
+.setting-chevron {
+  flex-shrink: 0;
+  color: hsl(var(--muted-foreground));
+}
+
+.setting-pill {
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 40px;
+  box-sizing: border-box;
+  align-items: center;
+  border-radius: 9999px;
+  background: hsl(var(--muted));
+  padding: 0 20px;
+  font-size: 15px;
+  font-weight: 500;
+  color: hsl(var(--foreground));
+}
+
+.setting-pill--select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.setting-toggle {
+  position: relative;
+  width: 40px;
+  height: 23px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: hsl(var(--muted));
+  cursor: pointer;
+  transition: background-color 150ms ease-out;
+}
+
+.setting-toggle--on {
+  background: #3b7a5c;
+}
+
+/* Personalization switches use a dark track rather than green. */
+.setting-toggle--dark.setting-toggle--on {
+  background: #2b2b2b;
+}
+
+.dark .setting-toggle--dark.setting-toggle--on {
+  background: #f5f2ee;
+}
+
+.setting-toggle__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 19px;
+  height: 19px;
+  border-radius: 9999px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 150ms ease-out;
+}
+
+.setting-toggle--on .setting-toggle__knob {
+  transform: translateX(17px);
+}
+
+/* Language select */
+.lang-select {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.lang-select__trigger {
+  display: inline-flex;
+  height: 38px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 9999px;
+  background: hsl(var(--muted));
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: 15px;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.lang-select__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  width: 292px;
+  max-height: 372px;
+  box-sizing: border-box;
+  flex-direction: column;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  background: hsl(var(--card));
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  padding: 10px;
+}
+
+.lang-select__search {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px 8px;
+  color: hsl(var(--muted-foreground));
+}
+
+.lang-select__input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  font-family: inherit;
+  font-size: 15px;
+  color: hsl(var(--foreground));
+}
+
+.lang-select__input:focus {
+  outline: none;
+}
+
+.lang-select__list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.lang-select__option {
+  display: flex;
+  height: 40px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 15px;
+  text-align: left;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.lang-select__option--active {
+  background: hsl(var(--muted));
+}
+
+.lang-select__empty {
+  margin: 0;
+  padding: 12px;
+  font-size: 14px;
+  color: hsl(var(--muted-foreground));
+}
+
+.dark .lang-select__panel {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: #26221f;
+}
+
+.settings-menu__item {
+  display: flex;
+  height: 40px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 12px;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 15px;
+  color: hsl(var(--foreground));
+  text-decoration: none;
+  transition: background-color 120ms ease-out;
+}
+
+.settings-menu__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Neutral gray, not the warm cream token - it was nearly invisible on the
+   white panel. Focus styling is deliberately focus-visible only. */
+.settings-menu__item:hover,
+.settings-menu__item:focus-visible {
+  background: #f0f0f0;
+  outline: none;
+}
+
+.dark .settings-menu__item:hover,
+.dark .settings-menu__item:focus-visible {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* Uniform outline icon for every menu row and the trigger. */
+.settings-menu__icon {
+  flex-shrink: 0;
+  color: hsl(var(--foreground));
+}
+
+/* Geometry (display, gap, padding, radius, colour, size) comes from
+   .sidebar__row so the trigger cannot drift from the Appearance row. */
+.settings-menu__trigger {
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.settings-menu__trigger:hover,
+.settings-menu__trigger:focus-visible {
+  background: hsl(var(--muted));
+  outline: none;
+}
+
+/* Settings pages */
+.settings-page {
+  max-width: 640px;
+  padding: 48px 40px;
+}
+
+.settings-page__heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-page__title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.settings-page__blurb {
+  margin: 12px 0 0;
+  font-size: 16px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
 }
 
 /* Empty state */
