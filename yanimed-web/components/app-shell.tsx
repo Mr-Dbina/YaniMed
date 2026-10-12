@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { EmptyState } from "@/components/empty-state";
 import { SubjectDetail } from "@/components/subject-detail";
 import { CreateSubjectModal } from "@/components/create-subject-modal";
 import { useSubjectsStore } from "@/lib/stores/subjects-store";
 
-export function AppShell() {
+export function AppShell({ children }: { children?: ReactNode }) {
   const subjects = useSubjectsStore((state) => state.subjects);
   const activeSubjectId = useSubjectsStore((state) => state.activeSubjectId);
   const addSubject = useSubjectsStore((state) => state.addSubject);
@@ -27,19 +28,22 @@ export function AppShell() {
         activeSubjectId={activeSubjectId}
         onSelectSubject={setActiveSubject}
         onAddSubject={() => setIsCreateOpen(true)}
+        onUpdateSubject={updateSubject}
+        onDeleteSubject={deleteSubject}
       />
 
       <main className="app__main">
-        {activeSubject ? (
-          <SubjectDetail
-            subject={activeSubject}
-            onUpdateSubject={updateSubject}
-            onDeleteSubject={deleteSubject}
-            onBack={() => setActiveSubject(null)}
-          />
-        ) : (
-          <EmptyState onCreateSubject={() => setIsCreateOpen(true)} />
-        )}
+        {children ??
+          (activeSubject ? (
+            <SubjectDetail
+              subject={activeSubject}
+              onUpdateSubject={updateSubject}
+              onDeleteSubject={deleteSubject}
+              onBack={() => setActiveSubject(null)}
+            />
+          ) : (
+            <EmptyState onCreateSubject={() => setIsCreateOpen(true)} />
+          ))}
       </main>
 
       <CreateSubjectModal
