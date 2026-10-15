@@ -2,16 +2,11 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
-import { Check, ChevronDown, Monitor, Moon, Sun } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
+import { ModePreviewSelector, isModeId } from "@/components/settings/mode-preview-selector";
+import type { ModeId } from "@/components/settings/mode-preview-selector";
 import { SettingRow } from "@/components/settings/setting-row";
 import { getTheme, hslTripletToHex, readStoredTheme, storeTheme, themes } from "@/lib/themes";
-
-const MODES: { id: string; label: string; icon: LucideIcon }[] = [
-  { id: "light", label: "Light", icon: Sun },
-  { id: "dark", label: "Dark", icon: Moon },
-  { id: "system", label: "System", icon: Monitor },
-];
 
 /** A colour readout. Read-only until the token system supports overrides. */
 function ColorPill({ value }: { value: string }) {
@@ -93,7 +88,8 @@ export default function AppearanceSettingsPage() {
   }, [themeId]);
 
   const activeTheme = getTheme(themeId);
-  const resolvedMode = mounted ? theme ?? "system" : "system";
+  const storedMode = mounted ? theme : "system";
+  const resolvedMode: ModeId = isModeId(storedMode) ? storedMode : "system";
   const variant = resolvedMode === "dark" ? activeTheme.dark : activeTheme.light;
 
   const chooseTheme = (id: string) => {

@@ -9,7 +9,14 @@ const MODES = [
   { id: "dark", label: "Dark", image: "/images/mode-dark.png" },
 ] as const;
 
-type ModeId = (typeof MODES)[number]["id"];
+export type ModeId = (typeof MODES)[number]["id"];
+
+const MODE_IDS: readonly string[] = MODES.map((mode) => mode.id);
+
+/** Narrows next-themes' `string | undefined` down to a known mode. */
+export function isModeId(value: string | undefined): value is ModeId {
+  return typeof value === "string" && MODE_IDS.includes(value);
+}
 
 interface ModePreviewSelectorProps {
   value: ModeId;
@@ -29,7 +36,7 @@ export function ModePreviewSelector({ value, onChange }: ModePreviewSelectorProp
     refs.current[wrapped]?.focus();
   };
 
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>, index: number) => {
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     switch (event.key) {
       case "ArrowRight":
       case "ArrowDown":

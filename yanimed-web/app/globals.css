@@ -814,32 +814,80 @@ html.dark .icon-mono {
 }
 
 /* Appearance page */
-.appearance__modes {
+
+/* Mode picker. Each card is a fixed-size well holding a preview shot, so all
+   three stay the same size; object-contain letterboxes the wider System shot
+   instead of stretching it. */
+.mode-selector {
   display: flex;
-  gap: 8px;
+  gap: 10px;
 }
 
-.appearance__mode {
-  display: inline-flex;
+.mode-preview {
+  display: flex;
+  box-sizing: border-box;
+  width: 96px;
+  height: 72px;
   align-items: center;
-  gap: 6px;
-  border: 1px solid hsl(var(--border) / 0.9);
+  justify-content: center;
+  border: 1px solid hsl(var(--border));
   border-radius: 12px;
-  background: hsl(var(--card));
-  padding: 8px 12px;
-  font-family: inherit;
-  font-size: 13px;
-  color: hsl(var(--muted-foreground));
+  /* Fixed neutral, not a theme token: the shots are fixed-content images, and a
+     dark backdrop would swallow the black one in dark mode. */
+  background: #e8e8ea;
+  padding: 6px;
   cursor: pointer;
+  transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
-.appearance__mode:hover {
-  background: hsl(var(--muted));
+/* Excluded so the selected card keeps its blue ring while hovered. */
+.mode-preview:not(.mode-preview--selected):hover {
+  border-color: hsl(var(--muted-foreground) / 0.55);
+  box-shadow: 0 2px 6px hsl(var(--foreground) / 0.08);
 }
 
-.appearance__mode--active {
-  border-color: hsl(var(--foreground));
-  color: hsl(var(--foreground));
+.mode-preview--selected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px #2563eb;
+}
+
+.dark .mode-preview--selected {
+  border-color: #7aa2f7;
+  box-shadow: 0 0 0 2px #7aa2f7;
+}
+
+.mode-preview__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Keyboard focus only, so a pointer click leaves no ring behind. */
+.mode-preview:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.dark .mode-preview:focus-visible {
+  outline-color: #7aa2f7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-preview {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .mode-preview {
+    width: 72px;
+    height: 54px;
+  }
+
+  .mode-selector {
+    gap: 8px;
+  }
 }
 
 .appearance__theme-menu {
