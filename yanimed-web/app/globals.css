@@ -14,6 +14,7 @@
   --muted: 40 22% 92%;
   --muted-foreground: 30 8% 42%;
   --border: 36 16% 87%;
+  --destructive: 0 62% 42%;
 }
 
 .dark {
@@ -24,6 +25,7 @@
   --muted: 24 8% 18%;
   --muted-foreground: 35 12% 66%;
   --border: 24 8% 22%;
+  --destructive: 0 70% 68%;
 }
 
 *,
@@ -1862,6 +1864,36 @@ html.dark .empty-state__button img {
   justify-content: center;
   gap: 40px;
   padding-bottom: 48px;
+}
+
+.subject-chat--thread {
+  justify-content: flex-end;
+  gap: 24px;
+}
+
+.subject-chat__thread {
+  display: flex;
+  width: 100%;
+  max-width: 720px;
+  flex: 1;
+  flex-direction: column;
+  gap: 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.subject-chat__status,
+.subject-chat__error {
+  margin: 0;
+  font-size: 14px;
+}
+
+.subject-chat__status {
+  color: hsl(var(--muted-foreground));
+}
+
+.subject-chat__error {
+  color: hsl(var(--destructive));
 }
 
 .subject-chat__hero {

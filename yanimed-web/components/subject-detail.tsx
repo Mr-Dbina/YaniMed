@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { PdfDropzone } from "@/components/pdf-dropzone";
 import { DeleteSubjectModal } from "@/components/delete-subject-modal";
+import { ChatConversation } from "@/components/chat/chat-conversation";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import type { Subject } from "@/lib/types";
 
@@ -138,29 +139,10 @@ export function SubjectDetail({
             {menu}
           </div>
 
-          <div className="subject-chat">
-            <div className="subject-chat__hero">
-              <img src="/images/yanimed_logo.png" alt="" width={64} height={64} />
-              <h1 className="subject-chat__title">How can I help?</h1>
-            </div>
-
-            <div className="subject-chat__prompt">
-              <button type="button" aria-label="Add attachment" className="subject-chat__icon-btn">
-                <img src="/images/add.png" alt="" width={24} height={24} className="icon-mono" />
-              </button>
-              <input
-                type="text"
-                className="subject-chat__input"
-                placeholder="What do you want to learn today?"
-              />
-              <button type="button" aria-label="Voice input" className="subject-chat__icon-btn">
-                <img src="/images/mic.png" alt="" width={24} height={24} className="icon-mono" />
-              </button>
-              <button type="button" aria-label="Audio reply" className="subject-chat__icon-btn">
-                <img src="/images/music.png" alt="" width={24} height={24} className="icon-mono" />
-              </button>
-            </div>
-          </div>
+          <ChatConversation
+            key={subject.id}
+            onAsked={(prompt) => onUpdateSubject(subject.id, { lastMessage: prompt })}
+          />
         </>
       ) : (
         <>

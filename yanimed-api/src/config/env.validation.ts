@@ -1,22 +1,35 @@
-const required = [
-  'DATABASE_URL',
-  'R2_ACCOUNT_ID',
-  'R2_ACCESS_KEY_ID',
-  'R2_SECRET_ACCESS_KEY',
-  'R2_ENDPOINT',
-  'R2_BUCKET_NAME',
-  'GEMINI_API_KEY',
+/**
+ * Boot-time environment validation.
+ *
+ * Only DATABASE_URL is required to start the process, because PrismaModule
+ * connects at boot. Every other credential is owned by a single feature and is
+ * validated by that feature when it initialises (see requireEnv), so a missing
+ * R2 bucket cannot take down the whole API.
+ */
+const bootRequired = ['DATABASE_URL'] as const;
+
+/**
+ * Credentials checked by the features that consume them. Empty is tolerated at
+ * boot; the owning module fails fast in onModuleInit instead.
+ */
+export const omnirouteEnv = [
   'OMNIROUTE_BASE_URL',
   'OMNIROUTE_API_KEY',
   'OMNIROUTE_PRIMARY_MODEL',
 ] as const;
 
-// Present in .env.example but genuinely optional: DIRECT_URL (only used when
-// it resolves), R2_JURISDICTION (defaults to "auto"), OMNIROUTE_FALLBACK_MODELS
-// (warned about below) and PORT (defaults to 3000).
+export const r2Env = [
+  'R2_ACCOUNT_ID',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
+  'R2_ENDPOINT',
+  'R2_BUCKET_NAME',
+] as const;
+
+export const geminiEnv = ['GEMINI_API_KEY'] as const;
 
 export function validateEnv() {
-  const missing = required.filter((key) => !process.env[key]?.trim());
+  const missing = bootRequired.filter((key) => !process.env[key]?.trim());
 
   if (missing.length > 0) {
     throw new Error(
@@ -25,13 +38,10 @@ export function validateEnv() {
     );
   }
 
+  // Provider fallback is owned by the OmniRoute combo (strategy: priority),
+  // so OMNIROUTE_FALLBACK_MODELS is intentionally optional. Listing models
+  // here as well would run two competing failover mechanisms.
   const fallback = process.env.OMNIROUTE_FALLBACK_MODELS?.trim();
-  if (!fallback) {
-    console.warn(
-      '[config] OMNIROUTE_FALLBACK_MODELS is empty - if the primary model runs out ' +
-        'of quota, answer generation will fail instead of degrading to a fallback.',
-    );
-  }
 
   return {
     port: Number(process.env.PORT ?? 3000),
@@ -45,4 +55,20 @@ export function validateEnv() {
       .map((m) => m.trim())
       .filter(Boolean),
   };
+}
+
+/**
+ * Assert that a feature's credentials are present. Called from the owning
+ * module's onModuleInit so a misconfigured feature fails on startup with a
+ * clear message instead of failing on first request.
+ */
+export function requireEnv(keys: readonly string[], feature: string): void {
+  const missing = keys.filter((key) => !process.env[key]?.trim());
+
+  if (missing.length > 0) {
+    throw new Error(
+      `[${feature}] Missing required environment variables: ${missing.join(', ')}\n` +
+        'Add them to yanimed-api/.env and restart the API.',
+    );
+  }
 }

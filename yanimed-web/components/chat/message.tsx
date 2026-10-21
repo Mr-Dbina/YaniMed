@@ -3,21 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MessageActions } from "@/components/chat/message-actions";
 import type { MessageAction } from "@/components/chat/message-actions";
-import type { MessageRole } from "@/lib/types";
-
-export interface ChatCitation {
-  chapter: string | null;
-  page: number;
-}
-
-export interface ChatMessage {
-  id: string;
-  role: MessageRole;
-  content: string;
-  citations?: ChatCitation[];
-  rating?: 1 | -1 | null;
-  isStreaming?: boolean;
-}
+import type { ChatMessage } from "@/lib/types";
 
 interface MessageProps {
   message: ChatMessage;
@@ -135,9 +121,9 @@ export function Message({
     activeLabel: "Copied",
   };
 
-  const userActions: MessageAction[] = [
-    copyAction,
-    {
+  const userActions: MessageAction[] = onCopy ? [copyAction] : [];
+  if (onEdit) {
+    userActions.push({
       id: "edit",
       label: "Edit message",
       icon: <PencilIcon />,
@@ -145,26 +131,35 @@ export function Message({
         setDraft(message.content);
         setIsEditing(true);
       },
-    },
-  ];
+    });
+  }
 
-  const assistantActions: MessageAction[] = [
-    copyAction,
-    {
+  const assistantActions: MessageAction[] = onCopy ? [copyAction] : [];
+  if (onFeedback) {
+    assistantActions.push({
       id: "good",
       label: "Good response",
       icon: <ThumbIcon direction="up" />,
       active: message.rating === 1,
-      onClick: () => onFeedback?.(message, 1),
-    },
-    { id: "read-aloud", label: "Read aloud", icon: <SpeakerIcon />, onClick: () => onReadAloud?.(message) },
-    {
+      onClick: () => onFeedback(message, 1),
+    });
+  }
+  if (onReadAloud) {
+    assistantActions.push({
+      id: "read-aloud",
+      label: "Read aloud",
+      icon: <SpeakerIcon />,
+      onClick: () => onReadAloud(message),
+    });
+  }
+  if (onRegenerate) {
+    assistantActions.push({
       id: "regenerate",
       label: "Change response",
       icon: <RefreshIcon />,
-      onClick: () => onRegenerate?.(message),
-    },
-  ];
+      onClick: () => onRegenerate(message),
+    });
+  }
 
   const actions = isUser ? userActions : assistantActions;
   const visibility = isUser ? "hover" : "always";
@@ -229,7 +224,9 @@ export function Message({
             <p className="max-w-md rounded-lg border border-border bg-card px-3.5 py-2 text-foreground">
               {message.content}
             </p>
-            <MessageActions actions={actions} visibility={visibility} align={align} />
+            {actions.length > 0 && (
+              <MessageActions actions={actions} visibility={visibility} align={align} />
+            )}
           </>
         )
       ) : (
@@ -237,12 +234,17 @@ export function Message({
           <div className="max-w-2xl">
             <p className="whitespace-pre-wrap text-foreground">{message.content}</p>
             {message.citations?.map((citation) => (
-              <p key={`${citation.page}-${citation.chapter ?? ""}`} className="mt-2 font-bold text-foreground">
-                {citation.chapter ? `${citation.chapter}, ` : ""}p.{citation.page}
-              </p>
+              <div key={JSON.stringify([citation.sourceId, citation.page, citation.chapter, citation.snippet])} className="mt-2 text-foreground">
+                <p className="font-bold">
+                  {citation.sourceId}: {citation.chapter ? `${citation.chapter}, ` : ""}p.{citation.page}
+                </p>
+                {citation.snippet && <blockquote className="mt-1 text-sm text-muted-foreground">{citation.snippet}</blockquote>}
+              </div>
             ))}
           </div>
-          <MessageActions actions={actions} visibility={visibility} align={align} />
+          {actions.length > 0 && (
+            <MessageActions actions={actions} visibility={visibility} align={align} />
+          )}
         </>
       )}
     </div>

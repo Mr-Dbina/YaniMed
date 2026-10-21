@@ -26,8 +26,8 @@ async function bootstrap() {
   const swagger = new DocumentBuilder()
     .setTitle('YaniMed API')
     .setDescription(
-      'PLE board-reviewer Q&A. Answers are grounded only in uploaded PDFs ' +
-        'and cite chapter + page.',
+      'YaniMed development API. Current AI answers are ungrounded, ' +
+        'without verified PDF citations, and are not study material.',
     )
     .setVersion('0.1.0')
     .build();

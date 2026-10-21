@@ -76,7 +76,7 @@ export function PdfDropzone({ file, onFileSelect, title, subtitle }: PdfDropzone
           {file ? file.name : title || "Drag and drop your PDF here"}
         </span>
         <span className="pdf-dropzone__secondary">
-          {file ? "PDF ready to upload" : subtitle || "or click to browse"}
+          {file ? "Selected locally, not used for AI answers yet." : subtitle || "or click to browse"}
         </span>
       </button>
 
