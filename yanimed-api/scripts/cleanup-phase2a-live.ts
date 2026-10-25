@@ -2,16 +2,26 @@ import { PrismaClient } from '@prisma/client';
 import { S3Client, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 
 const execute = process.argv.includes('--execute');
-const ids = process.argv.filter(arg => !arg.startsWith('--'));
+const ids = process.argv.slice(2).filter(arg => !arg.startsWith('--'));
 if (ids.length !== 2) {
   console.error('Usage: npx tsx cleanup-phase2a-live.ts <subjectAId> <subjectBId> [--execute]');
   process.exit(1);
 }
 
 const prisma = new PrismaClient();
+import { readFileSync } from 'node:fs';
+for (const line of readFileSync('.env', 'utf8').split(/\r?\n/)) {
+  const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+  if (!match) continue;
+  const key = match[1];
+  const value = match[2].replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+  if (!(key in process.env)) process.env[key] = value;
+}
+
 const r2 = new S3Client({
+  maxAttempts: 1,
   region: process.env.R2_JURISDICTION || 'auto',
-  endpoint: process.env.R2_ENDPOINT,
+  endpoint: process.env.R2_ENDPOINT!,
   credentials: {
     accessKeyId: process.env.R2_ACCESS_KEY_ID!,
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,

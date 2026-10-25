@@ -8,9 +8,19 @@ if (subjectIds.length !== 2) {
   process.exit(1);
 }
 
+import { readFileSync } from 'node:fs';
+for (const line of readFileSync('.env', 'utf8').split(/\r?\n/)) {
+  const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+  if (!match) continue;
+  const key = match[1];
+  const value = match[2].replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+  if (!(key in process.env)) process.env[key] = value;
+}
+
 const r2 = new S3Client({
+  maxAttempts: 1,
   region: process.env.R2_JURISDICTION || 'auto',
-  endpoint: process.env.R2_ENDPOINT,
+  endpoint: process.env.R2_ENDPOINT!,
   credentials: {
     accessKeyId: process.env.R2_ACCESS_KEY_ID!,
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
@@ -59,6 +69,18 @@ async function main() {
       }
     }
   }
+
+  const allDocuments = subjects.flatMap(subject => subject.documents);
+  const pdfObjectIds = allDocuments.map(document => document.pdfObjectId).filter(Boolean) as string[];
+  const samePdfObject = pdfObjectIds.length > 0 && pdfObjectIds.every(id => id === pdfObjectIds[0]);
+  const sha256 = pdfObjectIds.length ? (await prisma.pdfObject.findUnique({ where: { id: pdfObjectIds[0] } }))?.sha256 : null;
+  const pdfObjectCount = sha256 ? await prisma.pdfObject.count({ where: { sha256 } }) : 0;
+  const titles = allDocuments.map(document => document.title);
+  const sameTitle = titles.length > 1 && titles.every(title => title === titles[0]);
+
+  console.log('ASSERT both Documents share one pdfObjectId:', samePdfObject ? 'PASS' : 'FAIL');
+  console.log('ASSERT exactly one PdfObject for sha256:', pdfObjectCount === 1 ? 'PASS' : 'FAIL');
+  console.log('ASSERT Document B title equals Document A title (keep_existing):', sameTitle ? 'PASS' : 'FAIL');
 
   const shared = await prisma.pdfObject.groupBy({ by: ['sha256'], _count: { sha256: true }, having: { sha256: { _count: { gt: 1 } } } });
   console.log('DUPLICATE_PDF_OBJECT_SHA256_ROWS:', shared.length === 0 ? 'PASS' : 'FAIL');
