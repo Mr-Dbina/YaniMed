@@ -19,14 +19,14 @@ describe('document upload contract', () => {
       ],
     }).compile();
     const controller = module.get(DocumentController);
-    await expect(controller.upload('missing', undefined as never)).rejects.toThrow('Subject does not exist.');
+    await expect(controller.upload('missing', undefined, undefined as never)).rejects.toThrow('Subject does not exist.');
     expect(storage.uploadPdf).not.toHaveBeenCalled();
     expect(prisma.document.create).not.toHaveBeenCalled();
   });
 
   it('rejects invalid PDF content before R2 upload', async () => {
     const prisma = {
-      subject: { findUnique: vi.fn().mockResolvedValue({ id: 'subject-1' }) },
+      subject: { findUnique: vi.fn().mockResolvedValue({ id: 'subject-1', status: 'ACTIVE' }) },
       document: { create: vi.fn() },
     };
     const storage = { uploadPdf: vi.fn() };
@@ -38,7 +38,7 @@ describe('document upload contract', () => {
       ],
     }).compile();
     const controller = module.get(DocumentController);
-    await expect(controller.upload('subject-1', { originalname: 'bad.pdf', mimetype: 'application/pdf', size: Buffer.from('not pdf').length, buffer: Buffer.from('not pdf') } as never)).rejects.toThrow('File signature does not match a PDF.');
+    await expect(controller.upload('subject-1', undefined, { originalname: 'bad.pdf', mimetype: 'application/pdf', size: Buffer.from('not pdf').length, buffer: Buffer.from('not pdf') } as never)).rejects.toThrow('File signature does not match a PDF.');
     expect(storage.uploadPdf).not.toHaveBeenCalled();
     expect(prisma.document.create).not.toHaveBeenCalled();
   });

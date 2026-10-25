@@ -6,7 +6,7 @@ import {
   OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { S3Client, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand, GetObjectCommand, CopyObjectCommand } from '@aws-sdk/client-s3';
 import { createHash } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { r2Env, requireEnv } from '../config/env.validation.js';
@@ -163,6 +163,43 @@ export class StorageService implements OnModuleInit {
   async getPdf(key: string): Promise<Buffer> { return this.getObject(key); }
   async getPdfBuffer(key: string): Promise<Buffer> { return this.getObject(key); }
   async retrievePdf(key: string): Promise<Buffer> { return this.getObject(key); }
+
+  async putCanonicalPdf(key: string, file: Buffer): Promise<void> {
+    const { client, bucket } = this.configured();
+    try {
+      await client.send(new PutObjectCommand({
+        Bucket: bucket, Key: key, Body: file,
+        ContentType: 'application/pdf', ContentLength: file.length,
+        CacheControl: 'private, no-store', IfNoneMatch: '*',
+      }), { abortSignal: AbortSignal.timeout(R2_UPLOAD_TIMEOUT_MS) });
+    } catch (error) {
+      if ((error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode !== 412) throw error;
+    }
+  }
+
+  async copyObject(sourceKey: string, destinationKey: string): Promise<void> {
+    const { client, bucket } = this.configured();
+    await client.send(new CopyObjectCommand({
+      Bucket: bucket, Key: destinationKey,
+      CopySource: `${bucket}/${sourceKey}`,
+      ContentType: 'application/pdf',
+      CacheControl: 'private, no-store',
+    }), { abortSignal: AbortSignal.timeout(R2_UPLOAD_TIMEOUT_MS) });
+  }
+
+  async deleteObject(key: string, etag?: string): Promise<void> {
+    if (!etag) {
+      await this.deleteReservedPdf(key, await this.requiredEtag(key));
+      return;
+    }
+    await this.deleteReservedPdf(key, etag);
+  }
+
+  private async requiredEtag(key: string): Promise<string> {
+    const stored = await this.inspectReservedPdf(key);
+    if (!stored?.etag) throw new Error('Object version is required for cleanup.');
+    return stored.etag;
+  }
 
   async uploadPdf(subjectId: string, file: Buffer, filename: string): Promise<UploadResult> {
     if (!this.client || !this.bucket)

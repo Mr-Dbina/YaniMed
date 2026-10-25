@@ -1,8 +1,9 @@
-import { ConflictException, Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma, type UploadAttempt, type UploadAttemptStatus } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService, type StoredPdf } from '../storage/storage.service.js';
+import { PdfObjectService } from '../pdf-objects/pdf-object.service.js';
 import { Optional } from '@nestjs/common';
 import { DocumentProcessingService } from '../document-processing/document-processing.service.js';
 import { validateInitialPdf, type PdfUpload } from '../storage/pdf-validation.js';
@@ -19,6 +20,7 @@ export class InitialUploadService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(StorageService) private readonly storage: StorageService,
     @Optional() private readonly processing?: DocumentProcessingService,
+    @Optional() private readonly pdfObjects?: PdfObjectService,
   ) {}
 
   async create(dto: InitialUploadDto, file: PdfUpload) {
@@ -27,6 +29,23 @@ export class InitialUploadService {
     const requestHash = createHash('sha256').update(JSON.stringify({
       name: dto.name, filename: file!.originalname, fileSha256, size: pdf.buffer.length,
     })).digest('hex');
+
+    const duplicate = this.pdfObjects ? await this.pdfObjects.findDuplicate(fileSha256, null) : null;
+    if (duplicate && !dto.duplicateAction) {
+      throw new ConflictException({
+        code: 'DUPLICATE_PDF', scope: duplicate.scope,
+        existingDocumentId: duplicate.existingDocumentId,
+        existingSubjectId: duplicate.existingSubjectId,
+        existingFilename: duplicate.existingFilename,
+        allowedActions: duplicate.scope === 'same_subject' ? ['upload_anyway'] : ['keep_existing', 'replace_existing'],
+      });
+    }
+    if (duplicate && dto.duplicateAction && !['keep_existing', 'replace_existing'].includes(dto.duplicateAction)) {
+      throw new BadRequestException('duplicateAction is not valid for this upload.');
+    }
+    let desiredFilename = pdf.originalname;
+    if (duplicate && dto.duplicateAction === 'keep_existing') desiredFilename = duplicate.existingFilename;
+
     let attempt: UploadAttempt;
     try {
       const existing = await this.prisma.uploadAttempt.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
@@ -35,6 +54,10 @@ export class InitialUploadService {
         attempt = existing;
       } else {
         attempt = await this.reserve(dto, requestHash, fileSha256, pdf);
+      }
+      if (desiredFilename !== pdf.originalname && attempt.status !== 'UPLOADED' && attempt.filename !== desiredFilename) {
+        await this.prisma.uploadAttempt.update({ where: { id: attempt.id }, data: { filename: desiredFilename } });
+        attempt = await this.prisma.uploadAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
       }
     } catch (error) {
       if (error instanceof ConflictException) throw error;
@@ -103,7 +126,7 @@ export class InitialUploadService {
     });
   }
 
-  private async finalize(attempt: UploadAttempt, owner: string, stored: StoredPdf) {
+  private async finalize(attempt: UploadAttempt, owner: string, stored: StoredPdf, pdfObject?: { id: string; r2Key: string }) {
     // Fence expired workers before creating the receipt. No network calls in this transaction.
     await this.prisma.$transaction(async tx => {
       const fenced = await tx.uploadAttempt.updateMany({
@@ -111,16 +134,32 @@ export class InitialUploadService {
         data: { etag: stored.etag },
       });
       if (!fenced.count) return;
+      const pdf = pdfObject
+        ? await tx.pdfObject.upsert({
+            where: { sha256: attempt.fileSha256 },
+            create: { sha256: attempt.fileSha256, r2Key: pdfObject.r2Key, sizeBytes: attempt.fileSize },
+            update: {},
+          })
+        : null;
       const document = await tx.document.create({ data: {
         id: attempt.id, subjectId: attempt.subjectId, title: attempt.filename,
-        fileUrl: attempt.objectKey, fileSize: attempt.fileSize, pageCount: attempt.pageCount,
-        status: 'QUEUED',
+        fileUrl: pdf ? pdf.r2Key : attempt.objectKey, fileSize: attempt.fileSize, pageCount: attempt.pageCount,
+        status: 'QUEUED', pdfObjectId: pdf?.id ?? null,
       } });
       await tx.uploadAttempt.update({ where: { id: attempt.id }, data: {
         status: 'UPLOADED', documentId: document.id, etag: stored.etag,
         lastError: null, leaseOwner: null, leaseUntil: null,
       } });
     });
+  }
+
+  private async deleteStagingBestEffort(attempt: UploadAttempt, stored: StoredPdf, pdfObject?: { id: string; r2Key: string }) {
+    if (!pdfObject || !stored?.etag || attempt.objectKey.startsWith('pdfs/')) return;
+    try {
+      await this.storage.deleteReservedPdf(attempt.objectKey, stored.etag);
+    } catch (error) {
+      this.logger.warn(`Staging object cleanup failed for ${attempt.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async process(id: string, buffer?: Buffer) {
@@ -139,7 +178,11 @@ export class InitialUploadService {
         attempt = await this.prisma.uploadAttempt.findUniqueOrThrow({ where: { id } });
         let stored = await this.storage.inspectReservedPdf(attempt.objectKey);
         if (stored && this.matches(attempt, stored)) {
-          await this.finalize(attempt, owner, stored);
+          const pdfObject = this.pdfObjects
+            ? await this.pdfObjects.ensureFromStaging(attempt.objectKey, attempt.fileSha256, attempt.fileSize)
+            : undefined;
+          await this.finalize(attempt, owner, stored, pdfObject);
+          await this.deleteStagingBestEffort(attempt, stored, pdfObject);
         } else if (stored) {
           // Only a previously recorded cleanup intent may delete an object.
           // Foreign/unowned objects are never deleted. ETag prevents deleting a replaced version.
@@ -156,8 +199,13 @@ export class InitialUploadService {
           if (uploading.count) {
             await this.storage.putReservedPdf(attempt, buffer);
             stored = await this.storage.inspectReservedPdf(attempt.objectKey);
-            if (stored && this.matches(attempt, stored)) await this.finalize(attempt, owner, stored);
-            else await this.release(id, owner, stored ? 'CLEANUP_PENDING' : 'AWAITING_RETRY', 'STORAGE_UNCONFIRMED');
+            if (stored && this.matches(attempt, stored)) {
+              const pdfObject = this.pdfObjects
+                ? await this.pdfObjects.ensureFromStaging(attempt.objectKey, attempt.fileSha256, attempt.fileSize)
+                : undefined;
+              await this.finalize(attempt, owner, stored, pdfObject);
+              await this.deleteStagingBestEffort(attempt, stored, pdfObject);
+            } else await this.release(id, owner, stored ? 'CLEANUP_PENDING' : 'AWAITING_RETRY', 'STORAGE_UNCONFIRMED');
           }
         } else {
           await this.release(id, owner, 'AWAITING_RETRY', 'FILE_REQUIRED');
