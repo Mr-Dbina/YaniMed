@@ -20,6 +20,8 @@ for (const line of readFileSync('.env', 'utf8').split(/\r?\n/)) {
 
 const r2 = new S3Client({
   maxAttempts: 1,
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
   region: process.env.R2_JURISDICTION || 'auto',
   endpoint: process.env.R2_ENDPOINT!,
   credentials: {

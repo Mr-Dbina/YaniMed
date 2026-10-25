@@ -1,6 +1,8 @@
 # ZZ-PHASE2A-TEST live verification. Run manually in PowerShell. Do not run unattended.
 # This script performs real uploads and writes to Supabase/R2. It does not clean up.
 
+param([string]$ResumeKeyA)
+
 $ErrorActionPreference = 'Stop'
 $api = 'http://localhost:3000'
 $webOrigin = 'http://localhost:3001'
@@ -35,27 +37,32 @@ function Http($method, $url, $bodyFile, $form) {
   return [pscustomobject]@{ StatusCode = [int]$code; Body = $body; Json = $json }
 }
 
-# Pre-check
-$subjectsRaw = (Http 'GET' "$api/subjects" $null $null).Body
-$subjects = try { $subjectsRaw | ConvertFrom-Json } catch { @() }
-if ($subjects | Where-Object { $_.name -like 'ZZ-PHASE2A-TEST*' }) {
-  Fail 'A ZZ-PHASE2A-TEST Subject already exists. Clean up first or choose a new test name.'
+if ($ResumeKeyA) {
+  $keyA = $ResumeKeyA
+  if (-not (Test-Path $pdfPath)) { Fail 'Resume requires the existing PDF at $env:TEMP\zz-phase2a.pdf.' }
+} else {
+  # Pre-check
+  $subjectsRaw = (Http 'GET' "$api/subjects" $null $null).Body
+  $subjects = try { $subjectsRaw | ConvertFrom-Json } catch { @() }
+  if ($subjects | Where-Object { $_.name -like 'ZZ-PHASE2A-TEST*' }) {
+    Fail 'A ZZ-PHASE2A-TEST Subject already exists. Clean up first or choose a new test name.'
+  }
+
+  # Generate a tiny unique 1-page text PDF from the backend directory so pdf-lib resolves.
+  if (-not (Test-Path (Join-Path $backendDir 'node_modules\pdf-lib'))) { Fail 'pdf-lib is not installed in yanimed-api.' }
+  Push-Location $backendDir
+  node -e "const fs=require('fs');const{PDFDocument,StandardFonts}=require('pdf-lib');(async()=>{const p=await PDFDocument.create();const f=await p.embedFont(StandardFonts.Helvetica);const pg=p.addPage();pg.drawText('ZZ-PHASE2A-TEST '+Date.now(),{x:50,y:700,size:12,font:f});fs.writeFileSync(process.argv[1],Buffer.from(await p.save()));})();" $pdfPath
+  Pop-Location
+  if (-not (Test-Path $pdfPath)) { Fail 'PDF generation failed.' }
+  $sha = (Get-FileHash $pdfPath -Algorithm SHA256).Hash.ToLower()
+  $canonical = "pdfs/$sha.pdf"
+  Log "SHA256=$sha"
+  Log "CANONICAL=$canonical"
+
+  $stamp = Get-Date -Format yyyyMMddHHmmss
+  $keyA = "zz-phase2a-a-$stamp"
 }
-
-# Generate a tiny unique 1-page text PDF from the backend directory so pdf-lib resolves.
-if (-not (Test-Path (Join-Path $backendDir 'node_modules\pdf-lib'))) { Fail 'pdf-lib is not installed in yanimed-api.' }
-Push-Location $backendDir
-node -e "const fs=require('fs');const{PDFDocument,StandardFonts}=require('pdf-lib');(async()=>{const p=await PDFDocument.create();const f=await p.embedFont(StandardFonts.Helvetica);const pg=p.addPage();pg.drawText('ZZ-PHASE2A-TEST '+Date.now(),{x:50,y:700,size:12,font:f});fs.writeFileSync(process.argv[1],Buffer.from(await p.save()));})();" $pdfPath
-Pop-Location
-if (-not (Test-Path $pdfPath)) { Fail 'PDF generation failed.' }
-$sha = (Get-FileHash $pdfPath -Algorithm SHA256).Hash.ToLower()
-$canonical = "pdfs/$sha.pdf"
-Log "SHA256=$sha"
-Log "CANONICAL=$canonical"
-
-$stamp = Get-Date -Format yyyyMMddHHmmss
-$keyA = "zz-phase2a-a-$stamp"
-$keyB = "zz-phase2a-b-$stamp"
+$keyB = "zz-phase2a-b-$(Get-Date -Format yyyyMMddHHmmss)"
 
 function Upload($name, $key, $action) {
   $form = @("name=$name", "idempotencyKey=$key", "file=@$pdfPath;type=application/pdf")
@@ -65,7 +72,8 @@ function Upload($name, $key, $action) {
 
 # a) Subject A
 $a = Upload 'ZZ-PHASE2A-TEST-A' $keyA $null
-if ($a.StatusCode -ne 202) { Fail "Step a expected 202, got $($a.StatusCode)" }
+if ($a.StatusCode -ne 202) { Fail "Step a expected 202, got $($a.StatusCode): $($a.Body)" }
+if ($a.Json.uploadStatus -eq 'AWAITING_RETRY' -or $a.Json.errorCode) { Fail "Step a failed: $($a.Body)" }
 if (-not $a.Json.subjectId) { Fail 'Step a missing subjectId' }
 if (-not $a.Json.documentId) { Fail 'Step a missing documentId' }
 

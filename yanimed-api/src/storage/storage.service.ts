@@ -65,6 +65,8 @@ export class StorageService implements OnModuleInit {
     const cfg = this.configValue();
     this.client = new S3Client({
       maxAttempts: 1,
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
       region: cfg.jurisdiction || 'auto',
       endpoint: cfg.endpoint,
       credentials: {
@@ -170,6 +172,7 @@ export class StorageService implements OnModuleInit {
       await client.send(new PutObjectCommand({
         Bucket: bucket, Key: key, Body: file,
         ContentType: 'application/pdf', ContentLength: file.length,
+        ContentMD5: createHash('md5').update(file).digest('base64'),
         CacheControl: 'private, no-store', IfNoneMatch: '*',
       }), { abortSignal: AbortSignal.timeout(R2_UPLOAD_TIMEOUT_MS) });
     } catch (error) {
@@ -184,6 +187,7 @@ export class StorageService implements OnModuleInit {
       CopySource: `${bucket}/${sourceKey}`,
       ContentType: 'application/pdf',
       CacheControl: 'private, no-store',
+      MetadataDirective: 'REPLACE',
     }), { abortSignal: AbortSignal.timeout(R2_UPLOAD_TIMEOUT_MS) });
   }
 
