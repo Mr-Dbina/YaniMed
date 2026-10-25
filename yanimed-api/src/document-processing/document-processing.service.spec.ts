@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DocumentProcessingService } from './document-processing.service.js';
 
-function makePrisma(status: string = 'UPLOADED') {
+  function makePrisma(status: string = 'QUEUED') {
   return {
     document: {
       findUnique: vi.fn().mockResolvedValue({ id: 'doc-1', status }),

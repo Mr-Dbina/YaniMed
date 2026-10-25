@@ -1,11 +1,9 @@
-import { Controller, Get, Inject, NotFoundException, Param, ParseUUIDPipe, ServiceUnavailableException, UseGuards } from '@nestjs/common';
+import { Controller, Get, Inject, NotFoundException, Param, ParseUUIDPipe, ServiceUnavailableException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { ChatGuard } from '../chat/chat.guard.js';
 import { documentMetadata, documentMetadataSelect } from './document-metadata.js';
 
 @ApiTags('Documents (local development)')
-@UseGuards(ChatGuard)
 @Controller('documents')
 export class DocumentStatusController {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}

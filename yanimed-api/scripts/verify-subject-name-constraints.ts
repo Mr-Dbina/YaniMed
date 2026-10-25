@@ -7,7 +7,6 @@ import { parseEnv } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { ConflictException } from '@nestjs/common';
-import { SubjectsService } from '../src/subjects/subjects.service.js';
 import type { PrismaService } from '../src/prisma/prisma.service.js';
 
 function check(condition: unknown, label: string): asserts condition {
@@ -83,7 +82,7 @@ async function main() {
         await tx.$executeRaw`SAVEPOINT subject_name_test`;
         let conflict = false;
         try {
-          await new SubjectsService(tx as unknown as PrismaService).create(fixture.toUpperCase());
+          await tx.subject.create({ data: { name: fixture.toUpperCase() } });
         } catch (error) {
           conflict = error instanceof ConflictException && error.getStatus() === 409;
         } finally {

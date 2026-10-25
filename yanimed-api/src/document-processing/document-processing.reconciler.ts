@@ -32,7 +32,7 @@ export class DocumentProcessingReconciler implements OnApplicationBootstrap, OnM
 
   private async runBatch() {
     const documents = await this.prisma.document.findMany({
-      where: { status: { in: ['UPLOADED', 'PROCESSING'] } },
+      where: { status: { in: ['QUEUED', 'PROCESSING'] } },
       orderBy: { updatedAt: 'asc' },
       take: BATCH_SIZE,
       select: { id: true },

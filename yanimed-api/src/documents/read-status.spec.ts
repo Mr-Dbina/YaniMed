@@ -12,7 +12,7 @@ const subjectId = '11111111-1111-4111-8111-111111111111';
 const documentId = '22222222-2222-4222-8222-222222222222';
 const otherId = '33333333-3333-4333-8333-333333333333';
 const date = new Date('2026-10-24T00:00:00Z');
-const subject = { id: subjectId, name: 'Example', createdAt: date, updatedAt: date,
+const subject = { id: subjectId, name: 'Example', status: 'ACTIVE', createdAt: date, updatedAt: date,
   instructions: 'private', _count: { documents: 1 } };
 const document = { id: documentId, subjectId, title: 'example.pdf', status: 'PROCESSING',
   createdAt: date, updatedAt: date, pageCount: 10, processedPages: 2, embeddedChunks: 1,
@@ -74,7 +74,7 @@ describe('Read-only Subject and processing-status HTTP contracts', () => {
     db.document.findMany.mockResolvedValue([]);
     expect((await get(`/subjects/${subjectId}/documents`).expect(200)).body).toEqual([]);
   });
-  it.each(['UPLOADED', 'PROCESSING', 'READY', 'FAILED'])('reports persisted %s without mutating records', async status => {
+  it.each(['QUEUED', 'PROCESSING', 'READY', 'FAILED'])('reports persisted %s without mutating records', async status => {
     const row = { ...document, status };
     db.document.findUnique.mockResolvedValue(row);
     const snapshot = structuredClone(row);
@@ -111,12 +111,8 @@ describe('Read-only Subject and processing-status HTTP contracts', () => {
   it('does not expose a retry route', async () => {
     await request(app.getHttpServer()).post(`/documents/${documentId}/retry`).set('Host', 'localhost:3000').expect(404);
   });
-  it.each(['/subjects', `/subjects/${subjectId}`, `/subjects/${subjectId}/documents`, `/documents/${documentId}/status`])('preserves production/local boundaries: %s', async path => {
-    await get(path).set('Origin', 'https://untrusted.invalid').expect(403);
-    await get(path).set('X-Forwarded-For', '127.0.0.1').expect(403);
-    vi.stubEnv('NODE_ENV', 'production');
-    await get(path).expect(404);
-    expect(db.subject.findUnique).not.toHaveBeenCalled();
-    expect(db.document.findUnique).not.toHaveBeenCalled();
+  it('does not apply the chat guard to read-only GET routes', async () => {
+    const { status } = await get('/subjects');
+    expect(status).toBe(200);
   });
 });

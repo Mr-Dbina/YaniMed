@@ -75,7 +75,7 @@ async function main() {
         check(created.uploadStatus === 'UPLOADED' && created.documentId && created.chatAvailable === false,
           'Initial upload failed');
         const document = await tx.document.findUnique({ where: { id: created.documentId } });
-        check(document?.status === 'UPLOADED' && document.subjectId === created.subjectId, 'Receipt mismatch');
+        check(document?.status === 'QUEUED' && document.subjectId === created.subjectId, 'Receipt mismatch');
         const replay = await service.create(dto, file);
         check(replay.documentId === created.documentId && puts() === 1, 'Replay duplicated storage');
         let duplicate = false;

@@ -114,7 +114,7 @@ export class InitialUploadService {
       const document = await tx.document.create({ data: {
         id: attempt.id, subjectId: attempt.subjectId, title: attempt.filename,
         fileUrl: attempt.objectKey, fileSize: attempt.fileSize, pageCount: attempt.pageCount,
-        status: 'UPLOADED',
+        status: 'QUEUED',
       } });
       await tx.uploadAttempt.update({ where: { id: attempt.id }, data: {
         status: 'UPLOADED', documentId: document.id, etag: stored.etag,

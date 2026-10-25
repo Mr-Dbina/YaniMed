@@ -42,7 +42,7 @@ export class DocumentProcessingService {
     if (document.status === 'READY') return;
 
     const claimed = await this.prisma.document.updateMany({
-      where: { id: documentId, status: { in: ['UPLOADED', 'PROCESSING', 'FAILED'] } },
+      where: { id: documentId, status: { in: ['QUEUED', 'PROCESSING', 'FAILED'] } },
       data: { status: 'PROCESSING', errorMessage: null },
     });
     if (claimed.count === 0) return;

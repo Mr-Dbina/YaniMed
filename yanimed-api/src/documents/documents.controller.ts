@@ -51,7 +51,7 @@ export class DocumentController {
         title: originalname,
         fileUrl: result.key,
         fileSize: result.bytes,
-        status: 'UPLOADED',
+        status: 'QUEUED',
         processedPages: 0,
         embeddedChunks: 0,
         ocrPages: 0,

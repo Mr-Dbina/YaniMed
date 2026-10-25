@@ -9,9 +9,21 @@ datasource db {
 }
 
 enum DocumentStatus {
-  UPLOADED
+  QUEUED
   PROCESSING // extraction / OCR / chunking / embedding in progress
   READY
+  FAILED
+}
+
+enum SubjectStatus {
+  ACTIVE
+  DELETING
+}
+
+enum DeletionStage {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
   FAILED
 }
 
@@ -42,27 +54,44 @@ enum AnswerMode {
 }
 
 model Subject {
-  id           String     @id @default(uuid())
+  id           String        @id @default(uuid())
   name         String
+  status       SubjectStatus @default(ACTIVE)
+  deletedAt    DateTime?
   instructions String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
   documents    Document[]
   chats        Chat[]
   initialUpload UploadAttempt?
+  deletionJobs DeletionJob[]
+
+  @@unique([name])
+}
+
+model PdfObject {
+  id        String     @id @default(uuid())
+  sha256    String     @unique
+  r2Key     String     @unique
+  sizeBytes Int
+  createdAt DateTime   @default(now())
+
+  documents Document[]
 }
 
 model Document {
   id           String         @id @default(uuid())
   subjectId    String
   subject      Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  pdfObjectId  String?
+  pdfObject    PdfObject?     @relation(fields: [pdfObjectId], references: [id], onDelete: SetNull)
 
   title        String
   fileUrl      String         // R2 object key
   fileSize     Int
   pageCount    Int?
-  status       DocumentStatus @default(UPLOADED)
+  status       DocumentStatus @default(QUEUED)
   errorMessage String?
 
   // resumable background processing
@@ -166,6 +195,20 @@ model UploadAttempt {
 
   @@index([status, nextAttemptAt])
   @@index([leaseUntil])
+}
+
+model DeletionJob {
+  id          String        @id @default(uuid())
+  subjectId   String
+  subject     Subject       @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  stage       DeletionStage @default(PENDING)
+  attempts    Int           @default(0)
+  lastError   String?
+  completedAt DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@index([subjectId])
+  @@index([stage])
 }
 
 model Chat {
