@@ -17,7 +17,7 @@ export class InitialUploadController {
   @HttpCode(202)
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Reserve a workspace and upload its initial PDF; chat remains unavailable' })
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: R2_PDF_MAX_BYTES, files: 1, fields: 2, parts: 3 } }))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: R2_PDF_MAX_BYTES, files: 1, fields: 3, parts: 4 } }))
   create(@Body(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true,
     expectedType: InitialUploadDto })) dto: InitialUploadDto, @UploadedFile() file: PdfUpload) {
     return this.uploads.create(dto, file);

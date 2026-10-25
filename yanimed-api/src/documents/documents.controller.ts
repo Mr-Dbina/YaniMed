@@ -38,7 +38,7 @@ export class DocumentController {
   @HttpCode(201)
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('file', {
-    limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 3, parts: 5 },
+    limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 2, parts: 3 },
     fileFilter: (_req, file, cb) => cb(null, file.mimetype === 'application/pdf'),
   }))
   async upload(

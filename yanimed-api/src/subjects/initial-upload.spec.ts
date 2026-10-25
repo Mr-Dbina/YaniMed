@@ -348,6 +348,32 @@ describe('Initial Subject/PDF workflow', () => {
     warn.mockRestore();
   });
 
+  it('accepts duplicateAction through the multipart parser', async () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    const h = harness();
+    const module = await Test.createTestingModule({ controllers: [InitialUploadController],
+      providers: [{ provide: InitialUploadService, useValue: h.service }] }).compile();
+    const app = module.createNestApplication(); await app.init();
+    try {
+      const post = () => request(app.getHttpServer()).post('/subjects/initial-upload').set('Host', 'localhost:3000');
+      await post().field('name', 'Parser').field('idempotencyKey', 'parser-key').field('duplicateAction', 'keep_existing')
+        .attach('file', file.buffer, { filename: 'test.pdf', contentType: 'application/pdf' }).expect(202);
+    } finally { await app.close(); }
+  });
+
+  it('rejects an unknown multipart field', async () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    const h = harness();
+    const module = await Test.createTestingModule({ controllers: [InitialUploadController],
+      providers: [{ provide: InitialUploadService, useValue: h.service }] }).compile();
+    const app = module.createNestApplication(); await app.init();
+    try {
+      const post = () => request(app.getHttpServer()).post('/subjects/initial-upload').set('Host', 'localhost:3000');
+      await post().field('name', 'Parser').field('idempotencyKey', 'parser-key-2').field('duplicateAction', 'keep_existing').field('extra', 'no')
+        .attach('file', file.buffer, { filename: 'test.pdf', contentType: 'application/pdf' }).expect(400);
+    } finally { await app.close(); }
+  });
+
   it('does not overlap reconciliation sweeps', async () => {
     let finish!: () => void;
     const reconcileBatch = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));

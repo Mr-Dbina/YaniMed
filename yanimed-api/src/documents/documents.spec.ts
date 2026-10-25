@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService } from '../storage/storage.service.js';
 import { PdfObjectService } from '../pdf-objects/pdf-object.service.js';
 import { DocumentController } from './documents.controller.js';
+import request from 'supertest';
 
 describe('document upload contract', () => {
   it('requires a subject and validates the PDF before storage', async () => {
@@ -123,5 +124,33 @@ describe('document upload contract', () => {
     const file = { originalname: 'a.pdf', mimetype: 'application/pdf', size: Buffer.from('%PDF-1.4').length, buffer: Buffer.from('%PDF-1.4') };
     await expect(controller.upload('subject-1', undefined, file as never)).rejects.toMatchObject({ status: 400 });
     expect(storage.uploadPdf).not.toHaveBeenCalled();
+  });
+
+  describe('legacy upload multipart parser', () => {
+    it('accepts the full field set including duplicateAction', async () => {
+      vi.stubEnv('NODE_ENV', 'test');
+      const prisma = {
+        subject: { findUnique: vi.fn().mockResolvedValue({ id: 'subject-1', status: 'ACTIVE' }) },
+        document: { create: vi.fn().mockResolvedValue({ id: 'doc-1', subjectId: 'subject-1', title: 'kept.pdf', fileUrl: 'key', status: 'QUEUED' }), findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 'doc-1', subjectId: 'subject-1', title: 'kept.pdf', fileUrl: 'key', status: 'QUEUED' }), update: vi.fn().mockResolvedValue({ id: 'doc-1', subjectId: 'subject-1', title: 'kept.pdf', fileUrl: 'key', status: 'QUEUED' }) },
+      };
+      const storage = { uploadPdf: vi.fn().mockResolvedValue({ key: 'key', etag: 'e', bytes: Buffer.from('%PDF-1.4').length }) };
+      const module = await Test.createTestingModule({
+        controllers: [DocumentController],
+        providers: [
+          { provide: PrismaService, useValue: prisma },
+          { provide: StorageService, useValue: storage },
+        ],
+      }).compile();
+      const app = module.createNestApplication();
+      await app.init();
+      try {
+        const post = () => request(app.getHttpServer()).post('/documents/upload').set('Host', 'localhost:3000');
+        await post().field('subjectId', 'subject-1').field('duplicateAction', 'keep_existing')
+          .attach('file', Buffer.from('%PDF-1.4'), { filename: 'test.pdf', contentType: 'application/pdf' }).expect(201);
+      } finally {
+        await app.close();
+        vi.unstubAllEnvs();
+      }
+    });
   });
 });
