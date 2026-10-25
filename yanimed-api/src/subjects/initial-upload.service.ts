@@ -19,8 +19,8 @@ export class InitialUploadService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(PdfObjectService) private readonly pdfObjects: PdfObjectService,
     @Optional() private readonly processing?: DocumentProcessingService,
-    @Optional() private readonly pdfObjects?: PdfObjectService,
   ) {}
 
   async create(dto: InitialUploadDto, file: PdfUpload) {
@@ -37,7 +37,7 @@ export class InitialUploadService {
         this.assertSameRequest(existing, requestHash);
         attempt = existing;
       } else {
-        const duplicate = this.pdfObjects ? await this.pdfObjects.findDuplicate(fileSha256, null) : null;
+        const duplicate = await this.pdfObjects.findDuplicate(fileSha256, null);
         if (duplicate && !dto.duplicateAction) {
           throw new ConflictException({
             code: 'DUPLICATE_PDF', scope: duplicate.scope,
@@ -125,8 +125,9 @@ export class InitialUploadService {
     });
   }
 
-  private async finalize(attempt: UploadAttempt, owner: string, stored: StoredPdf, pdfObject?: { id: string; r2Key: string }) {
+  private async finalize(attempt: UploadAttempt, owner: string, stored: StoredPdf, pdfObject?: { id: string; r2Key: string }): Promise<boolean> {
     // Fence expired workers before creating the receipt. No network calls in this transaction.
+    let created = false;
     await this.prisma.$transaction(async tx => {
       const fenced = await tx.uploadAttempt.updateMany({
         where: { id: attempt.id, leaseOwner: owner, leaseUntil: { gt: new Date() }, status: { not: 'UPLOADED' } },
@@ -149,7 +150,9 @@ export class InitialUploadService {
         status: 'UPLOADED', documentId: document.id, etag: stored.etag,
         lastError: null, leaseOwner: null, leaseUntil: null,
       } });
+      created = true;
     });
+    return created;
   }
 
   private async deleteStagingBestEffort(attempt: UploadAttempt, stored: StoredPdf, pdfObject?: { id: string; r2Key: string }) {
@@ -177,11 +180,9 @@ export class InitialUploadService {
         attempt = await this.prisma.uploadAttempt.findUniqueOrThrow({ where: { id } });
         let stored = await this.storage.inspectReservedPdf(attempt.objectKey);
         if (stored && this.matches(attempt, stored)) {
-          const pdfObject = this.pdfObjects
-            ? await this.pdfObjects.ensureFromStaging(attempt.objectKey, attempt.fileSha256, attempt.fileSize)
-            : undefined;
-          await this.finalize(attempt, owner, stored, pdfObject);
-          await this.deleteStagingBestEffort(attempt, stored, pdfObject);
+          const pdfObject = await this.pdfObjects.ensureFromStaging(attempt.objectKey, attempt.fileSha256, attempt.fileSize);
+          const finalized = await this.finalize(attempt, owner, stored, pdfObject);
+          if (finalized) await this.deleteStagingBestEffort(attempt, stored, pdfObject);
         } else if (stored) {
           // Only a previously recorded cleanup intent may delete an object.
           // Foreign/unowned objects are never deleted. ETag prevents deleting a replaced version.
@@ -199,11 +200,9 @@ export class InitialUploadService {
             await this.storage.putReservedPdf(attempt, buffer);
             stored = await this.storage.inspectReservedPdf(attempt.objectKey);
             if (stored && this.matches(attempt, stored)) {
-              const pdfObject = this.pdfObjects
-                ? await this.pdfObjects.ensureFromStaging(attempt.objectKey, attempt.fileSha256, attempt.fileSize)
-                : undefined;
-              await this.finalize(attempt, owner, stored, pdfObject);
-              await this.deleteStagingBestEffort(attempt, stored, pdfObject);
+              const pdfObject = await this.pdfObjects.ensureFromStaging(attempt.objectKey, attempt.fileSha256, attempt.fileSize);
+              const finalized = await this.finalize(attempt, owner, stored, pdfObject);
+              if (finalized) await this.deleteStagingBestEffort(attempt, stored, pdfObject);
             } else await this.release(id, owner, stored ? 'CLEANUP_PENDING' : 'AWAITING_RETRY', 'STORAGE_UNCONFIRMED');
           }
         } else {

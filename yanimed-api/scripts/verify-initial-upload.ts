@@ -66,7 +66,7 @@ async function main() {
           },
           deleteReservedPdf: async () => { throw new Error('Cleanup should not delete a valid receipt'); },
         };
-        const service = new InitialUploadService(adapter as unknown as PrismaService, storage as unknown as StorageService);
+        const service = new InitialUploadService(adapter as unknown as PrismaService, storage as unknown as StorageService, { findDuplicate: async () => null, ensureFromStaging: async () => ({ id: 'po', sha256: 'x', r2Key: 'pdfs/x.pdf', sizeBytes: 1 }) } as never);
         const pdf = await PDFDocument.create(); pdf.addPage();
         const buffer = Buffer.from(await pdf.save());
         const file = { buffer, size: buffer.length, mimetype: 'application/pdf', originalname: 'fixture.pdf' };
