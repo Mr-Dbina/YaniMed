@@ -166,4 +166,13 @@ describe('P2002 constraint assertions', () => {
   });
 });
 
+it('ensureFromBuffer concurrent same hash yields one PdfObject row', async () => {
+  await rollback(async tx => {
+    const sha = 'z'.repeat(64);
+    await tx.pdfObject.create({ data: { sha256: sha, r2Key: `pdfs/${sha}.pdf`, sizeBytes: 1 } });
+    await expect(tx.pdfObject.create({ data: { sha256: sha, r2Key: `pdfs/${sha}-2.pdf`, sizeBytes: 1 } })).rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    // After the unique violation the transaction is aborted, so no further query is possible here.
+  });
+});
+
 afterAll(async () => { await prisma.$disconnect(); });

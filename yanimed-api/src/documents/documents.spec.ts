@@ -105,4 +105,23 @@ describe('document upload contract', () => {
       expect(storage.uploadPdf).not.toHaveBeenCalled();
     });
   });
+
+  it('upload to a DELETING Subject is rejected', async () => {
+    const prisma = {
+      subject: { findUnique: vi.fn().mockResolvedValue({ id: 'subject-1', status: 'DELETING' }) },
+      document: { create: vi.fn() },
+    };
+    const storage = { uploadPdf: vi.fn() };
+    const module = await Test.createTestingModule({
+      controllers: [DocumentController],
+      providers: [
+        { provide: PrismaService, useValue: prisma },
+        { provide: StorageService, useValue: storage },
+      ],
+    }).compile();
+    const controller = module.get(DocumentController);
+    const file = { originalname: 'a.pdf', mimetype: 'application/pdf', size: Buffer.from('%PDF-1.4').length, buffer: Buffer.from('%PDF-1.4') };
+    await expect(controller.upload('subject-1', undefined, file as never)).rejects.toMatchObject({ status: 400 });
+    expect(storage.uploadPdf).not.toHaveBeenCalled();
+  });
 });

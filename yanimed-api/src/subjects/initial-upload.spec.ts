@@ -88,6 +88,8 @@ function harness() {
       expect(inTransaction).toBe(false); return objects.get(key) ?? null;
     }),
     deleteReservedPdf: vi.fn(async (key: string) => { expect(inTransaction).toBe(false); objects.delete(key); }),
+    copyObject: vi.fn(async () => { expect(inTransaction).toBe(false); }),
+    putCanonicalPdf: vi.fn(async () => { expect(inTransaction).toBe(false); }),
   };
   const pdfObjects = {
     findDuplicate: vi.fn().mockResolvedValue(null),
@@ -259,6 +261,74 @@ describe('Initial Subject/PDF workflow', () => {
     const service = new InitialUploadService(h.db as unknown as PrismaService, h.storage as unknown as StorageService, pdfObjects as never);
     await expect(service.create(dto, file)).rejects.toMatchObject({ status: 409, response: { code: 'DUPLICATE_PDF' } });
     expect(h.subjects()).toHaveLength(0);
+  });
+
+  it('initial-upload finalization deletes only the staging key after copying new bytes', async () => {
+    const h = harness();
+    await h.service.create(dto, file);
+    expect(h.storage.deleteReservedPdf).toHaveBeenCalled();
+    const deletedKeys = (h.storage.deleteReservedPdf as any).mock.calls.map((c: any[]) => c[0]);
+    expect(deletedKeys.every((key: string) => !key.startsWith('pdfs/'))).toBe(true);
+  });
+
+  it('initial-upload finalization with duplicate bytes does not copy and deletes staging', async () => {
+    const h = harness();
+    const duplicatePdfObjects = {
+      findDuplicate: vi.fn().mockResolvedValue(null),
+      ensureFromStaging: vi.fn().mockResolvedValue({ id: 'po-dup', sha256: 'dup', r2Key: 'pdfs/dup.pdf', sizeBytes: file.size }),
+    };
+    const service = new InitialUploadService(h.db as any, h.storage as any, duplicatePdfObjects as any);
+    await service.create(dto, file);
+    expect(duplicatePdfObjects.ensureFromStaging).toHaveBeenCalled();
+    expect(h.storage.copyObject).not.toHaveBeenCalled();
+    expect(h.storage.deleteReservedPdf).toHaveBeenCalled();
+  });
+
+  it('staging delete failure still succeeds', async () => {
+    const h = harness();
+    h.storage.deleteReservedPdf.mockRejectedValueOnce(new Error('delete failed'));
+    const result = await h.service.create(dto, file);
+    expect(result.uploadStatus).toBe('UPLOADED');
+  });
+
+  it('replaying finalization after a crash is idempotent', async () => {
+    const h = harness();
+    const original = h.storage.putReservedPdf.getMockImplementation()!;
+    h.storage.putReservedPdf.mockImplementationOnce(async (attempt: any) => { await original(attempt); throw new Error('timeout after write'); });
+    await h.service.create(dto, file);
+    await h.service.reconcileBatch();
+    expect(h.documents()).toHaveLength(1);
+    await h.service.create(dto, file);
+    expect(h.documents()).toHaveLength(1);
+    expect(h.storage.putReservedPdf).toHaveBeenCalledTimes(1);
+  });
+
+  it('no delete call ever uses a key starting with pdfs/', async () => {
+    const h = harness();
+    await h.service.create(dto, file);
+    const deletedKeys = (h.storage.deleteReservedPdf as any).mock.calls.map((c: any[]) => c[0]);
+    expect(deletedKeys.every((key: string) => !String(key).startsWith('pdfs/'))).toBe(true);
+  });
+
+  it('initial-upload replay with the same idempotency key after UPLOADED returns the original result and not DUPLICATE_PDF', async () => {
+    const h = harness();
+    const first = await h.service.create(dto, file);
+    const second = await h.service.create(dto, file);
+    expect(second).toEqual(first);
+    expect(second.uploadStatus).toBe('UPLOADED');
+  });
+
+  it('initial-upload new key with bytes already in another Subject returns DUPLICATE_PDF', async () => {
+    const h = harness();
+    const duplicatePdfObjects = {
+      findDuplicate: vi.fn().mockResolvedValue({
+        scope: 'other_subject', existingDocumentId: 'doc-existing', existingSubjectId: 'subject-existing',
+        existingFilename: 'existing.pdf', pdfObject: { id: 'po-1', r2Key: 'pdfs/hash.pdf' },
+      }),
+      ensureFromStaging: vi.fn(),
+    };
+    const service = new InitialUploadService(h.db as any, h.storage as any, duplicatePdfObjects as any);
+    await expect(service.create({ ...dto, idempotencyKey: 'different-key' }, file)).rejects.toMatchObject({ response: { code: 'DUPLICATE_PDF' } });
   });
 
   it('does not overlap reconciliation sweeps', async () => {
