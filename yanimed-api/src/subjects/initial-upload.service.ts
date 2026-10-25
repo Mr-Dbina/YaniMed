@@ -30,22 +30,6 @@ export class InitialUploadService {
       name: dto.name, filename: file!.originalname, fileSha256, size: pdf.buffer.length,
     })).digest('hex');
 
-    const duplicate = this.pdfObjects ? await this.pdfObjects.findDuplicate(fileSha256, null) : null;
-    if (duplicate && !dto.duplicateAction) {
-      throw new ConflictException({
-        code: 'DUPLICATE_PDF', scope: duplicate.scope,
-        existingDocumentId: duplicate.existingDocumentId,
-        existingSubjectId: duplicate.existingSubjectId,
-        existingFilename: duplicate.existingFilename,
-        allowedActions: duplicate.scope === 'same_subject' ? ['upload_anyway'] : ['keep_existing', 'replace_existing'],
-      });
-    }
-    if (duplicate && dto.duplicateAction && !['keep_existing', 'replace_existing'].includes(dto.duplicateAction)) {
-      throw new BadRequestException('duplicateAction is not valid for this upload.');
-    }
-    let desiredFilename = pdf.originalname;
-    if (duplicate && dto.duplicateAction === 'keep_existing') desiredFilename = duplicate.existingFilename;
-
     let attempt: UploadAttempt;
     try {
       const existing = await this.prisma.uploadAttempt.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
@@ -53,14 +37,29 @@ export class InitialUploadService {
         this.assertSameRequest(existing, requestHash);
         attempt = existing;
       } else {
+        const duplicate = this.pdfObjects ? await this.pdfObjects.findDuplicate(fileSha256, null) : null;
+        if (duplicate && !dto.duplicateAction) {
+          throw new ConflictException({
+            code: 'DUPLICATE_PDF', scope: duplicate.scope,
+            existingDocumentId: duplicate.existingDocumentId,
+            existingSubjectId: duplicate.existingSubjectId,
+            existingFilename: duplicate.existingFilename,
+            allowedActions: duplicate.scope === 'same_subject' ? ['upload_anyway'] : ['keep_existing', 'replace_existing'],
+          });
+        }
+        if (duplicate && dto.duplicateAction && !['keep_existing', 'replace_existing'].includes(dto.duplicateAction)) {
+          throw new BadRequestException('duplicateAction is not valid for this upload.');
+        }
+        let desiredFilename = pdf.originalname;
+        if (duplicate && dto.duplicateAction === 'keep_existing') desiredFilename = duplicate.existingFilename;
         attempt = await this.reserve(dto, requestHash, fileSha256, pdf);
-      }
-      if (desiredFilename !== pdf.originalname && attempt.status !== 'UPLOADED' && attempt.filename !== desiredFilename) {
-        await this.prisma.uploadAttempt.update({ where: { id: attempt.id }, data: { filename: desiredFilename } });
-        attempt = await this.prisma.uploadAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
+        if (desiredFilename !== pdf.originalname && attempt.status !== 'UPLOADED' && attempt.filename !== desiredFilename) {
+          await this.prisma.uploadAttempt.update({ where: { id: attempt.id }, data: { filename: desiredFilename } });
+          attempt = await this.prisma.uploadAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
+        }
       }
     } catch (error) {
-      if (error instanceof ConflictException) throw error;
+      if (error instanceof ConflictException || error instanceof BadRequestException) throw error;
       throw new ServiceUnavailableException('Could not reserve the upload. Retry with the same idempotency key.');
     }
     return this.process(attempt.id, pdf.buffer);

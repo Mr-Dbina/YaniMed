@@ -49,10 +49,11 @@ export class PdfObjectService {
           throw error;
         }
       }
-      const verified = await this.storage.inspectReservedPdf(r2Key);
-      if (!verified || verified.bytes !== sizeBytes) {
-        throw new Error('Canonical PDF verification failed.');
-      }
+    }
+    const verified = await this.storage.inspectReservedPdf(r2Key);
+    if (!verified || verified.bytes !== sizeBytes) {
+      this.logger.warn(`Canonical PDF size mismatch for ${r2Key}: expected ${sizeBytes}, got ${verified?.bytes ?? 'missing'}.`);
+      throw new Error('Canonical PDF verification failed.');
     }
     try {
       return await this.prisma.pdfObject.create({ data: { sha256, r2Key, sizeBytes } });
@@ -70,10 +71,11 @@ export class PdfObjectService {
     const existingObject = await this.storage.inspectReservedPdf(r2Key);
     if (!existingObject) {
       await this.storage.copyObject(stagingKey, r2Key);
-      const verified = await this.storage.inspectReservedPdf(r2Key);
-      if (!verified || verified.bytes !== sizeBytes) {
-        throw new Error('Canonical PDF verification failed.');
-      }
+    }
+    const verified = await this.storage.inspectReservedPdf(r2Key);
+    if (!verified || verified.bytes !== sizeBytes) {
+      this.logger.warn(`Canonical PDF size mismatch for ${r2Key}: expected ${sizeBytes}, got ${verified?.bytes ?? 'missing'}.`);
+      throw new Error('Canonical PDF verification failed.');
     }
     try {
       return await this.prisma.pdfObject.create({ data: { sha256, r2Key, sizeBytes } });
