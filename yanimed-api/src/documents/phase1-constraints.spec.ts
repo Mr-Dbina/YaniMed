@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { SubjectsService } from '../subjects/subjects.service.js';
+import { PdfObjectService } from '../pdf-objects/pdf-object.service.js';
 
 const prisma = new PrismaClient();
 
@@ -94,6 +95,73 @@ describe('Subject read and rename services (transactional)', () => {
       const service = new SubjectsService(tx as any);
       await expect(service.rename('00000000-0000-4000-8000-000000000000', 'New Name')).rejects.toMatchObject({ status: 404 });
       await expect(service.rename(deleting.id, 'New Name')).rejects.toMatchObject({ status: 404 });
+    });
+  });
+});
+
+describe('PdfObject create-or-reuse (transactional)', () => {
+
+
+  it('finds a same-Subject duplicate', async () => {
+    await rollback(async tx => {
+      const subject = await tx.subject.create({ data: { name: 'PhaseOneSameSubject', status: 'ACTIVE' } });
+      const pdfObject = await tx.pdfObject.create({ data: { sha256: 'f'.repeat(64), r2Key: `pdfs/${'f'.repeat(64)}.pdf`, sizeBytes: 1 } });
+      await tx.document.create({ data: { subjectId: subject.id, title: 'existing.pdf', fileUrl: pdfObject.r2Key, fileSize: 1, pdfObjectId: pdfObject.id } });
+      const service = new PdfObjectService(tx as any, {} as any);
+      const duplicate = await service.findDuplicate('f'.repeat(64), subject.id);
+      expect(duplicate?.scope).toBe('same_subject');
+    });
+  });
+
+  it('finds an other-Subject duplicate', async () => {
+    await rollback(async tx => {
+      const subject = await tx.subject.create({ data: { name: 'PhaseOneOtherSubject', status: 'ACTIVE' } });
+      const pdfObject = await tx.pdfObject.create({ data: { sha256: 'g'.repeat(64), r2Key: `pdfs/${'g'.repeat(64)}.pdf`, sizeBytes: 1 } });
+      await tx.document.create({ data: { subjectId: subject.id, title: 'existing.pdf', fileUrl: pdfObject.r2Key, fileSize: 1, pdfObjectId: pdfObject.id } });
+      const service = new PdfObjectService(tx as any, {} as any);
+      const duplicate = await service.findDuplicate('g'.repeat(64), 'different-subject');
+      expect(duplicate?.scope).toBe('other_subject');
+    });
+  });
+});
+
+describe('P2002 constraint assertions', () => {
+  it('asserts PdfObject sha256 P2002 and meta.target', async () => {
+    await rollback(async tx => {
+      await tx.pdfObject.create({ data: { sha256: 'h'.repeat(64), r2Key: 'key-h1', sizeBytes: 1 } });
+      try {
+        await tx.pdfObject.create({ data: { sha256: 'h'.repeat(64), r2Key: 'key-h2', sizeBytes: 2 } });
+      } catch (error) {
+        expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+        expect((error as any).code).toBe('P2002');
+        expect((error as any).meta?.target).toContain('sha256');
+      }
+    });
+  });
+
+  it('asserts PdfObject r2Key P2002 and meta.target', async () => {
+    await rollback(async tx => {
+      await tx.pdfObject.create({ data: { sha256: 'i'.repeat(64), r2Key: 'key-i', sizeBytes: 1 } });
+      try {
+        await tx.pdfObject.create({ data: { sha256: 'j'.repeat(64), r2Key: 'key-i', sizeBytes: 2 } });
+      } catch (error) {
+        expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+        expect((error as any).code).toBe('P2002');
+        expect((error as any).meta?.target).toContain('r2Key');
+      }
+    });
+  });
+
+  it('asserts Subject name case-variant P2002 and lower(name) target', async () => {
+    await rollback(async tx => {
+      await tx.subject.create({ data: { name: 'PhaseOneCaseVariant' } });
+      try {
+        await tx.subject.create({ data: { name: 'phaseonecasevariant' } });
+      } catch (error) {
+        expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+        expect((error as any).code).toBe('P2002');
+        expect((error as any).meta?.target).toContain('lower(name)');
+      }
     });
   });
 });
