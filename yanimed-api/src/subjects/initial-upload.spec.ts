@@ -331,6 +331,23 @@ describe('Initial Subject/PDF workflow', () => {
     await expect(service.create({ ...dto, idempotencyKey: 'different-key' }, file)).rejects.toMatchObject({ response: { code: 'DUPLICATE_PDF' } });
   });
 
+  it('logs the failed upload stage without leaking the PDF buffer', async () => {
+    const h = harness();
+    const secretBufferMarker = 'SECRET_BUFFER_MARKER';
+    const pdf = await PDFDocument.create(); pdf.addPage();
+    const buffer = Buffer.from(await pdf.save());
+    const fileWithMarker = { buffer, size: buffer.length, mimetype: 'application/pdf', originalname: 'marker.pdf' };
+    h.storage.putReservedPdf.mockRejectedValueOnce(Object.assign(new Error('put failed'), { $metadata: { httpStatusCode: 500, requestId: 'req-1' }, code: 'PutFailed' }));
+    const warn = vi.spyOn((h.service as any).logger, 'warn');
+    const result = await h.service.create(dto, fileWithMarker);
+    expect(result.uploadStatus).toBe('AWAITING_RETRY');
+    expect(warn).toHaveBeenCalled();
+    const logged = warn.mock.calls.map(call => String(call[0])).join('\\n');
+    expect(logged).toContain('failed during put');
+    expect(logged).not.toContain(secretBufferMarker);
+    warn.mockRestore();
+  });
+
   it('does not overlap reconciliation sweeps', async () => {
     let finish!: () => void;
     const reconcileBatch = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));

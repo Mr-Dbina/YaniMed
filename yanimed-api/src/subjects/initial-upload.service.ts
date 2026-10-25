@@ -167,10 +167,12 @@ export class InitialUploadService {
   async process(id: string, buffer?: Buffer) {
     const owner = randomUUID();
     let attempt: UploadAttempt | null = null;
+    let stage = 'lookup';
     try {
       attempt = await this.prisma.uploadAttempt.findUnique({ where: { id } });
       if (!attempt) throw new NotFoundException('Upload attempt not found.');
       if (attempt.status === 'UPLOADED') return this.response(attempt);
+      stage = 'claim';
       const claimed = await this.prisma.uploadAttempt.updateMany({
         where: { id, status: { not: 'UPLOADED' }, OR: [{ leaseUntil: null }, { leaseUntil: { lt: new Date() } }] },
         data: { leaseOwner: owner, leaseUntil: new Date(Date.now() + UPLOAD_LEASE_MS), attempts: { increment: 1 } },
@@ -178,11 +180,17 @@ export class InitialUploadService {
       if (claimed.count) {
         // Refresh after acquiring the lease: another worker may have changed state.
         attempt = await this.prisma.uploadAttempt.findUniqueOrThrow({ where: { id } });
+        stage = 'inspect';
         let stored = await this.storage.inspectReservedPdf(attempt.objectKey);
         if (stored && this.matches(attempt, stored)) {
+          stage = 'canonicalize';
           const pdfObject = await this.pdfObjects.ensureFromStaging(attempt.objectKey, attempt.fileSha256, attempt.fileSize);
+          stage = 'finalize';
           const finalized = await this.finalize(attempt, owner, stored, pdfObject);
-          if (finalized) await this.deleteStagingBestEffort(attempt, stored, pdfObject);
+          if (finalized) {
+            stage = 'cleanup';
+            await this.deleteStagingBestEffort(attempt, stored, pdfObject);
+          }
         } else if (stored) {
           // Only a previously recorded cleanup intent may delete an object.
           // Foreign/unowned objects are never deleted. ETag prevents deleting a replaced version.
@@ -197,12 +205,19 @@ export class InitialUploadService {
             where: { id, leaseOwner: owner, leaseUntil: { gt: new Date() } }, data: { status: 'UPLOADING' },
           });
           if (uploading.count) {
+            stage = 'put';
             await this.storage.putReservedPdf(attempt, buffer);
+            stage = 'inspect';
             stored = await this.storage.inspectReservedPdf(attempt.objectKey);
             if (stored && this.matches(attempt, stored)) {
+              stage = 'canonicalize';
               const pdfObject = await this.pdfObjects.ensureFromStaging(attempt.objectKey, attempt.fileSha256, attempt.fileSize);
+              stage = 'finalize';
               const finalized = await this.finalize(attempt, owner, stored, pdfObject);
-              if (finalized) await this.deleteStagingBestEffort(attempt, stored, pdfObject);
+              if (finalized) {
+                stage = 'cleanup';
+                await this.deleteStagingBestEffort(attempt, stored, pdfObject);
+              }
             } else await this.release(id, owner, stored ? 'CLEANUP_PENDING' : 'AWAITING_RETRY', 'STORAGE_UNCONFIRMED');
           }
         } else {
@@ -212,6 +227,12 @@ export class InitialUploadService {
       return this.response(await this.prisma.uploadAttempt.findUniqueOrThrow({ where: { id } }));
     } catch (error) {
       if (error instanceof NotFoundException) throw error;
+      const failure = error instanceof Error ? error : new Error(String(error));
+      const metadata = (error as { $metadata?: { httpStatusCode?: number; requestId?: string } })?.$metadata;
+      this.logger.warn(
+        `Upload attempt ${id} failed during ${stage}: ${failure.name}: ${failure.message} ` +
+        `(httpStatus=${metadata?.httpStatusCode ?? 'n/a'}, requestId=${metadata?.requestId ?? 'n/a'}, code=${(error as { Code?: string; code?: string })?.Code ?? (error as { code?: string })?.code ?? 'n/a'})`,
+      );
       // Never delete a valid object after DB failure. HEAD reconciliation can adopt it.
       try {
         await this.release(id, owner, attempt?.status === 'CLEANUP_PENDING' ? 'CLEANUP_PENDING' : 'AWAITING_RETRY',
