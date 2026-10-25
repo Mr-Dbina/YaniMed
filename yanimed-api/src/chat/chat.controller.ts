@@ -3,9 +3,12 @@ import {
   UseGuards, ValidationPipe,
 } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Optional } from '@nestjs/common';
 import { OmniRouteService } from '../omniroute/omniroute.service.js';
 import { ChatGuard } from './chat.guard.js';
 import { ChatAnswerDto, ChatAnswerResponseDto } from './dto/chat-answer.dto.js';
+import { SubjectChatDto } from './dto/subject-chat.dto.js';
+import { SubjectChatService } from './subject-chat.service.js';
 
 const SYSTEM_PROMPT = 'You are answering without reference material. ' +
   'This is an ungrounded development demonstration, not study material. ' +
@@ -15,7 +18,10 @@ const SYSTEM_PROMPT = 'You are answering without reference material. ' +
 @UseGuards(ChatGuard)
 @Controller('chat')
 export class ChatController {
-  constructor(@Inject(OmniRouteService) private readonly omniroute: OmniRouteService) {}
+  constructor(
+    @Inject(OmniRouteService) private readonly omniroute: OmniRouteService,
+    @Optional() @Inject(SubjectChatService) private readonly subjectChat?: SubjectChatService,
+  ) {}
 
   @Post('answer')
   @HttpCode(200)
@@ -46,5 +52,23 @@ export class ChatController {
     } catch {
       throw new ServiceUnavailableException('AI answer unavailable. Please try again shortly.');
     }
+  }
+
+  @Post('subject-answer')
+  @HttpCode(200)
+  @UseGuards(ChatGuard)
+  async subjectAnswer(
+    @Body(new ValidationPipe({
+      transform: true, whitelist: true, forbidNonWhitelisted: true,
+      expectedType: SubjectChatDto,
+    })) dto: SubjectChatDto,
+  ) {
+    if (!this.subjectChat) throw new ServiceUnavailableException('Subject chat is not configured.');
+    return this.subjectChat.answer({
+      subjectId: dto.subjectId,
+      prompt: dto.prompt,
+      chatId: dto.chatId,
+      topK: dto.topK,
+    });
   }
 }

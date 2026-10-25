@@ -14,21 +14,30 @@ interface PdfDropzoneProps {
   onFileSelect: (file: File) => void;
   title?: string;
   subtitle?: string;
+  disabled?: boolean;
 }
 
-export function PdfDropzone({ file, onFileSelect, title, subtitle }: PdfDropzoneProps) {
+export function PdfDropzone({ file, onFileSelect, title, subtitle, disabled = false }: PdfDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const handleFiles = (files: FileList | null) => {
     const candidate = files && files[0];
-    if (candidate && isPdf(candidate)) onFileSelect(candidate);
+    if (disabled || !candidate) return;
+    if (!isPdf(candidate) || candidate.size === 0) {
+      setError("Select a nonempty PDF file.");
+      return;
+    }
+    setError(null);
+    onFileSelect(candidate);
   };
 
   return (
     <>
       <button
         type="button"
+        disabled={disabled}
         className={`pdf-dropzone${isDragging ? " pdf-dropzone--active" : ""}`}
         onClick={() => inputRef.current?.click()}
         onDragOver={(event: DragEvent<HTMLButtonElement>) => {
@@ -83,6 +92,7 @@ export function PdfDropzone({ file, onFileSelect, title, subtitle }: PdfDropzone
       <input
         ref={inputRef}
         type="file"
+        disabled={disabled}
         accept={PDF_MIME}
         className="pdf-dropzone__input"
         onChange={(event: ChangeEvent<HTMLInputElement>) => {
@@ -90,6 +100,7 @@ export function PdfDropzone({ file, onFileSelect, title, subtitle }: PdfDropzone
           event.target.value = "";
         }}
       />
+      {error && <p role="alert" className="subject-modal__error">{error}</p>}
     </>
   );
 }

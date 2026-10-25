@@ -8,6 +8,14 @@ import { OmniRouteModule } from './omniroute/omniroute.module.js';
 import { validateEnv } from './config/env.validation.js';
 import { VoiceModule } from './voice/voice.module.js';
 import { ChatModule } from './chat/chat.module.js';
+import { StorageModule } from './storage/storage.module.js';
+import { DocumentsModule } from './documents/documents.module.js';
+import { PdfExtractionModule } from './pdf-extraction/pdf-extraction.module.js';
+import { ChunkingModule } from './chunking/chunking.module.js';
+import { EmbeddingModule } from './embeddings/embedding.module.js';
+import { DocumentProcessingModule } from './document-processing/document-processing.module.js';
+import { RetrievalModule } from './retrieval/retrieval.module.js';
+import { SubjectsModule } from './subjects/subjects.module.js';
 
 @Module({
   imports: [
@@ -23,6 +31,14 @@ import { ChatModule } from './chat/chat.module.js';
     OmniRouteModule,
     VoiceModule,
     ChatModule,
+    StorageModule,
+    DocumentsModule,
+    SubjectsModule,
+    PdfExtractionModule,
+    ChunkingModule,
+    EmbeddingModule,
+    DocumentProcessingModule,
+    RetrievalModule,
   ],
   controllers: [AppController],
   providers: [AppService],

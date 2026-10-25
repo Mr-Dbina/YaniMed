@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -26,6 +26,8 @@ const navItems: { label: string; href: string; icon: LucideIcon }[] = [
   { label: "Mock Test", href: "/mock-test", icon: ClipboardList },
 ];
 
+const subscribeMounted = () => () => {};
+
 interface SidebarProps {
   subjects: Subject[];
   activeSubjectId: string | null;
@@ -44,12 +46,12 @@ export function Sidebar({
   onDeleteSubject,
 }: SidebarProps) {
   const pathname = usePathname();
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const isCollapsed = useSidebarStore((state) => state.isCollapsed);
   const isPreview = useSidebarStore((state) => state.isPreview);
   const toggle = useSidebarStore((state) => state.toggle);
   const setPreview = useSidebarStore((state) => state.setPreview);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(subscribeMounted, () => true, () => false);
   const [menuSubjectId, setMenuSubjectId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -92,16 +94,14 @@ export function Sidebar({
 
   const pendingDelete = subjects.find((s) => s.id === pendingDeleteId) ?? null;
 
-  useEffect(() => setMounted(true), []);
-
-  const activeTheme = mounted ? theme : "light";
+  const activeTheme = mounted ? resolvedTheme : "light";
   const isVisuallyCollapsed = isCollapsed && !isPreview;
 
   return (
     <aside
       className={`sidebar${isVisuallyCollapsed ? " sidebar--collapsed" : ""}`}
       onMouseEnter={() => {
-        if (isCollapsed) setPreview(true);
+        if (isCollapsed && window.matchMedia("(hover: hover) and (min-width: 768px)").matches) setPreview(true);
       }}
       onMouseLeave={() => setPreview(false)}
     >
@@ -259,24 +259,20 @@ export function Sidebar({
             )}
             Appearance
           </span>
-          <div className="theme-toggle">
-            <button
-              type="button"
-              aria-label="Light mode"
-              onClick={() => setTheme("light")}
+          <button type="button" className="theme-toggle" role="switch"
+            aria-label="Appearance" aria-checked={activeTheme === "dark"}
+            onClick={() => setTheme(activeTheme === "dark" ? "light" : "dark")}>
+            <span
               className={`theme-toggle__option${activeTheme === "light" ? " theme-toggle__option--active" : ""}`}
             >
               <Sun size={14} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label="Dark mode"
-              onClick={() => setTheme("dark")}
+            </span>
+            <span
               className={`theme-toggle__option${activeTheme === "dark" ? " theme-toggle__option--active" : ""}`}
             >
               <Moon size={14} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
-            </button>
-          </div>
+            </span>
+          </button>
         </div>
       </div>
 

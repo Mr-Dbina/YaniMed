@@ -29,13 +29,6 @@ export default function NotificationsSettingsPage() {
 
       <div className="setting-card">
         <SettingRow
-          label="Projects"
-          description="Get notified when you receive an email invitation to a shared project."
-        >
-          <ChannelPill value="Email" />
-        </SettingRow>
-
-        <SettingRow
           label="Responses"
           description="Get notified when YaniMed responds to requests that take time, like research or image generation."
         >
@@ -54,7 +47,7 @@ export default function NotificationsSettingsPage() {
           label="Usage"
           description="We'll notify you when limits reset for features like image creation."
         >
-          <ChannelPill value="Push, Email" />
+          <ChannelPill value="Push" />
         </SettingRow>
       </div>
     </>

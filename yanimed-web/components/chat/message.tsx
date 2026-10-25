@@ -4,14 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import { MessageActions } from "@/components/chat/message-actions";
 import type { MessageAction } from "@/components/chat/message-actions";
 import type { ChatMessage } from "@/lib/types";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface MessageProps {
   message: ChatMessage;
-  onCopy?: (message: ChatMessage) => void;
+  onCopy?: (message: ChatMessage) => void | Promise<void>;
   onEdit?: (message: ChatMessage, content: string) => void;
   onFeedback?: (message: ChatMessage, rating: 1 | -1) => void;
   onReadAloud?: (message: ChatMessage) => void;
   onRegenerate?: (message: ChatMessage) => void;
+  actionsDisabled?: boolean;
 }
 
 const COPY_FEEDBACK_MS = 1500;
@@ -68,8 +71,9 @@ function ThumbIcon({ direction }: { direction: "up" | "down" }) {
   );
 }
 
-function useCopyFeedback(onCopy?: () => void) {
+function useCopyFeedback(onCopy?: () => void | Promise<void>) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -78,15 +82,21 @@ function useCopyFeedback(onCopy?: () => void) {
     };
   }, []);
 
-  const trigger = () => {
+  const trigger = async () => {
     if (!onCopy) return;
-    onCopy();
-    setCopied(true);
+    try {
+      await onCopy();
+      setCopied(true);
+      setCopyFailed(false);
+    } catch {
+      setCopyFailed(true);
+      setCopied(false);
+    }
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => setCopied(false), COPY_FEEDBACK_MS);
+    timeoutRef.current = setTimeout(() => { setCopied(false); setCopyFailed(false); }, COPY_FEEDBACK_MS);
   };
 
-  return { copied, trigger };
+  return { copied, copyFailed, trigger };
 }
 
 export function Message({
@@ -96,9 +106,10 @@ export function Message({
   onFeedback,
   onReadAloud,
   onRegenerate,
+  actionsDisabled = false,
 }: MessageProps) {
   const isUser = message.role === "user";
-  const { copied, trigger: triggerCopy } = useCopyFeedback(
+  const { copied, copyFailed, trigger: triggerCopy } = useCopyFeedback(
     onCopy ? () => onCopy(message) : undefined,
   );
 
@@ -117,8 +128,8 @@ export function Message({
     label: "Copy",
     icon: <CopyIcon />,
     onClick: triggerCopy,
-    active: copied,
-    activeLabel: "Copied",
+    active: copied || copyFailed,
+    activeLabel: copyFailed ? "Copy unavailable" : "Copied",
   };
 
   const userActions: MessageAction[] = onCopy ? [copyAction] : [];
@@ -135,27 +146,30 @@ export function Message({
   }
 
   const assistantActions: MessageAction[] = onCopy ? [copyAction] : [];
+  assistantActions.push({
+    id: "read-aloud", label: onReadAloud ? "Read aloud" : "Read aloud unavailable: voice is not connected",
+    icon: <SpeakerIcon />, disabled: !onReadAloud || actionsDisabled,
+    onClick: () => onReadAloud?.(message),
+  });
   if (onFeedback) {
     assistantActions.push({
       id: "good",
-      label: "Good response",
+      label: "Like response (saved for this session)",
       icon: <ThumbIcon direction="up" />,
       active: message.rating === 1,
       onClick: () => onFeedback(message, 1),
     });
-  }
-  if (onReadAloud) {
     assistantActions.push({
-      id: "read-aloud",
-      label: "Read aloud",
-      icon: <SpeakerIcon />,
-      onClick: () => onReadAloud(message),
+      id: "bad", label: "Dislike response (saved for this session)",
+      icon: <ThumbIcon direction="down" />, active: message.rating === -1,
+      onClick: () => onFeedback(message, -1),
     });
   }
   if (onRegenerate) {
     assistantActions.push({
       id: "regenerate",
-      label: "Change response",
+      label: "Retry response",
+      disabled: actionsDisabled,
       icon: <RefreshIcon />,
       onClick: () => onRegenerate(message),
     });
@@ -195,7 +209,7 @@ export function Message({
   );
 
   return (
-    <div className={`group/message flex flex-col ${isUser ? "items-end" : "items-start"}`}>
+    <div className={`subject-chat__message group/message flex flex-col ${isUser ? "items-end" : "items-start"}`}>
       {isUser ? (
         isEditing ? (
           <div className="flex w-full max-w-md flex-col items-end gap-1">
@@ -221,7 +235,7 @@ export function Message({
           </div>
         ) : (
           <>
-            <p className="max-w-md rounded-lg border border-border bg-card px-3.5 py-2 text-foreground">
+            <p className="subject-chat__user-text max-w-md rounded-lg border border-border bg-card px-3.5 py-2 text-foreground">
               {message.content}
             </p>
             {actions.length > 0 && (
@@ -231,8 +245,14 @@ export function Message({
         )
       ) : (
         <>
-          <div className="max-w-2xl">
-            <p className="whitespace-pre-wrap text-foreground">{message.content}</p>
+          <div className="subject-chat__answer max-w-2xl">
+            <div className="chat-markdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{
+                table: ({ children }) => <div className="chat-markdown__scroll" tabIndex={0} role="region" aria-label="Scrollable table"><table>{children}</table></div>,
+                pre: ({ children }) => <pre className="chat-markdown__scroll" tabIndex={0} aria-label="Scrollable code block">{children}</pre>,
+                img: ({ alt }) => <span>{alt}</span>,
+              }}>{message.content}</ReactMarkdown>
+            </div>
             {message.citations?.map((citation) => (
               <div key={JSON.stringify([citation.sourceId, citation.page, citation.chapter, citation.snippet])} className="mt-2 text-foreground">
                 <p className="font-bold">

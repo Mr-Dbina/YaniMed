@@ -7,6 +7,7 @@ import { DeleteSubjectModal } from "@/components/delete-subject-modal";
 import { ChatConversation } from "@/components/chat/chat-conversation";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import type { Subject } from "@/lib/types";
+import { processingPresentation } from "@/lib/processing-state";
 
 interface SubjectDetailProps {
   subject: Subject;
@@ -57,11 +58,12 @@ export function SubjectDetail({
   };
 
   const isChat = Boolean(subject.file);
+  const processing = processingPresentation(subject);
 
   const breadcrumb = (
     <nav className="subject-detail__breadcrumb">
       <button type="button" className="subject-detail__crumb-link" onClick={onBack}>
-        Subjects
+        Subject
       </button>
       <span className="subject-detail__crumb-sep">/</span>
       <span className="subject-detail__crumb-current">{subject.name}</span>
@@ -141,6 +143,17 @@ export function SubjectDetail({
 
           <ChatConversation
             key={subject.id}
+            disabledReason="Chat unavailable until this PDF is processed and its index is verified."
+            emptyState={
+              <section className="subject-processing" aria-label="PDF processing status">
+                <h1>{subject.name}</h1>
+                <p>{subject.file?.name}</p>
+                <h2>{processing.title}</h2>
+                <p>{processing.detail}</p>
+                <p>Keep the original PDF. Browser storage is local to this browser and can be cleared.</p>
+                {subject.processingStatus === "failed" && <button type="button" disabled title="Requires the backend PDF processing endpoint">Retry processing</button>}
+              </section>
+            }
             onAsked={(prompt) => onUpdateSubject(subject.id, { lastMessage: prompt })}
           />
         </>
@@ -173,7 +186,7 @@ export function SubjectDetail({
             <h2 className="subject-detail__section-title">Context</h2>
             <PdfDropzone
               file={subject.file}
-              onFileSelect={(file) => onUpdateSubject(subject.id, { file })}
+              onFileSelect={(file) => onUpdateSubject(subject.id, { file, processingStatus: "unavailable", processingError: undefined })}
             />
           </div>
         </>

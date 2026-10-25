@@ -16,8 +16,17 @@ enum DocumentStatus {
 }
 
 enum ExtractionMethod {
-  TEXT // pdfjs-dist text layer
-  OCR  // Tesseract.js fallback
+  TEXT    // pdfjs-dist text layer
+  OCR     // Tesseract.js fallback
+  HYBRID  // text layer plus OCR
+}
+
+enum UploadAttemptStatus {
+  PENDING
+  UPLOADING
+  AWAITING_RETRY
+  CLEANUP_PENDING
+  UPLOADED
 }
 
 enum MessageRole {
@@ -41,6 +50,7 @@ model Subject {
 
   documents    Document[]
   chats        Chat[]
+  initialUpload UploadAttempt?
 }
 
 model Document {
@@ -64,7 +74,9 @@ model Document {
   updatedAt    DateTime       @updatedAt
 
   chunks       Chunk[]
+  pages        DocumentPage[]
   citations    MessageCitation[]
+  initialUpload UploadAttempt?
 
   @@index([subjectId])
   @@index([status])
@@ -103,6 +115,57 @@ model Chunk {
   @@unique([documentId, chunkIndex]) // idempotent re-processing on resume
   @@index([documentId])
   @@index([documentId, page])
+}
+
+model DocumentPage {
+  id               String           @id @default(uuid())
+  documentId       String
+  document         Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  pageNumber       Int              // exact 1-based physical PDF page number
+  text             String
+  charCount        Int              @default(0)
+
+  extractionMethod ExtractionMethod @default(TEXT)
+  needsOcr         Boolean          @default(false)
+  ocrUsed          Boolean          @default(false)
+  ocrError         String?
+
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([documentId, pageNumber])
+  @@index([documentId])
+  @@index([documentId, pageNumber])
+}
+
+// Durable intent/receipt. A reserved Subject remains incomplete; this record
+// never indicates PDF processing readiness. External I/O occurs outside DB transactions.
+model UploadAttempt {
+  id             String              @id @default(uuid())
+  idempotencyKey String              @unique
+  requestHash    String
+  subjectId      String              @unique
+  subject        Subject             @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  documentId     String?             @unique
+  document       Document?           @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  objectKey      String              @unique
+  filename       String
+  fileSize       Int
+  fileSha256     String
+  pageCount      Int
+  status         UploadAttemptStatus @default(PENDING)
+  etag           String?
+  lastError      String?
+  leaseOwner     String?
+  leaseUntil     DateTime?
+  attempts       Int                 @default(0)
+  nextAttemptAt  DateTime            @default(now())
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([leaseUntil])
 }
 
 model Chat {

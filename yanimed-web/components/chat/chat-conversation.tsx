@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { AudioWaveform, Mic, Plus } from "lucide-react";
 import { Message } from "@/components/chat/message";
 import type { ChatMessage } from "@/lib/types";
@@ -9,48 +9,57 @@ import { ApiError, MAX_PROMPT_LENGTH, requestAnswer } from "@/lib/api";
 
 interface ChatConversationProps {
   onAsked?: (prompt: string) => void;
+  disabledReason?: string;
+  emptyState?: ReactNode;
 }
 
 function createMessageId(): string {
   return crypto.randomUUID();
 }
 
-export function ChatConversation({ onAsked }: ChatConversationProps) {
+export function ChatConversation({ onAsked, disabledReason, emptyState }: ChatConversationProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [failedPrompt, setFailedPrompt] = useState<string | null>(null);
+  const [failedMessage, setFailedMessage] = useState<{ id: string; prompt: string; assistantId?: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const endRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
+  const [showLatest, setShowLatest] = useState(false);
 
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    const viewport = viewportRef.current;
+    if (viewport && followLatest.current) viewport.scrollTop = viewport.scrollHeight;
   }, [messages, isPending, error]);
 
-  const canSend = draft.trim().length > 0 && !isPending;
+  const canSend = draft.trim().length > 0 && !isPending && !disabledReason;
 
-  const send = async (rawPrompt: string, retry = false) => {
+  const send = async (rawPrompt: string, regenerate?: { id: string; prompt: string; assistantId: string }) => {
     const prompt = rawPrompt.trim();
-    if (!prompt || isPending || abortRef.current) return;
+    if (!prompt || isPending || abortRef.current || disabledReason) return;
 
     if (prompt.length > MAX_PROMPT_LENGTH) {
       setError(`Question is too long. Keep it under ${MAX_PROMPT_LENGTH} characters.`);
       return;
     }
 
-    if (!retry) setMessages((current) => [
+    const retryMessage = regenerate ?? (failedMessage?.prompt === prompt ? failedMessage : null);
+    const userMessageId = retryMessage?.id ?? createMessageId();
+    if (!retryMessage) setMessages((current) => [
       ...current,
-      { id: createMessageId(), role: "user", content: prompt },
+      { id: userMessageId, role: "user", content: prompt },
     ]);
     setDraft("");
     setError(null);
-    setFailedPrompt(null);
+    setFailedMessage(null);
     setIsPending(true);
+    followLatest.current = true;
+    setShowLatest(false);
     onAsked?.(prompt);
 
     const controller = new AbortController();
@@ -58,16 +67,17 @@ export function ChatConversation({ onAsked }: ChatConversationProps) {
 
     try {
       const result = await requestAnswer(prompt, controller.signal);
-      setMessages((current) => [
-        ...current,
-        {
+      const assistant: ChatMessage = {
           id: createMessageId(), role: "assistant", content: result.answer,
           citations: result.citations, grounding: result.grounding, metadata: result.metadata,
-        },
-      ]);
+          replyToId: userMessageId,
+      };
+      setMessages(current => retryMessage?.assistantId
+        ? current.map(message => message.id === retryMessage.assistantId ? assistant : message)
+        : [...current, assistant]);
     } catch (err) {
       if (controller.signal.aborted) return;
-      setFailedPrompt(prompt);
+      setFailedMessage({ id: userMessageId, prompt, assistantId: retryMessage?.assistantId });
       setError(
         err instanceof ApiError ? err.message : "Something went wrong while asking.",
       );
@@ -85,28 +95,41 @@ export function ChatConversation({ onAsked }: ChatConversationProps) {
     void send(draft);
   };
 
-  const copyMessage = (message: ChatMessage) => {
-    void navigator.clipboard?.writeText(message.content);
+  const copyMessage = async (message: ChatMessage) => {
+    if (!navigator.clipboard) throw new Error("Clipboard unavailable");
+    await navigator.clipboard.writeText(message.content);
+  };
+
+  const regenerateMessage = (message: ChatMessage) => {
+    const question = messages.find(item => item.id === message.replyToId && item.role === "user");
+    if (question) void send(question.content, { id: question.id, prompt: question.content, assistantId: message.id });
   };
 
   const hasThread = messages.length > 0;
 
   return (
     <div className={`subject-chat${hasThread ? " subject-chat--thread" : ""}`}>
-      <p className="text-sm text-muted-foreground" role="note">
-        Development build: not for studying. Single-turn only. Answers are not grounded in your PDF and have no verified citations.
+      <p className="subject-chat__notice text-sm text-muted-foreground" role="note">
+        {disabledReason ? "PDF not indexed · chat unavailable" : "Development preview · ungrounded · not for studying"}
       </p>
-      {!hasThread && (
+      <div className="subject-chat__viewport" ref={viewportRef} onScroll={(event) => {
+        const element = event.currentTarget;
+        followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+        setShowLatest(!followLatest.current);
+      }}>
+      {!hasThread && (emptyState ?? (
         <div className="subject-chat__hero">
           <img src="/images/yanimed_logo.png" alt="" width={64} height={64} />
           <h1 className="subject-chat__title">How can I help?</h1>
         </div>
-      )}
+      ))}
 
       {hasThread && (
         <div className="subject-chat__thread">
           {messages.map((message) => (
-            <Message key={message.id} message={message} onCopy={copyMessage} />
+            <Message key={message.id} message={message} onCopy={copyMessage}
+              onFeedback={(item, rating) => setMessages(current => current.map(entry => entry.id === item.id ? { ...entry, rating: entry.rating === rating ? null : rating } : entry))}
+              onRegenerate={regenerateMessage} actionsDisabled={isPending || Boolean(disabledReason)} />
           ))}
 
           {isPending && (
@@ -115,20 +138,25 @@ export function ChatConversation({ onAsked }: ChatConversationProps) {
             </p>
           )}
 
-          <div ref={endRef} />
         </div>
       )}
+      </div>
+
+      {showLatest && <button type="button" className="subject-chat__latest" onClick={() => {
+        followLatest.current = true;
+        setShowLatest(false);
+        if (viewportRef.current) viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
+      }}>Latest message ↓</button>}
 
       {error && (
         <div className="subject-chat__error" role="alert">
           <p>{error}</p>
-          {failedPrompt && (
+          {failedMessage && (
             <button type="button" className="underline" disabled={isPending}
-              onClick={() => void send(failedPrompt, true)}>
+              onClick={() => void send(failedMessage.prompt)}>
               Retry last question
             </button>
           )}
-          <p>You can also enter a new question below.</p>
         </div>
       )}
 
@@ -139,10 +167,12 @@ export function ChatConversation({ onAsked }: ChatConversationProps) {
         <input
           type="text"
           className="subject-chat__input"
-          placeholder="What do you want to learn today?"
+          placeholder={disabledReason ? "PDF processing unavailable" : "What do you want to learn today?"}
+          aria-label="Question"
+          aria-describedby={disabledReason ? "chat-disabled-reason" : undefined}
           value={draft}
           maxLength={MAX_PROMPT_LENGTH}
-          disabled={isPending}
+          disabled={isPending || Boolean(disabledReason)}
           onChange={(event) => setDraft(event.target.value)}
         />
         <button type="submit" disabled={!canSend} className="subject-chat__icon-btn" aria-label="Send question">
@@ -155,6 +185,7 @@ export function ChatConversation({ onAsked }: ChatConversationProps) {
           <AudioWaveform size={20} strokeWidth={1.75} aria-hidden="true" />
         </button>
       </form>
+      {disabledReason && <p id="chat-disabled-reason" className="subject-chat__notice">{disabledReason}</p>}
     </div>
   );
 }

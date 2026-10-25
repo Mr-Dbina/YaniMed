@@ -43,7 +43,7 @@ export function MessageActions({
 
   return (
     <div
-      className={`flex items-center gap-1 pt-1.5 ${align === "end" ? "justify-end" : "justify-start"} ${hidden} transition-opacity duration-150`}
+      className={`message-actions flex items-center gap-1 pt-1.5 ${align === "end" ? "justify-end" : "justify-start"} ${hidden} transition-opacity duration-150`}
     >
       {actions.map((action) => (
         <span key={action.id} className="group/action relative inline-flex">
@@ -63,7 +63,7 @@ export function MessageActions({
           </button>
           <span
             role="tooltip"
-            className="pointer-events-none absolute top-full left-1/2 z-10 mt-1 -translate-x-1/2 whitespace-nowrap rounded bg-neutral-900 px-1.5 py-0.5 text-[11px] leading-tight text-neutral-50 opacity-0 transition-opacity group-hover/action:opacity-100 group-focus-within/action:opacity-100 dark:bg-neutral-100 dark:text-neutral-900"
+            className={`message-actions__tooltip pointer-events-none absolute bottom-full z-10 mb-1 rounded bg-neutral-900 px-1.5 py-0.5 text-[11px] leading-tight text-neutral-50 opacity-0 transition-opacity group-hover/action:opacity-100 group-focus-within/action:opacity-100 dark:bg-neutral-100 dark:text-neutral-900 ${align === "end" ? "right-0" : "left-0"}`}
           >
             {action.active && action.activeLabel ? action.activeLabel : action.label}
           </span>

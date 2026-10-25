@@ -5,10 +5,14 @@ import { LayoutGrid, List, Search } from "lucide-react";
 import type { LibraryFile } from "@/lib/format";
 import { formatBytes, relativeTime } from "@/lib/format";
 import { FileIcon } from "@/components/library/file-icon";
+import Link from "next/link";
+import { useSubjectsStore } from "@/lib/stores/subjects-store";
 
 type View = "list" | "grid";
 
 export function LibraryView({ files }: { files: LibraryFile[] }) {
+  const subjects = useSubjectsStore(state => state.subjects);
+  const setActiveSubject = useSubjectsStore(state => state.setActiveSubject);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<View>("list");
 
@@ -60,11 +64,22 @@ export function LibraryView({ files }: { files: LibraryFile[] }) {
         </div>
       </header>
 
+      <p className="library__notice">Local files are not uploaded or indexed. PDF processing is not connected yet.</p>
+      {subjects.some(subject => subject.file) && <section aria-label="PDFs saved in this browser" className="library__local">
+        <h2>Saved in this browser</h2>
+        <ul>{subjects.filter(subject => subject.file && (!query || subject.file.name.toLowerCase().includes(query.toLowerCase()))).map(subject => <li key={subject.id}>
+          <Link href="/subjects" onClick={() => setActiveSubject(subject.id)}>{subject.file?.name} — {subject.name}</Link>
+          <span> · Local copy; not indexed</span>
+        </li>)}</ul>
+      </section>}
+
+      <h2>Library folder files</h2>
+
       {filtered.length === 0 ? (
         <div className="library__empty">
           {files.length === 0 ? (
             <>
-              <p className="library__empty-title">Your library is empty</p>
+              <p className="library__empty-title">No files in the library folder</p>
               <p className="library__empty-text">
                 Files placed in the library folder will appear here.
               </p>

@@ -24,6 +24,7 @@ export const r2Env = [
   'R2_SECRET_ACCESS_KEY',
   'R2_ENDPOINT',
   'R2_BUCKET_NAME',
+  'R2_JURISDICTION',
 ] as const;
 
 export const geminiEnv = ['GEMINI_API_KEY'] as const;
@@ -45,8 +46,13 @@ export function validateEnv() {
 
   return {
     port: Number(process.env.PORT ?? 3000),
-    r2BucketName: process.env.R2_BUCKET_NAME,
-    geminiApiKey: process.env.GEMINI_API_KEY,
+  r2AccountId: process.env.R2_ACCOUNT_ID,
+  r2AccessKeyId: process.env.R2_ACCESS_KEY_ID,
+  r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  r2Endpoint: process.env.R2_ENDPOINT,
+  r2BucketName: process.env.R2_BUCKET_NAME ?? '',
+  r2Jurisdiction: process.env.R2_JURISDICTION,
+  geminiApiKey: process.env.GEMINI_API_KEY,
     omnirouteBaseUrl: process.env.OMNIROUTE_BASE_URL,
     omnirouteApiKey: process.env.OMNIROUTE_API_KEY,
     omniroutePrimaryModel: process.env.OMNIROUTE_PRIMARY_MODEL,

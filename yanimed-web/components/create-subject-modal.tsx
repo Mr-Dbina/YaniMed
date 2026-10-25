@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { PdfDropzone } from "@/components/pdf-dropzone";
 
 interface CreateSubjectModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (data: { name: string; file: File | null }) => void;
+  onSubmit: (data: { name: string; file: File }) => Promise<void>;
 }
 
 export function CreateSubjectModal({
@@ -16,18 +17,19 @@ export function CreateSubjectModal({
 }: CreateSubjectModalProps) {
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const savingRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
   const nameId = useId();
 
   useEffect(() => {
     if (!open) return undefined;
-    setName("");
-    setFile(null);
     nameInputRef.current?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onOpenChange(false);
+      if (event.key === "Escape" && !savingRef.current) onOpenChange(false);
     };
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -41,24 +43,36 @@ export function CreateSubjectModal({
 
   if (!open) return null;
 
-  const canCreate = name.trim().length > 0;
+  const canCreate = name.trim().length > 0 && file !== null && !saving;
 
-  const handleSubmit = () => {
-    if (!canCreate) return;
-    onSubmit({ name: name.trim(), file });
-    onOpenChange(false);
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canCreate || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSubmit({ name: name.trim(), file });
+      onOpenChange(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the subject. Please retry.");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   return (
     <div
       className="subject-modal__overlay"
-      onMouseDown={() => onOpenChange(false)}
+      onMouseDown={() => { if (!savingRef.current) onOpenChange(false); }}
     >
-      <div
+      <form
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         className="subject-modal"
+        onSubmit={handleSubmit}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="subject-modal__header">
@@ -68,6 +82,7 @@ export function CreateSubjectModal({
           <button
             type="button"
             aria-label="Close"
+            disabled={saving}
             className="subject-modal__close"
             onClick={() => onOpenChange(false)}
           >
@@ -89,37 +104,41 @@ export function CreateSubjectModal({
               className="subject-modal__input"
               placeholder="Name your subject"
               value={name}
+              required
+              disabled={saving}
               onChange={(event) => setName(event.target.value)}
             />
           </div>
 
           <div className="subject-modal__group">
-            <span className="subject-modal__label">Upload PDF</span>
+            <span className="subject-modal__label">Attach PDF</span>
             <p className="subject-modal__helper">
-              Upload your reviewer, notes, or any PDF file.
+              Save a PDF with this subject in this browser. Server processing is not available yet.
             </p>
-            <PdfDropzone file={file} onFileSelect={setFile} />
+            <PdfDropzone file={file} onFileSelect={setFile} disabled={saving} />
           </div>
         </div>
+
+        {error && <p className="subject-modal__error" role="alert">{error}</p>}
 
         <div className="subject-modal__footer">
           <button
             type="button"
+            disabled={saving}
             className="subject-modal__btn subject-modal__btn--ghost"
             onClick={() => onOpenChange(false)}
           >
             Cancel
           </button>
           <button
-            type="button"
+            type="submit"
             className="subject-modal__btn subject-modal__btn--primary"
             disabled={!canCreate}
-            onClick={handleSubmit}
           >
-            Create subject
+            {saving ? "Saving locally…" : "Create subject"}
           </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

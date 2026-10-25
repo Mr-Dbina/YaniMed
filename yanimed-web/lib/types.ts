@@ -30,6 +30,7 @@ export interface ChatMessage {
   metadata?: ChatAnswerResponse["metadata"];
   rating?: 1 | -1 | null;
   isStreaming?: boolean;
+  replyToId?: string;
 }
 
 export interface Subject {
@@ -42,4 +43,7 @@ export interface Subject {
    * Undefined until the first question - the row renders without a preview.
    */
   lastMessage?: string;
+  /** Browser-local state only until a backend processing API is connected. */
+  processingStatus?: "unavailable" | "processing" | "failed" | "ready";
+  processingError?: string;
 }
