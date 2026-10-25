@@ -48,4 +48,65 @@ describe('PdfObjectService', () => {
     expect(duplicate?.scope).toBe('other_subject');
     expect(duplicate?.existingDocumentId).toBe('doc-1');
   });
+
+  it('ensureFromStaging copies new bytes then verifies size', async () => {
+    const sha = 'd'.repeat(64);
+    const storage = {
+      inspectReservedPdf: vi.fn().mockResolvedValueOnce(null).mockResolvedValue({ bytes: 4, etag: 'e', attemptId: '', sha256: sha }),
+      copyObject: vi.fn().mockResolvedValue(undefined),
+    };
+    const prisma = { pdfObject: { create: vi.fn().mockResolvedValue({ id: 'po-d', sha256: sha, r2Key: `pdfs/${sha}.pdf`, sizeBytes: 4 }), findUnique: vi.fn() } };
+    const service = new PdfObjectService(prisma as never, storage as never);
+    await service.ensureFromStaging('subject/doc.pdf', sha, 4);
+    expect(storage.copyObject).toHaveBeenCalledWith('subject/doc.pdf', `pdfs/${sha}.pdf`);
+    expect(prisma.pdfObject.create).toHaveBeenCalled();
+  });
+
+  it('ensureFromStaging does not copy when canonical exists', async () => {
+    const sha = 'e'.repeat(64);
+    const storage = {
+      inspectReservedPdf: vi.fn().mockResolvedValue({ bytes: 4, etag: 'e', attemptId: '', sha256: sha }),
+      copyObject: vi.fn(),
+    };
+    const prisma = { pdfObject: { create: vi.fn().mockResolvedValue({ id: 'po-e', sha256: sha, r2Key: `pdfs/${sha}.pdf`, sizeBytes: 4 }), findUnique: vi.fn() } };
+    const service = new PdfObjectService(prisma as never, storage as never);
+    await service.ensureFromStaging('subject/doc.pdf', sha, 4);
+    expect(storage.copyObject).not.toHaveBeenCalled();
+  });
+
+  it('ensureFromStaging rejects an existing canonical object with wrong size', async () => {
+    const sha = 'f'.repeat(64);
+    const storage = {
+      inspectReservedPdf: vi.fn().mockResolvedValue({ bytes: 999, etag: 'e', attemptId: '', sha256: sha }),
+      copyObject: vi.fn(),
+    };
+    const prisma = { pdfObject: { create: vi.fn(), findUnique: vi.fn() } };
+    const service = new PdfObjectService(prisma as never, storage as never);
+    await expect(service.ensureFromStaging('subject/doc.pdf', sha, 4)).rejects.toThrow('Canonical PDF verification failed.');
+    expect(storage.copyObject).not.toHaveBeenCalled();
+  });
+
+  it('ensureFromStaging propagates copy failure without creating PdfObject', async () => {
+    const sha = 'g'.repeat(64);
+    const storage = {
+      inspectReservedPdf: vi.fn().mockResolvedValue(null),
+      copyObject: vi.fn().mockRejectedValue(new Error('copy failed')),
+    };
+    const prisma = { pdfObject: { create: vi.fn(), findUnique: vi.fn() } };
+    const service = new PdfObjectService(prisma as never, storage as never);
+    await expect(service.ensureFromStaging('subject/doc.pdf', sha, 4)).rejects.toThrow('copy failed');
+    expect(prisma.pdfObject.create).not.toHaveBeenCalled();
+  });
+
+  it('ensureFromBuffer handles a 412 as success after size check', async () => {
+    const sha = 'h'.repeat(64);
+    const storage = {
+      inspectReservedPdf: vi.fn().mockResolvedValueOnce(null).mockResolvedValue({ bytes: 4, etag: 'e', attemptId: '', sha256: sha }),
+      putCanonicalPdf: vi.fn().mockRejectedValue(Object.assign(new Error('conflict'), { $metadata: { httpStatusCode: 412 } })),
+    };
+    const prisma = { pdfObject: { create: vi.fn().mockResolvedValue({ id: 'po-h', sha256: sha, r2Key: `pdfs/${sha}.pdf`, sizeBytes: 4 }), findUnique: vi.fn() } };
+    const service = new PdfObjectService(prisma as never, storage as never);
+    await service.ensureFromBuffer(Buffer.from('same'), sha, 4);
+    expect(prisma.pdfObject.create).toHaveBeenCalled();
+  });
 });

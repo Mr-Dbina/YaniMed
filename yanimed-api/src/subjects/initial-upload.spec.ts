@@ -242,6 +242,18 @@ describe('Initial Subject/PDF workflow', () => {
       await request(app.getHttpServer()).get('/subjects/initial-upload/unknown-key').set('Host', 'localhost:3000').expect(404);
     } finally { await app.close(); }
   });
+  it('returns a conflict for a case-variant duplicate upload when no action is supplied', async () => {
+    const h = harness();
+    const fileBuffer = file.buffer;
+    const pdfObjects = { findDuplicate: vi.fn().mockResolvedValue({
+      scope: 'other_subject', existingDocumentId: 'doc-existing', existingSubjectId: 'subject-existing',
+      existingFilename: 'existing.pdf', pdfObject: { id: 'po-1', r2Key: 'pdfs/hash.pdf' },
+    }), ensureFromStaging: vi.fn() };
+    const service = new InitialUploadService(h.db as unknown as PrismaService, h.storage as unknown as StorageService, undefined, pdfObjects as never);
+    await expect(service.create(dto, file)).rejects.toMatchObject({ status: 409, response: { code: 'DUPLICATE_PDF' } });
+    expect(h.subjects()).toHaveLength(0);
+  });
+
   it('does not overlap reconciliation sweeps', async () => {
     let finish!: () => void;
     const reconcileBatch = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
