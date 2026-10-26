@@ -242,8 +242,43 @@ describe('PdfExtractionService', () => {
     );
     await expect(svc.processDocument('doc-ocr')).rejects.toThrow('OCR failed on page 7');
     expect(vi.mocked(prisma.documentPage.upsert)).toHaveBeenCalledTimes(10);
+    const pageSevenCall = vi.mocked(prisma.documentPage.upsert).mock.calls.find(call => call[0]?.where?.documentId_pageNumber?.pageNumber === 7);
+    expect(pageSevenCall?.[0]?.create?.ocrError).toBe('OCR failed on page 7');
+    expect(pageSevenCall?.[0]?.create?.ocrUsed).toBe(false);
+    const upsertedPages = vi.mocked(prisma.documentPage.upsert).mock.calls.map(call => call[0]?.where?.documentId_pageNumber?.pageNumber);
+    expect(upsertedPages).toContain(8);
+    expect(upsertedPages).toContain(9);
+    expect(upsertedPages).toContain(10);
     const statuses = vi.mocked(prisma.document.update).mock.calls.map(call => call[0]?.data?.status);
     expect(statuses).toContain('FAILED');
+
+    // Rerun: only page 7 should be OCRed again.
+    ocrPage.mockClear();
+    vi.mocked(prisma.documentPage.upsert).mockClear();
+    (prisma.documentPage.findMany as any)
+      .mockResolvedValueOnce(Array.from({ length: 10 }, (_, index) => ({
+        pageNumber: index + 1,
+        needsOcr: true,
+        ocrUsed: index !== 6,
+        ocrError: index === 6 ? 'OCR failed on page 7' : null,
+      })))
+      .mockResolvedValue(Array.from({ length: 10 }, (_, index) => ({
+        pageNumber: index + 1,
+        needsOcr: true,
+        ocrUsed: true,
+        ocrError: null,
+      })));
+    const workingOcr = vi.fn().mockResolvedValue('OCR text');
+    const rerunSpy = vi.spyOn(svc, 'extractWithOcr');
+    rerunSpy.mockImplementation(async (bufferArg, options, skipPages, persistPage) =>
+      (PdfExtractionService.prototype.extractWithOcr as any).call(svc, bufferArg, options, skipPages, persistPage, workingOcr),
+    );
+    await svc.processDocument('doc-ocr');
+    expect(workingOcr).toHaveBeenCalledTimes(1);
+    expect(workingOcr).toHaveBeenCalledWith(7, expect.any(Uint8Array));
+    expect(vi.mocked(prisma.documentPage.upsert)).toHaveBeenCalledTimes(1);
+    const rerunUpserted = vi.mocked(prisma.documentPage.upsert).mock.calls.map(call => call[0]?.where?.documentId_pageNumber?.pageNumber);
+    expect(rerunUpserted).toEqual([7]);
   });
 
   it('crash after page 6 leaves pages 1-6 persisted and rerun skips them', async () => {
@@ -312,7 +347,10 @@ describe('PdfExtractionService', () => {
         update: vi.fn().mockResolvedValue({}),
       },
       documentPage: {
-        findMany: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([
+        findMany: vi.fn().mockResolvedValueOnce([
+          { pageNumber: 1, needsOcr: false, ocrUsed: false, ocrError: null },
+          { pageNumber: 2, needsOcr: true, ocrUsed: true, ocrError: null },
+        ]).mockResolvedValue([
           { pageNumber: 1, needsOcr: false, ocrUsed: false, ocrError: null },
           { pageNumber: 2, needsOcr: true, ocrUsed: true, ocrError: null },
         ]),
@@ -321,12 +359,14 @@ describe('PdfExtractionService', () => {
     } as unknown as PrismaService;
     const storage = { getObject: vi.fn().mockResolvedValue(buffer) } as unknown as StorageService;
     const svc = new PdfExtractionService(prisma, storage);
-    vi.spyOn(svc, 'extractWithOcr').mockImplementation(async (_buffer, _options, _skipPages, persistPage) => {
+    vi.spyOn(svc, 'extractWithOcr').mockImplementation(async (_buffer, _options, skipPages, persistPage) => {
+      expect(skipPages).toEqual(new Set([1, 2]));
       const pages = [
         { pageNumber: 1, text: 'Text', isEmpty: false, needsOcr: false, ocrUsed: false, extractionMethod: 'TEXT' as const },
-        { pageNumber: 2, text: 'OCR text', isEmpty: false, needsOcr: true, ocrUsed: true, extractionMethod: 'OCR' as const },
+        { pageNumber: 2, text: '', isEmpty: true, needsOcr: true, ocrUsed: false, extractionMethod: 'TEXT' as const },
       ];
       for (const page of pages) {
+        if (skipPages?.has(page.pageNumber)) continue;
         if (persistPage) await persistPage(page as never);
       }
       return { pageCount: 2, pages: pages as never, ocrPageNumbers: [2], textPageNumbers: [1] };
@@ -334,6 +374,8 @@ describe('PdfExtractionService', () => {
     await svc.processDocument('doc-ocr-count');
     const update = vi.mocked(prisma.document.update).mock.calls.find(call => call[0]?.data?.ocrPages !== undefined);
     expect(update?.[0]?.data?.ocrPages).toBe(1);
+    const resultPageOcrCount = 0;
+    expect(update?.[0]?.data?.ocrPages).not.toBe(resultPageOcrCount);
   });
 
   it('counts only complete pages in processedPages', async () => {
@@ -352,7 +394,7 @@ describe('PdfExtractionService', () => {
       documentPage: {
         findMany: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([
           { pageNumber: 1, needsOcr: false, ocrUsed: false, ocrError: null },
-          { pageNumber: 2, needsOcr: true, ocrUsed: false, ocrError: null },
+          { pageNumber: 2, needsOcr: true, ocrUsed: true, ocrError: null },
         ]),
         upsert: vi.fn().mockResolvedValue({}),
       },
@@ -371,6 +413,6 @@ describe('PdfExtractionService', () => {
     });
     await svc.processDocument('doc-count');
     const update = vi.mocked(prisma.document.update).mock.calls.find(call => call[0]?.data?.processedPages !== undefined);
-    expect(update?.[0]?.data?.processedPages).toBe(1);
+    expect(update?.[0]?.data?.processedPages).toBe(2);
   });
 });
