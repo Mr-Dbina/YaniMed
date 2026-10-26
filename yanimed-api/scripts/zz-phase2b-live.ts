@@ -9,14 +9,17 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { createCanvas } from '@napi-rs/canvas';
 import { createWorker, type Worker } from 'tesseract.js';
 import { renderPageAsImage } from 'unpdf';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
-for (const line of readFileSync('.env', 'utf8').split(/\r?\n/)) {
-  const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-  if (!match) continue;
-  const key = match[1];
-  const value = match[2].replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
-  if (!(key in process.env)) process.env[key] = value;
+for (const envFile of ['.env.local', '.env']) {
+  if (!existsSync(envFile)) continue;
+  for (const line of readFileSync(envFile, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!match) continue;
+    const key = match[1];
+    const value = match[2].replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+    if (!(key in process.env)) process.env[key] = value;
+  }
 }
 
 const run = process.argv.includes('--run');
@@ -76,13 +79,15 @@ async function main() {
 
   const subject = await prisma.subject.create({ data: { name: subjectName } });
   const pdfObject = await pdfObjects.ensureFromBuffer(pdf, sha256, pdf.length);
+  const canonicalHead = await storage.inspectReservedPdf(pdfObject.r2Key);
+  check('canonical R2 object exists', canonicalHead !== null, true);
+  check('canonical R2 size matches', canonicalHead?.bytes, pdf.length);
   const document = await prisma.document.create({
     data: {
       subjectId: subject.id,
       title: 'zz-phase2b.pdf',
       fileUrl: pdfObject.r2Key,
       fileSize: pdf.length,
-      pageCount: 6,
       status: 'QUEUED',
       pdfObjectId: pdfObject.id,
     },
@@ -127,10 +132,14 @@ async function main() {
 
   const pagesAfterCrash = await prisma.documentPage.findMany({ where: { documentId: document.id }, orderBy: { pageNumber: 'asc' } });
   check('pages after crash', pagesAfterCrash.map(p => p.pageNumber), [1, 2, 3]);
+  const documentAfterCrash = await prisma.document.findUniqueOrThrow({ where: { id: document.id } });
+  check('document status after crash', documentAfterCrash.status, 'FAILED');
+  console.log('DOCUMENT_STATUS_AFTER_CRASH=' + documentAfterCrash.status);
 
   // Resume run with real Tesseract OCR seam.
   const ocrCalls: number[] = [];
   const worker = await createWorker('eng');
+  try {
   const ocrPage = async (pageNumber: number, bytes: Uint8Array) => {
     ocrCalls.push(pageNumber);
     const image = await renderPageAsImage(bytes, pageNumber, { scale: 2, canvasImport: () => import('@napi-rs/canvas') });
@@ -152,6 +161,7 @@ async function main() {
   check('resume scanned pages have no ocrError', scannedPages.every(p => p.ocrError == null), true);
 
   const documentAfterResume = await prisma.document.findUniqueOrThrow({ where: { id: document.id } });
+  check('resume pageCount', documentAfterResume.pageCount, 6);
   check('resume processedPages', documentAfterResume.processedPages, 6);
   check('resume ocrPages', documentAfterResume.ocrPages, 4);
 
@@ -179,14 +189,15 @@ async function main() {
   await prisma.documentPage.update({ where: { id: pageOne.id }, data: { text: pageOne.text + ' ZZEXTRAWORDEXTRA' } });
   await chunking.chunkDocument(document.id);
   const chunksAfterEdit = await prisma.chunk.findMany({ where: { documentId: document.id }, orderBy: { chunkIndex: 'asc' } });
-  const editedChunk = chunksAfterEdit.find(c => c.page === 1)!;
+  const editedChunk = chunksAfterEdit.find(c => c.chunkIndex === 0)!;
   check('edited chunk keeps id', editedChunk.id, chunkZeroAfterIdempotency.id);
+  check('chunk count unchanged after edit', chunksAfterEdit.length, chunksAfterIdempotency.length);
   const embeddingAfterEdit = await prisma.$queryRaw<Array<{ has_embedding: boolean; model: string | null }>>`SELECT ("embedding" IS NOT NULL) AS has_embedding, "embeddingModel" AS model FROM "Chunk" WHERE "id" = ${editedChunk.id}`;
   check('changed chunk clears embedding', embeddingAfterEdit[0]?.has_embedding, false);
   check('changed chunk clears embeddingModel', embeddingAfterEdit[0]?.model, null);
   const tsvResult = await prisma.$queryRaw<Array<{ matches: boolean }>>`SELECT ("tsv" @@ to_tsquery('english', 'ZZEXTRAWORDEXTRA')) AS matches FROM "Chunk" WHERE "id" = ${editedChunk.id}`;
   check('tsv reflects edited content', tsvResult[0]?.matches, true);
-  check('unchanged chunks keep ids after edit', chunksAfterEdit.map(c => c.id).length, chunksAfterIdempotency.map(c => c.id).length);
+  check('unchanged chunks keep ids after edit', chunksAfterEdit.map(c => c.id), chunksAfterIdempotency.map(c => c.id));
 
   const ocrCallsBeforeThirdRun = ocrCalls.length;
   await extraction.processDocument(document.id);
@@ -196,7 +207,9 @@ async function main() {
   check('third run page count unchanged', pagesAfterThirdRun.length, 6);
   check('third run chunk count unchanged', chunksAfterThirdRun.length, chunksAfterEdit.length);
 
-  await worker.terminate();
+  } finally {
+    await worker.terminate();
+  }
 
   console.log('FINAL_SUBJECT_ID=' + subject.id);
   console.log('FINAL_DOCUMENT_ID=' + document.id);
