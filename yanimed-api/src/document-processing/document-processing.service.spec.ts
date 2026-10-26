@@ -69,4 +69,34 @@ describe('DocumentProcessingService', () => {
     await service.processDocument('doc-1');
     expect(extraction.processDocument).not.toHaveBeenCalled();
   });
+
+  it('processDocument releases its in-process lock after overlapping calls', async () => {
+    const prisma = makePrisma();
+    const extraction = { processDocument: vi.fn().mockResolvedValue(undefined) };
+    const embeddings = { embedDocument: vi.fn().mockResolvedValue(undefined), verifyDocumentEmbeddings: vi.fn().mockResolvedValue({ totalChunks: 1, isComplete: true }) };
+    const service = new DocumentProcessingService(prisma as never, extraction as never, embeddings as never);
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const runSpy = vi.spyOn(service as any, 'run').mockImplementation(async () => { await firstGate; });
+    const firstCall = service.processDocument('doc-1');
+    await Promise.resolve();
+    const secondCall = service.processDocument('doc-1');
+    expect((service as any).locks.size).toBe(1);
+    releaseFirst();
+    await firstCall;
+    await secondCall;
+    expect((service as any).locks.size).toBe(0);
+    await service.processDocument('doc-1');
+    expect((service as any).locks.size).toBe(0);
+  });
+
+  it('processDocument releases its lock when work throws', async () => {
+    const prisma = makePrisma();
+    const extraction = { processDocument: vi.fn() };
+    const embeddings = { embedDocument: vi.fn(), verifyDocumentEmbeddings: vi.fn() };
+    const service = new DocumentProcessingService(prisma as never, extraction as never, embeddings as never);
+    vi.spyOn(service as any, 'run').mockRejectedValueOnce(new Error('boom'));
+    await expect(service.processDocument('doc-1')).rejects.toThrow('boom');
+    expect((service as any).locks.size).toBe(0);
+  });
 });

@@ -48,13 +48,14 @@ export class EmbeddingService {
     const previous = this.locks.get(documentId) ?? Promise.resolve();
     let resolveLock!: () => void;
     const current = new Promise<void>(resolve => { resolveLock = resolve; });
-    this.locks.set(documentId, previous.then(() => current));
+    const lockPromise = previous.then(() => current);
+    this.locks.set(documentId, lockPromise);
     try {
       await previous;
       return await work();
     } finally {
       resolveLock();
-      if (this.locks.get(documentId) === previous.then(() => current)) {
+      if (this.locks.get(documentId) === lockPromise) {
         this.locks.delete(documentId);
       }
     }

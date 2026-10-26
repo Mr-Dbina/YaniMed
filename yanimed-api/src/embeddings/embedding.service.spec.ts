@@ -119,4 +119,26 @@ describe('EmbeddingService', () => {
     expect(result.isComplete).toBe(true);
     expect(result.missingChunks).toEqual([]);
   });
+
+  it('withDocumentLock releases its in-process lock after overlapping calls', async () => {
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 1 });
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const firstCall = (service as any).withDocumentLock('doc-1', async () => { await firstGate; return 'first'; });
+    await Promise.resolve();
+    const secondCall = (service as any).withDocumentLock('doc-1', async () => 'second');
+    expect((service as any).locks.size).toBe(1);
+    releaseFirst();
+    await expect(firstCall).resolves.toBe('first');
+    await expect(secondCall).resolves.toBe('second');
+    expect((service as any).locks.size).toBe(0);
+    await (service as any).withDocumentLock('doc-1', async () => 'third');
+    expect((service as any).locks.size).toBe(0);
+  });
+
+  it('withDocumentLock releases its lock when work throws', async () => {
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 1 });
+    await expect((service as any).withDocumentLock('doc-1', async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+    expect((service as any).locks.size).toBe(0);
+  });
 });
