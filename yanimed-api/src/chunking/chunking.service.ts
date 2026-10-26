@@ -56,19 +56,64 @@ export class ChunkingService {
       }
     }
 
+    const existingChunks = await this.prisma.chunk.findMany({
+      where: { documentId: document.id },
+      orderBy: { chunkIndex: 'asc' },
+    });
+    const existingByIndex = new Map(existingChunks.map(chunk => [chunk.chunkIndex, chunk]));
+    const desiredIndexes = new Set(records.map(record => record.chunkIndex));
+    const staleIds = existingChunks
+      .filter(chunk => !desiredIndexes.has(chunk.chunkIndex))
+      .map(chunk => chunk.id);
+    const newRecords = records.filter(record => !existingByIndex.has(record.chunkIndex));
+
     await this.prisma.$transaction(async tx => {
-      await tx.chunk.deleteMany({ where: { documentId: document.id } });
-      if (records.length > 0) {
-        await tx.chunk.createMany({ data: records });
+      if (newRecords.length > 0) {
+        await tx.chunk.createMany({ data: newRecords });
+      }
+      for (const record of records) {
+        const existing = existingByIndex.get(record.chunkIndex);
+        if (!existing) continue;
+        if (existing.content !== record.content) {
+          await tx.chunk.update({
+            where: { id: existing.id },
+            data: {
+              content: record.content,
+              page: record.page,
+              chapterGuess: record.chapterGuess,
+              extractionMethod: record.extractionMethod,
+              needsReview: record.needsReview,
+              embeddingModel: null,
+            },
+          });
+          await tx.$executeRaw`UPDATE "Chunk" SET "embedding" = NULL WHERE "id" = ${existing.id}`;
+        } else {
+          const metadataChanged =
+            existing.page !== record.page ||
+            existing.extractionMethod !== record.extractionMethod ||
+            existing.needsReview !== record.needsReview ||
+            existing.chapterGuess !== record.chapterGuess;
+          if (metadataChanged) {
+            await tx.chunk.update({
+              where: { id: existing.id },
+              data: {
+                page: record.page,
+                chapterGuess: record.chapterGuess,
+                extractionMethod: record.extractionMethod,
+                needsReview: record.needsReview,
+              },
+            });
+          }
+        }
+      }
+      if (staleIds.length > 0) {
+        await tx.chunk.deleteMany({ where: { id: { in: staleIds } } });
       }
       await tx.document.update({
         where: { id: document.id },
-        data: {
-          processedPages: document.pages.length,
-          status: 'PROCESSING',
-        },
+        data: { status: 'PROCESSING' },
       });
-    });
+    }, { timeout: 30000 });
 
     return {
       documentId: document.id,
