@@ -167,7 +167,6 @@ export class PdfExtractionService {
   ): Promise<PdfExtractionResult> {
     const result = await this.extractFromBuffer(buffer, options);
     const bytes = toUint8Array(buffer);
-    const pagesNeedingOcr = result.pages.filter(page => page.needsOcr && !skipPages.has(page.pageNumber));
 
     let worker: Worker | null = null;
     const defaultOcrPage = async (pageNumber: number, pageBytes: Uint8Array): Promise<string> => {
