@@ -31,6 +31,10 @@ export interface PdfExtractionOptions {
   minCharsPerPage?: number;
 }
 
+export function isPageComplete(page: { needsOcr: boolean; ocrUsed: boolean; ocrError?: string | null }): boolean {
+  return !page.needsOcr || (page.ocrUsed && page.ocrError == null);
+}
+
 @Injectable()
 export class PdfExtractionService {
   private readonly logger = new Logger(PdfExtractionService.name);
@@ -157,39 +161,52 @@ export class PdfExtractionService {
   async extractWithOcr(
     buffer: Buffer | Uint8Array | ArrayBuffer,
     options: PdfExtractionOptions = {},
+    skipPages: Set<number> = new Set(),
+    persistPage?: (page: ExtractedPdfPage) => Promise<void>,
+    ocrPage?: (pageNumber: number, bytes: Uint8Array) => Promise<string>,
   ): Promise<PdfExtractionResult> {
     const result = await this.extractFromBuffer(buffer, options);
     const bytes = toUint8Array(buffer);
-    const pagesNeedingOcr = result.pages.filter(page => page.needsOcr);
-    if (pagesNeedingOcr.length === 0) return result;
+    const pagesNeedingOcr = result.pages.filter(page => page.needsOcr && !skipPages.has(page.pageNumber));
 
     let worker: Worker | null = null;
+    const defaultOcrPage = async (pageNumber: number, pageBytes: Uint8Array): Promise<string> => {
+      if (!worker) worker = await createWorker('eng');
+      const image = await renderPageAsImage(pageBytes, pageNumber, {
+        scale: 2,
+        canvasImport: () => import('@napi-rs/canvas'),
+      });
+      const { data } = await worker.recognize(Buffer.from(image));
+      return (data.text ?? '').trim();
+    };
+    const runOcr = ocrPage ?? defaultOcrPage;
+
     try {
-      worker = await createWorker('eng');
-      for (const page of pagesNeedingOcr) {
-        try {
-          const image = await renderPageAsImage(bytes, page.pageNumber, {
-            scale: 2,
-            canvasImport: () => import('@napi-rs/canvas'),
-          });
-          const { data } = await worker.recognize(Buffer.from(image));
-          const ocrText = (data.text ?? '').trim();
-          if (ocrText.length > 0) {
-            page.text = page.text.trim() ? `${page.text.trim()}\n${ocrText}` : ocrText;
-            page.ocrUsed = true;
-            page.extractionMethod = page.isEmpty ? 'OCR' : 'HYBRID';
-            page.isEmpty = page.text.trim().length === 0;
-          } else {
-            page.ocrUsed = true;
-            page.extractionMethod = 'OCR';
+      for (const page of result.pages) {
+        if (skipPages.has(page.pageNumber)) continue;
+        if (page.needsOcr) {
+          try {
+            const ocrText = await runOcr(page.pageNumber, bytes);
+            if (ocrText.length > 0) {
+              page.text = page.text.trim() ? `${page.text.trim()}\n${ocrText}` : ocrText;
+              page.ocrUsed = true;
+              page.extractionMethod = page.isEmpty ? 'OCR' : 'HYBRID';
+              page.isEmpty = page.text.trim().length === 0;
+            } else {
+              page.ocrUsed = true;
+              page.extractionMethod = 'OCR';
+            }
+          } catch (error) {
+            page.ocrUsed = false;
+            page.ocrError = error instanceof Error ? error.message : String(error);
           }
-        } catch (error) {
-          page.ocrUsed = false;
-          page.ocrError = error instanceof Error ? error.message : String(error);
+        }
+        if (persistPage) {
+          await persistPage(page);
         }
       }
     } finally {
-      if (worker) await worker.terminate();
+      if (worker) await (worker as Worker).terminate();
     }
     return result;
   }
@@ -214,16 +231,20 @@ export class PdfExtractionService {
 
     try {
       const buffer = await this.storage.getObject(document.fileUrl);
-      const result = await this.extractWithOcr(buffer, options);
-      let persistedPages = 0;
-      for (const page of result.pages) {
+      const existingPages = await this.prisma.documentPage.findMany({ where: { documentId: document.id } });
+      const existingByPage = new Map(existingPages.map(page => [page.pageNumber, page]));
+      const skipPages = new Set(
+        existingPages.filter(page => isPageComplete(page)).map(page => page.pageNumber),
+      );
+
+      const persistPage = async (page: ExtractedPdfPage) => {
         const method =
           page.extractionMethod === 'OCR'
             ? ExtractionMethod.OCR
             : page.extractionMethod === 'HYBRID'
               ? ExtractionMethod.HYBRID
               : ExtractionMethod.TEXT;
-        await this.prisma.documentPage.upsert({
+        await this.prisma!.documentPage.upsert({
           where: {
             documentId_pageNumber: {
               documentId: document.id,
@@ -249,28 +270,33 @@ export class PdfExtractionService {
             ocrError: page.ocrError,
           },
         });
-        persistedPages += 1;
-      }
+      };
+
+      const result = await this.extractWithOcr(buffer, options, skipPages, persistPage);
+      const persistedPages = await this.prisma.documentPage.findMany({ where: { documentId: document.id } });
 
       if (this.chunking) {
         await this.chunking.chunkDocument(document.id, {});
       }
 
-      const hasOcrFailure = result.pages.some(page => Boolean(page.ocrError));
+      const hasOcrFailure = persistedPages.some(page => page.ocrError != null);
+      const ocrPages = persistedPages.filter(page => page.ocrUsed).length;
+      const completePages = persistedPages.filter(page => isPageComplete(page)).length;
       await this.prisma.document.update({
         where: { id: document.id },
         data: {
           pageCount: result.pageCount,
-          ocrPages: result.pages.filter(page => page.ocrUsed).length,
+          ocrPages,
+          processedPages: completePages,
           status: hasOcrFailure ? 'FAILED' : 'PROCESSING',
           errorMessage: hasOcrFailure
-            ? result.pages.find(page => page.ocrError)?.ocrError ?? 'OCR failed.'
+            ? persistedPages.find(page => page.ocrError)?.ocrError ?? 'OCR failed.'
             : null,
         },
       });
 
       if (hasOcrFailure) {
-        throw new Error(result.pages.find(page => page.ocrError)?.ocrError ?? 'OCR failed.');
+        throw new Error(persistedPages.find(page => page.ocrError)?.ocrError ?? 'OCR failed.');
       }
 
       return {
@@ -279,7 +305,7 @@ export class PdfExtractionService {
         documentId: document.id,
         filename: document.title,
         storageKey: document.fileUrl,
-        persistedPages,
+        persistedPages: persistedPages.length,
       };
     } catch (error) {
       await this.prisma.document.update({
