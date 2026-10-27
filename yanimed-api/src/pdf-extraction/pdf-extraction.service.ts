@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
-import { extractText, renderPageAsImage } from 'unpdf';
+import { ConfigService } from '@nestjs/config';
+import { extractText, getDocumentProxy, getResolvedPDFJS, renderPageAsImage } from 'unpdf';
 import { createWorker, type Worker } from 'tesseract.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService } from '../storage/storage.service.js';
@@ -29,6 +30,9 @@ export interface PdfExtractionResult {
 
 export interface PdfExtractionOptions {
   minCharsPerPage?: number;
+  ocrMinTextCharsWithImage?: number;
+  minImagePixels?: number;
+  enableImageDetection?: boolean;
 }
 
 export function isPageComplete(page: { needsOcr: boolean; ocrUsed: boolean; ocrError?: string | null }): boolean {
@@ -43,41 +47,182 @@ export class PdfExtractionService {
     @Optional() private readonly prisma?: PrismaService,
     @Optional() private readonly storage?: StorageService,
     @Optional() private readonly chunking?: ChunkingService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
+
+  private resolveOcrConfig(options: PdfExtractionOptions = {}) {
+    const readNumber = (optionValue: number | undefined, envKey: string, configKeys: string[], fallback: number) => {
+      if (optionValue !== undefined) return optionValue;
+      if (this.config) {
+        for (const key of configKeys) {
+          const value = this.config.get<any>(key);
+          if (typeof value === 'number' && Number.isFinite(value)) return value;
+          if (typeof value === 'string' && value.trim() !== '') {
+            const parsed = Number(value);
+            if (Number.isFinite(parsed)) return parsed;
+          }
+        }
+      }
+      const raw = process.env[envKey];
+      if (raw === undefined || raw.trim() === '') return fallback;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+
+    const readBoolean = (optionValue: boolean | undefined, envKey: string, configKeys: string[], fallback: boolean) => {
+      if (optionValue !== undefined) return optionValue;
+      if (this.config) {
+        for (const key of configKeys) {
+          const value = this.config.get<any>(key);
+          if (typeof value === 'boolean') return value;
+          if (typeof value === 'string' && value.trim() !== '') {
+            const normalized = value.trim().toLowerCase();
+            if (normalized === 'true' || normalized === '1') return true;
+            if (normalized === 'false' || normalized === '0') return false;
+          }
+        }
+      }
+      const raw = process.env[envKey];
+      if (raw === undefined || raw.trim() === '') return fallback;
+      const normalized = raw.trim().toLowerCase();
+      if (normalized === 'true' || normalized === '1') return true;
+      if (normalized === 'false' || normalized === '0') return false;
+      return fallback;
+    };
+
+    return {
+      minCharsPerPage: readNumber(options.minCharsPerPage, 'PDF_OCR_MIN_CHARS', ['pdfOcrMinChars', 'pdfOcrMinCharsPerPage', 'minCharsPerPage'], 1),
+      ocrMinTextCharsWithImage: readNumber(options.ocrMinTextCharsWithImage, 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE', ['pdfOcrMinTextCharsWithImage', 'ocrMinTextCharsWithImage'], 50),
+      minImagePixels: readNumber(options.minImagePixels, 'PDF_OCR_MIN_IMAGE_PIXELS', ['pdfOcrMinImagePixels', 'minImagePixels'], 10000),
+      enableImageDetection: readBoolean(options.enableImageDetection, 'PDF_OCR_IMAGE_DETECTION', ['pdfOcrImageDetection', 'enableImageDetection'], true),
+    };
+  }
 
   async extractFromBuffer(
     buffer: Buffer | Uint8Array | ArrayBuffer,
     options: PdfExtractionOptions = {},
   ): Promise<PdfExtractionResult> {
     const bytes = toUint8Array(buffer);
-    const minChars = options.minCharsPerPage ?? 1;
+    const config = this.resolveOcrConfig(options);
+    const minChars = config.minCharsPerPage;
+    const ocrMinTextCharsWithImage = config.ocrMinTextCharsWithImage;
+    const minImagePixels = config.minImagePixels;
+    const enableImageDetection = config.enableImageDetection;
+
     const { totalPages, text } = await extractText(bytes, { mergePages: false });
-    const pages: ExtractedPdfPage[] = [];
-    const ocrPageNumbers: number[] = [];
-    const textPageNumbers: number[] = [];
     const count = Math.max(0, totalPages ?? 0);
+    const pages: ExtractedPdfPage[] = [];
     for (let i = 0; i < count; i++) {
       const pageText = (Array.isArray(text) ? text[i] : '') ?? '';
       const normalized = String(pageText);
-      const needsOcr = normalized.trim().length < minChars;
-      const page: ExtractedPdfPage = {
+      const trimmedLength = normalized.trim().length;
+      const needsOcr = trimmedLength < minChars;
+      pages.push({
         pageNumber: i + 1,
         text: normalized,
-        isEmpty: normalized.trim().length === 0,
+        isEmpty: trimmedLength === 0,
         needsOcr,
         ocrUsed: false,
         extractionMethod: 'TEXT',
-      };
-      pages.push(page);
-      if (needsOcr) ocrPageNumbers.push(page.pageNumber);
+      });
+    }
+
+    if (enableImageDetection) {
+      const detectionIndexes = pages
+        .map((page, index) => ({ page, index }))
+        .filter(({ page }) => page.text.trim().length < ocrMinTextCharsWithImage)
+        .map(({ index }) => index);
+
+      if (detectionIndexes.length > 0) {
+        const resolvedPdfjs = await getResolvedPDFJS();
+        const OPS = resolvedPdfjs.OPS as Record<string, number>;
+        const imageOps = new Set<number>([
+          OPS.paintImageXObject,
+          OPS.paintImageMaskXObject,
+          OPS.paintInlineImageXObject,
+          OPS.paintImageXObjectRepeat,
+        ]);
+        const pdf = await getDocumentProxy(bytes);
+        try {
+          for (const index of detectionIndexes) {
+            const page = await pdf.getPage(index + 1);
+            let qualifyingImage = false;
+            try {
+              const opList = await page.getOperatorList();
+              qualifyingImage = this.hasQualifyingImage(opList, minImagePixels, imageOps, OPS);
+            } finally {
+              page.cleanup();
+            }
+            if (qualifyingImage && pages[index].text.trim().length < ocrMinTextCharsWithImage) {
+              pages[index].needsOcr = true;
+            }
+          }
+        } finally {
+          if (typeof (pdf as any).destroy === 'function') {
+            await (pdf as any).destroy();
+          }
+          if ((pdf as any).loadingTask && typeof (pdf as any).loadingTask.destroy === 'function') {
+            await (pdf as any).loadingTask.destroy();
+          }
+        }
+      }
+    }
+
+    const ocrPageNumbers: number[] = [];
+    const textPageNumbers: number[] = [];
+    for (const page of pages) {
+      if (page.needsOcr) ocrPageNumbers.push(page.pageNumber);
       else textPageNumbers.push(page.pageNumber);
     }
+
     return {
       pageCount: pages.length,
       pages,
       ocrPageNumbers,
       textPageNumbers,
     };
+  }
+
+  private hasQualifyingImage(
+    opList: { fnArray?: number[]; argsArray?: any[] },
+    minImagePixels: number,
+    imageOps: Set<number>,
+    OPS: Record<string, number>,
+  ): boolean {
+    const fnArray = opList?.fnArray ?? [];
+    const argsArray = opList?.argsArray ?? [];
+    for (let i = 0; i < fnArray.length; i++) {
+      if (!imageOps.has(fnArray[i])) continue;
+      const pixels = this.readImagePixels(fnArray[i], argsArray[i], OPS);
+      // If a size cannot be determined for an op, treat it as qualifying
+      // (conservative, favors OCR).
+      if (pixels === null || pixels >= minImagePixels) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private readImagePixels(opCode: number, args: any, OPS: Record<string, number>): number | null {
+    if (opCode === OPS.paintImageXObject || opCode === OPS.paintImageXObjectRepeat) {
+      const width = args?.[1];
+      const height = args?.[2];
+      if (typeof width === 'number' && typeof height === 'number') {
+        return width * height;
+      }
+      return null;
+    }
+    if (opCode === OPS.paintImageMaskXObject || opCode === OPS.paintInlineImageXObject) {
+      const obj = args?.[0];
+      if (obj && typeof obj.width === 'number' && typeof obj.height === 'number') {
+        return obj.width * obj.height;
+      }
+      if (typeof args?.[1] === 'number' && typeof args?.[2] === 'number') {
+        return args[1] * args[2];
+      }
+      return null;
+    }
+    return null;
   }
 
   async extractFromPdf(
