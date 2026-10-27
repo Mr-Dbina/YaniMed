@@ -141,4 +141,47 @@ describe('EmbeddingService', () => {
     await expect((service as any).withDocumentLock('doc-1', async () => { throw new Error('boom'); })).rejects.toThrow('boom');
     expect((service as any).locks.size).toBe(0);
   });
+
+  it('withDocumentLock serializes queued third call and cleans up lock', async () => {
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 1 });
+    const order: string[] = [];
+    const gates: Array<() => void> = [];
+    const firstCall = (service as any).withDocumentLock('doc-1', async () => {
+      const index = gates.length + 1;
+      order.push(`start-${index}`);
+      await new Promise<void>(resolve => { gates.push(resolve); });
+      order.push(`end-${index}`);
+      return `result-${index}`;
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const secondCall = (service as any).withDocumentLock('doc-1', async () => {
+      const index = gates.length + 1;
+      order.push(`start-${index}`);
+      await new Promise<void>(resolve => { gates.push(resolve); });
+      order.push(`end-${index}`);
+      return `result-${index}`;
+    });
+    const thirdCall = (service as any).withDocumentLock('doc-1', async () => {
+      const index = gates.length + 1;
+      order.push(`start-${index}`);
+      await new Promise<void>(resolve => { gates.push(resolve); });
+      order.push(`end-${index}`);
+      return `result-${index}`;
+    });
+    expect(gates.length).toBe(1);
+    gates[0]();
+    await firstCall;
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(gates.length).toBe(2);
+    expect(order.indexOf('start-2')).toBeGreaterThan(order.indexOf('end-1'));
+    gates[1]();
+    await secondCall;
+    expect((service as any).locks.has('doc-1')).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (gates.length < 3) await new Promise(resolve => setTimeout(resolve, 0));
+    gates[2]();
+    await thirdCall;
+    expect(order).toEqual(['start-1', 'end-1', 'start-2', 'end-2', 'start-3', 'end-3']);
+    expect((service as any).locks.size).toBe(0);
+  });
 });
