@@ -103,3 +103,49 @@ describe('validateEnv PDF OCR settings', () => {
     }
   });
 });
+
+describe('validateEnv PDF OCR budget settings', () => {
+  const keys = ['PDF_OCR_PAGE_TIMEOUT_MS', 'PDF_OCR_DOC_BUDGET_MS', 'PDF_OCR_MAX_PAGES'] as const;
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of keys) saved[key] = process.env[key];
+    process.env.DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://example';
+  });
+
+  afterEach(() => {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  it('applies defaults', () => {
+    for (const key of keys) delete process.env[key];
+    const cfg = validateEnv();
+    expect(cfg.pdfOcrPageTimeoutMs).toBe(60000);
+    expect(cfg.pdfOcrDocBudgetMs).toBe(600000);
+    expect(cfg.pdfOcrMaxPages).toBe(300);
+  });
+
+  it('applies overrides', () => {
+    process.env.PDF_OCR_PAGE_TIMEOUT_MS = '1000';
+    process.env.PDF_OCR_DOC_BUDGET_MS = '2000';
+    process.env.PDF_OCR_MAX_PAGES = '5';
+    const cfg = validateEnv();
+    expect(cfg.pdfOcrPageTimeoutMs).toBe(1000);
+    expect(cfg.pdfOcrDocBudgetMs).toBe(2000);
+    expect(cfg.pdfOcrMaxPages).toBe(5);
+  });
+
+  it('rejects invalid values', () => {
+    for (const value of ['abc', '0', '-1', '1.5']) {
+      for (const key of keys) delete process.env[key];
+      for (const key of keys) {
+        process.env[key] = value;
+        expect(() => validateEnv()).toThrow();
+        delete process.env[key];
+      }
+    }
+  });
+});

@@ -29,11 +29,11 @@ export const r2Env = [
 
 export const geminiEnv = ['GEMINI_API_KEY'] as const;
 
-function parseOptionalInt(value: string | undefined, fallback: number, name: string): number {
+function parseOptionalInt(value: string | undefined, fallback: number, name: string, min: number = 0): number {
   const raw = value?.trim();
   if (!raw) return fallback;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < min) {
     throw new Error(`Invalid ${name}: ${raw}`);
   }
   return parsed;
@@ -67,6 +67,9 @@ export function validateEnv() {
   const pdfOcrMinTextCharsWithImage = parseOptionalInt(process.env.PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE, 50, 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE');
   const pdfOcrMinImagePixels = parseOptionalInt(process.env.PDF_OCR_MIN_IMAGE_PIXELS, 10000, 'PDF_OCR_MIN_IMAGE_PIXELS');
   const pdfOcrImageDetection = parseOptionalBoolean(process.env.PDF_OCR_IMAGE_DETECTION, true, 'PDF_OCR_IMAGE_DETECTION');
+  const pdfOcrPageTimeoutMs = parseOptionalInt(process.env.PDF_OCR_PAGE_TIMEOUT_MS, 60000, 'PDF_OCR_PAGE_TIMEOUT_MS', 1);
+  const pdfOcrDocBudgetMs = parseOptionalInt(process.env.PDF_OCR_DOC_BUDGET_MS, 600000, 'PDF_OCR_DOC_BUDGET_MS', 1);
+  const pdfOcrMaxPages = parseOptionalInt(process.env.PDF_OCR_MAX_PAGES, 300, 'PDF_OCR_MAX_PAGES', 1);
 
   return {
     port: Number(process.env.PORT ?? 3000),
@@ -88,6 +91,9 @@ export function validateEnv() {
     pdfOcrMinTextCharsWithImage,
     pdfOcrMinImagePixels,
     pdfOcrImageDetection,
+    pdfOcrPageTimeoutMs,
+    pdfOcrDocBudgetMs,
+    pdfOcrMaxPages,
   };
 }
 

@@ -33,6 +33,9 @@ export interface PdfExtractionOptions {
   ocrMinTextCharsWithImage?: number;
   minImagePixels?: number;
   enableImageDetection?: boolean;
+  pageTimeoutMs?: number;
+  docBudgetMs?: number;
+  maxPages?: number;
 }
 
 export function isPageComplete(page: { needsOcr: boolean; ocrUsed: boolean; ocrError?: string | null }): boolean {
@@ -95,6 +98,9 @@ export class PdfExtractionService {
       ocrMinTextCharsWithImage: readNumber(options.ocrMinTextCharsWithImage, 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE', ['pdfOcrMinTextCharsWithImage'], 50),
       minImagePixels: readNumber(options.minImagePixels, 'PDF_OCR_MIN_IMAGE_PIXELS', ['pdfOcrMinImagePixels'], 10000),
       enableImageDetection: readBoolean(options.enableImageDetection, 'PDF_OCR_IMAGE_DETECTION', ['pdfOcrImageDetection'], true),
+      pageTimeoutMs: readNumber(options.pageTimeoutMs, 'PDF_OCR_PAGE_TIMEOUT_MS', ['pdfOcrPageTimeoutMs'], 60000),
+      docBudgetMs: readNumber(options.docBudgetMs, 'PDF_OCR_DOC_BUDGET_MS', ['pdfOcrDocBudgetMs'], 600000),
+      maxPages: readNumber(options.maxPages, 'PDF_OCR_MAX_PAGES', ['pdfOcrMaxPages'], 300),
     };
   }
 
@@ -186,6 +192,10 @@ export class PdfExtractionService {
     return getDocumentProxy(bytes);
   }
 
+  protected now(): number {
+    return Date.now();
+  }
+
   private async destroyDocumentProxy(pdf: any): Promise<void> {
     if (typeof pdf?.destroy === 'function') {
       await pdf.destroy();
@@ -193,6 +203,10 @@ export class PdfExtractionService {
     if (pdf?.loadingTask && typeof pdf.loadingTask.destroy === 'function') {
       await pdf.loadingTask.destroy();
     }
+  }
+
+  protected async createTesseractWorker(): Promise<any> {
+    return createWorker('eng');
   }
 
   private hasQualifyingImage(
@@ -235,6 +249,97 @@ export class PdfExtractionService {
       return null;
     }
     return null;
+  }
+
+  async extractWithOcr(
+    buffer: Buffer | Uint8Array | ArrayBuffer,
+    options: PdfExtractionOptions = {},
+    skipPages: Set<number> = new Set(),
+    persistPage?: (page: ExtractedPdfPage) => Promise<void>,
+    ocrPage?: (pageNumber: number, bytes: Uint8Array) => Promise<string>,
+  ): Promise<PdfExtractionResult> {
+    const config = this.resolveOcrConfig(options);
+    const pageTimeoutMs = config.pageTimeoutMs;
+    const docBudgetMs = config.docBudgetMs;
+    const maxPages = config.maxPages;
+
+    const result = await this.extractFromBuffer(buffer, options);
+    const bytes = toUint8Array(buffer);
+    const inputBytes = new Uint8Array(bytes);
+
+    const flaggedCount = result.pages.filter(page => page.needsOcr).length;
+    if (flaggedCount > maxPages) {
+      const error: any = new Error(`OCR_PAGE_LIMIT_EXCEEDED: ${flaggedCount} pages exceed limit ${maxPages}`);
+      error.code = 'OCR_PAGE_LIMIT_EXCEEDED';
+      throw error;
+    }
+
+    let worker: Worker | null = null;
+    const defaultOcrPage = async (pageNumber: number, pageBytes: Uint8Array): Promise<string> => {
+      if (!worker) worker = await this.createTesseractWorker();
+      const image = await renderPageAsImage(pageBytes, pageNumber, {
+        scale: 2,
+        canvasImport: () => import('@napi-rs/canvas'),
+      });
+      const { data } = await worker.recognize(Buffer.from(image));
+      return (data.text ?? '').trim();
+    };
+    const runOcr = ocrPage ?? defaultOcrPage;
+
+    const startTime = this.now();
+    try {
+      for (const page of result.pages) {
+        if (skipPages.has(page.pageNumber)) continue;
+        if (!page.needsOcr) {
+          if (persistPage) await persistPage(page);
+          continue;
+        }
+        if (this.now() - startTime >= docBudgetMs) {
+          const error: any = new Error(`OCR_TIME_BUDGET_EXCEEDED: elapsed ${this.now() - startTime}ms exceeds budget ${docBudgetMs}ms`);
+          error.code = 'OCR_TIME_BUDGET_EXCEEDED';
+          throw error;
+        }
+        let timedOut = false;
+        let timer: any = null;
+        const ocrPromise = runOcr(page.pageNumber, new Uint8Array(inputBytes));
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true;
+            reject(new Error(`OCR_PAGE_TIMEOUT ${pageTimeoutMs}`));
+          }, pageTimeoutMs);
+        });
+        try {
+          const ocrText = await Promise.race([ocrPromise, timeoutPromise]);
+          if (ocrText.length > 0) {
+            page.text = page.text.trim() ? `${page.text.trim()}\n${ocrText}` : ocrText;
+            page.ocrUsed = true;
+            page.extractionMethod = page.isEmpty ? 'OCR' : 'HYBRID';
+            page.isEmpty = page.text.trim().length === 0;
+          } else {
+            page.ocrUsed = true;
+            page.extractionMethod = 'OCR';
+          }
+        } catch (error) {
+          page.ocrUsed = false;
+          page.ocrError = error instanceof Error ? error.message : String(error);
+          if (timedOut && !ocrPage && worker) {
+            try { await (worker as any).terminate(); } catch {}
+            worker = null;
+          }
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+        if (persistPage) {
+          await persistPage(page);
+        }
+      }
+    } finally {
+      if (worker) {
+        try { await (worker as Worker).terminate(); } catch {}
+        worker = null;
+      }
+    }
+    return result;
   }
 
   async extractFromPdf(
@@ -313,59 +418,6 @@ export class PdfExtractionService {
       filename: document.title,
       storageKey,
     };
-  }
-
-  async extractWithOcr(
-    buffer: Buffer | Uint8Array | ArrayBuffer,
-    options: PdfExtractionOptions = {},
-    skipPages: Set<number> = new Set(),
-    persistPage?: (page: ExtractedPdfPage) => Promise<void>,
-    ocrPage?: (pageNumber: number, bytes: Uint8Array) => Promise<string>,
-  ): Promise<PdfExtractionResult> {
-    const result = await this.extractFromBuffer(buffer, options);
-    const bytes = toUint8Array(buffer);
-    const inputBytes = new Uint8Array(bytes);
-
-    let worker: Worker | null = null;
-    const defaultOcrPage = async (pageNumber: number, pageBytes: Uint8Array): Promise<string> => {
-      if (!worker) worker = await createWorker('eng');
-      const image = await renderPageAsImage(pageBytes, pageNumber, {
-        scale: 2,
-        canvasImport: () => import('@napi-rs/canvas'),
-      });
-      const { data } = await worker.recognize(Buffer.from(image));
-      return (data.text ?? '').trim();
-    };
-    const runOcr = ocrPage ?? defaultOcrPage;
-
-    try {
-      for (const page of result.pages) {
-        if (skipPages.has(page.pageNumber)) continue;
-        if (page.needsOcr) {
-          try {
-            const ocrText = await runOcr(page.pageNumber, inputBytes);
-            if (ocrText.length > 0) {
-              page.text = page.text.trim() ? `${page.text.trim()}\n${ocrText}` : ocrText;
-              page.ocrUsed = true;
-              page.extractionMethod = page.isEmpty ? 'OCR' : 'HYBRID';
-              page.isEmpty = page.text.trim().length === 0;
-            } else {
-              page.ocrUsed = true;
-              page.extractionMethod = 'OCR';
-            }
-          } catch (error) {
-            page.ocrUsed = false;
-            page.ocrError = error instanceof Error ? error.message : String(error);
-          }
-        }
-        if (persistPage) {
-          await persistPage(page);
-        }
-      }
-    } finally {
-      if (worker) await (worker as Worker).terminate();
-    }
-    return result;
   }
 
   async processDocument(
@@ -520,3 +572,4 @@ function toUint8Array(buffer: Buffer | Uint8Array | ArrayBuffer): Uint8Array {
   if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer);
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 }
+
