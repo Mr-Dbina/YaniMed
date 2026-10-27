@@ -29,6 +29,25 @@ export const r2Env = [
 
 export const geminiEnv = ['GEMINI_API_KEY'] as const;
 
+function parseOptionalInt(value: string | undefined, fallback: number, name: string): number {
+  const raw = value?.trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid ${name}: ${raw}`);
+  }
+  return parsed;
+}
+
+function parseOptionalBoolean(value: string | undefined, fallback: boolean, name: string): boolean {
+  const raw = value?.trim();
+  if (!raw) return fallback;
+  const normalized = raw.toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  throw new Error(`Invalid ${name}: ${raw}`);
+}
+
 export function validateEnv() {
   const missing = bootRequired.filter((key) => !process.env[key]?.trim());
 
@@ -43,6 +62,11 @@ export function validateEnv() {
   // so OMNIROUTE_FALLBACK_MODELS is intentionally optional. Listing models
   // here as well would run two competing failover mechanisms.
   const fallback = process.env.OMNIROUTE_FALLBACK_MODELS?.trim();
+
+  const pdfOcrMinChars = parseOptionalInt(process.env.PDF_OCR_MIN_CHARS, 1, 'PDF_OCR_MIN_CHARS');
+  const pdfOcrMinTextCharsWithImage = parseOptionalInt(process.env.PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE, 50, 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE');
+  const pdfOcrMinImagePixels = parseOptionalInt(process.env.PDF_OCR_MIN_IMAGE_PIXELS, 10000, 'PDF_OCR_MIN_IMAGE_PIXELS');
+  const pdfOcrImageDetection = parseOptionalBoolean(process.env.PDF_OCR_IMAGE_DETECTION, true, 'PDF_OCR_IMAGE_DETECTION');
 
   return {
     port: Number(process.env.PORT ?? 3000),
@@ -60,6 +84,15 @@ export function validateEnv() {
       .split(',')
       .map((m) => m.trim())
       .filter(Boolean),
+    pdfOcrMinChars,
+    pdfOcrMinCharsPerPage: pdfOcrMinChars,
+    minCharsPerPage: pdfOcrMinChars,
+    pdfOcrMinTextCharsWithImage,
+    ocrMinTextCharsWithImage: pdfOcrMinTextCharsWithImage,
+    pdfOcrMinImagePixels,
+    minImagePixels: pdfOcrMinImagePixels,
+    pdfOcrImageDetection,
+    enableImageDetection: pdfOcrImageDetection,
   };
 }
 
