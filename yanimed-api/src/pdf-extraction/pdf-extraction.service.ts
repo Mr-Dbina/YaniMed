@@ -150,6 +150,9 @@ export class PdfExtractionService {
             try {
               const opList = await page.getOperatorList();
               qualifyingImage = this.hasQualifyingImage(opList, minImagePixels, imageOps, OPS);
+            } catch (error) {
+              this.logger.warn(`Failed to inspect page ${index + 1} for scanned images: ${error instanceof Error ? error.message : String(error)}`);
+              qualifyingImage = false;
             } finally {
               page.cleanup();
             }
@@ -158,12 +161,7 @@ export class PdfExtractionService {
             }
           }
         } finally {
-          if (typeof (pdf as any).destroy === 'function') {
-            await (pdf as any).destroy();
-          }
-          if ((pdf as any).loadingTask && typeof (pdf as any).loadingTask.destroy === 'function') {
-            await (pdf as any).loadingTask.destroy();
-          }
+          await this.destroyDocumentProxy(pdf);
         }
       }
     }
@@ -181,6 +179,15 @@ export class PdfExtractionService {
       ocrPageNumbers,
       textPageNumbers,
     };
+  }
+
+  private async destroyDocumentProxy(pdf: any): Promise<void> {
+    if (typeof pdf?.destroy === 'function') {
+      await pdf.destroy();
+    }
+    if (pdf?.loadingTask && typeof pdf.loadingTask.destroy === 'function') {
+      await pdf.loadingTask.destroy();
+    }
   }
 
   private hasQualifyingImage(

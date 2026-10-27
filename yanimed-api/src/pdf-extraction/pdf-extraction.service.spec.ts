@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { getResolvedPDFJS } from 'unpdf';
 import { PdfExtractionService, isPageComplete } from './pdf-extraction.service.js';
 import { StorageService } from '../storage/storage.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -432,10 +433,12 @@ describe('PdfExtractionService scanned-page detection', () => {
     const png = canvas.toBuffer('image/png');
     const pdf = await PDFDocument.create();
     const image = await pdf.embedPng(png);
-    const page = pdf.addPage([Math.max(1, width), Math.max(1, height)]);
+    const pageWidth = Math.max(width, 100);
+    const pageHeight = Math.max(height, 100);
+    const page = pdf.addPage([pageWidth, pageHeight]);
     if (text) {
       const font = await pdf.embedFont(StandardFonts.Helvetica);
-      page.drawText(text, { x: 5, y: Math.max(12, height - 12), size: 12, font });
+      page.drawText(text, { x: 5, y: pageHeight - 12, size: 12, font });
     }
     page.drawImage(image, { x: 0, y: 0, width, height });
     return Buffer.from(await pdf.save());
@@ -489,10 +492,10 @@ describe('PdfExtractionService scanned-page detection', () => {
     expect(getOperatorListSpy).not.toHaveBeenCalled();
   });
 
-  it('T4: tiny image + short text falls back to text-length rule', async () => {
-    const buffer = await makeImagePdf('', 10, 10);
+  it('T4: tiny image + text "12" falls back to text rule (needsOcr false)', async () => {
+    const buffer = await makeImagePdf('12', 10, 10);
     const result = await service.extractFromBuffer(buffer);
-    expect(result.pages[0].needsOcr).toBe(true);
+    expect(result.pages[0].needsOcr).toBe(false);
   });
 
   it('T5: text-only page with enough text -> getOperatorList not called', async () => {
@@ -511,17 +514,95 @@ describe('PdfExtractionService scanned-page detection', () => {
     expect(r2.pages[0].needsOcr).toBe(false);
   });
 
-  it('T8: cleanup called when detection throws', async () => {
+  it('T8: getOperatorList throws -> resolves, text rule result, cleanup + destroy called', async () => {
     const cleanupSpy = vi.spyOn(pageProto, 'cleanup');
     cleanupSpy.mockImplementation(function (this: any) {
       return true;
     });
+    const destroySpy = vi.spyOn(service as any, 'destroyDocumentProxy');
+    destroySpy.mockResolvedValue(undefined);
     getOperatorListSpy.mockImplementationOnce(async () => {
       throw new Error('detection boom');
     });
     const buffer = await makeImagePdf('12', 200, 100);
-    await expect(service.extractFromBuffer(buffer)).rejects.toThrow('detection boom');
+    const result = await service.extractFromBuffer(buffer);
+    expect(result.pages[0].needsOcr).toBe(false);
     expect(cleanupSpy).toHaveBeenCalled();
+    expect(destroySpy).toHaveBeenCalled();
     cleanupSpy.mockRestore();
+    destroySpy.mockRestore();
+  });
+
+  it('T9: hasQualifyingImage/readImagePixels handle operator shapes', async () => {
+    const resolved = await getResolvedPDFJS();
+    const OPS = resolved.OPS as any;
+    const svc = new PdfExtractionService();
+    const minImagePixels = 10000;
+
+    // a. paintImageXObject above/below
+    let ops = { fnArray: [OPS.paintImageXObject], argsArray: [['id', 200, 100]] };
+    expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintImageXObject]), OPS)).toBe(true);
+    ops = { fnArray: [OPS.paintImageXObject], argsArray: [['id', 10, 10]] };
+    expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintImageXObject]), OPS)).toBe(false);
+
+    // b. paintImageMaskXObject above/below
+    ops = { fnArray: [OPS.paintImageMaskXObject], argsArray: [[{ width: 200, height: 100 }]] };
+    expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintImageMaskXObject]), OPS)).toBe(true);
+    ops = { fnArray: [OPS.paintImageMaskXObject], argsArray: [[{ width: 10, height: 10 }]] };
+    expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintImageMaskXObject]), OPS)).toBe(false);
+
+    // c. paintInlineImageXObject above/below
+    ops = { fnArray: [OPS.paintInlineImageXObject], argsArray: [[{ width: 200, height: 100 }]] };
+    expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintInlineImageXObject]), OPS)).toBe(true);
+    ops = { fnArray: [OPS.paintInlineImageXObject], argsArray: [[{ width: 10, height: 10 }]] };
+    expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintInlineImageXObject]), OPS)).toBe(false);
+
+    // d. paintImageXObjectRepeat above/below
+    ops = { fnArray: [OPS.paintImageXObjectRepeat], argsArray: [['name', 200, 100, new Float32Array([0, 0])]] };
+    expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintImageXObjectRepeat]), OPS)).toBe(true);
+    ops = { fnArray: [OPS.paintImageXObjectRepeat], argsArray: [['name', 10, 10, new Float32Array([0, 0])]] };
+    expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintImageXObjectRepeat]), OPS)).toBe(false);
+
+    // e. unreadable size -> qualifying
+    ops = { fnArray: [OPS.paintImageXObject], argsArray: [undefined] };
+    expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintImageXObject]), OPS)).toBe(true);
+
+    // f. non-image ops only -> false
+    ops = { fnArray: [OPS.showText], argsArray: [['hello']] };
+    expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintImageXObject]), OPS)).toBe(false);
+  });
+
+  it('integration: extractWithOcr runs OCR for image page', async () => {
+    const buffer = await makeImagePdf('12', 200, 100);
+    const prisma = {
+      document: { findUnique: vi.fn().mockResolvedValue({ id: 'doc-x', status: 'QUEUED' }), update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      documentPage: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn().mockResolvedValue({}) },
+    } as any;
+    const svc = new PdfExtractionService(prisma);
+    const ocrPage = vi.fn().mockResolvedValue('OCR RESULT');
+    const result = await (svc as any).extractWithOcr(buffer, {}, new Set(), async (page: any) => {
+      await prisma.documentPage.upsert({ where: { documentId_pageNumber: { documentId: 'doc-x', pageNumber: page.pageNumber } }, create: page, update: page });
+    }, ocrPage);
+    expect(ocrPage).toHaveBeenCalled();
+    expect(result.pages[0].needsOcr).toBe(true);
+    expect(result.pages[0].ocrUsed).toBe(true);
+    expect(result.pages[0].extractionMethod).toBe('HYBRID');
+  });
+
+  it('integration: enableImageDetection=false skips OCR for image page', async () => {
+    const buffer = await makeImagePdf('12', 200, 100);
+    const ocrPage = vi.fn().mockResolvedValue('OCR RESULT');
+    const svc = new PdfExtractionService();
+    await (svc as any).extractWithOcr(buffer, { enableImageDetection: false }, new Set(), undefined, ocrPage);
+    expect(ocrPage).not.toHaveBeenCalled();
+  });
+
+  it('resolveOcrConfig uses ConfigService camelCase values', async () => {
+    const cfg = { get: (key: string) => (key === 'minImagePixels' ? 0 : undefined) };
+    const svc = new PdfExtractionService(undefined, undefined, undefined, cfg as any);
+    const buffer = await makeImagePdf('12', 10, 10);
+    const result = await svc.extractFromBuffer(buffer);
+    // minImagePixels=0 makes the tiny image qualify
+    expect(result.pages[0].needsOcr).toBe(true);
   });
 });
