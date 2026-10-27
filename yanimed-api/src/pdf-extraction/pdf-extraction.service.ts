@@ -301,7 +301,9 @@ export class PdfExtractionService {
         }
         let timedOut = false;
         let timer: any = null;
-        const ocrPromise = runOcr(page.pageNumber, new Uint8Array(inputBytes));
+        const rawOcrPromise = runOcr(page.pageNumber, new Uint8Array(inputBytes));
+        rawOcrPromise.catch(() => {});
+        const ocrPromise = rawOcrPromise;
         const timeoutPromise = new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
             timedOut = true;
