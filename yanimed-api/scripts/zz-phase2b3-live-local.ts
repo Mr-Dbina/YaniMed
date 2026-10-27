@@ -27,7 +27,18 @@ async function main() {
   }
 
   const buffer = await makeScannedPdf();
-  const service = new PdfExtractionService();
+  class CountingService extends PdfExtractionService {
+    createCount = 0;
+    terminateCount = 0;
+    protected async createTesseractWorker() {
+      this.createCount++;
+      const w = await super.createTesseractWorker();
+      const origTerminate = w.terminate.bind(w);
+      w.terminate = async () => { this.terminateCount++; return origTerminate(); };
+      return w;
+    }
+  }
+  const service = new CountingService();
 
   // a. normal run
   const t0 = Date.now();
@@ -40,6 +51,8 @@ async function main() {
   const timed = await service.extractWithOcr(buffer, { pageTimeoutMs: 1 });
   const allTimeout = timed.pages.every(p => (p.ocrError ?? '').includes('OCR_PAGE_TIMEOUT'));
   console.log(`${allTimeout ? 'PASS' : 'FAIL'}: pageTimeoutMs=1 all pages ocrError contains OCR_PAGE_TIMEOUT`);
+  const countsEqual = service.createCount === service.terminateCount;
+  console.log(`${countsEqual ? 'PASS' : 'FAIL'}: pageTimeout run created=${service.createCount} terminated=${service.terminateCount}`);
 
   // c. normal run again
   const again = await service.extractWithOcr(buffer);
@@ -61,7 +74,10 @@ async function main() {
   const dPass = rejected && code === 'OCR_PAGE_LIMIT_EXCEEDED' && elapsed < 2000;
   console.log(`${dPass ? 'PASS' : 'FAIL'}: maxPages=2 rejects OCR_PAGE_LIMIT_EXCEEDED in ${elapsed}ms`);
 
+  const lastPassAt = Date.now();
+  console.log(`LAST_PASS_TIME: ${lastPassAt - t0}ms`);
   console.log(`EXIT_TIME: ${Date.now() - t0}ms`);
+  console.log(`PROCESS_UPTIME: ${process.uptime()}s`);
   for (const h of process._getActiveHandles()) {
     try { (h as any)?.close?.(); } catch {}
     try { (h as any)?.destroy?.(); } catch {}

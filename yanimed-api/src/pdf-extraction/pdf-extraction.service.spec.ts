@@ -712,6 +712,7 @@ describe('OCR time budget and page limit', () => {
     expect(result.pages[0].ocrError).toContain('10');
     expect(result.pages[1].ocrUsed).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
+    expect(persistPage).toHaveBeenCalledWith(expect.objectContaining({ pageNumber: 1, ocrError: expect.stringContaining('OCR_PAGE_TIMEOUT') }));
   });
 
   it('T5 timeout clears timer when page succeeds', async () => {
@@ -733,6 +734,9 @@ describe('OCR time budget and page limit', () => {
     const result = await promise;
     expect(worker1.terminate).toHaveBeenCalled();
     expect(createSpy).toHaveBeenCalledTimes(2);
+    expect(result.pages[0].ocrError).toContain('OCR_PAGE_TIMEOUT');
+    expect(worker2.recognize).toHaveBeenCalled();
+    expect(worker2.terminate).toHaveBeenCalled();
     expect(result.pages[1].ocrUsed).toBe(true);
     vi.useFakeTimers();
   });
@@ -767,18 +771,67 @@ describe('OCR time budget and page limit', () => {
     await expect(service.extractWithOcr(buffer, { maxPages: 2 })).rejects.toMatchObject({ code: 'OCR_PAGE_LIMIT_EXCEEDED' });
     expect(createSpy).not.toHaveBeenCalled();
 
-    const buffer2 = await makePdf(Array(1).fill(''));
-    const worker = { recognize: vi.fn().mockRejectedValue(new Error('boom')), terminate: vi.fn().mockResolvedValue(undefined) };
-    const createSpy2 = vi.spyOn(service as any, 'createTesseractWorker');
-    createSpy2.mockResolvedValue(worker);
-    await expect(service.extractWithOcr(buffer2, {}, new Set(), undefined, undefined)).resolves.toBeTruthy();
-    expect(worker.terminate).toHaveBeenCalled();
-    createSpy2.mockRestore();
+    const bufferA = await makePdf(Array(2).fill(''));
+    const workerA = { recognize: vi.fn().mockResolvedValue({ data: { text: 'OCR' } }), terminate: vi.fn().mockResolvedValue(undefined) };
+    const createSpyA = vi.spyOn(service as any, 'createTesseractWorker');
+    createSpyA.mockResolvedValue(workerA);
+    const nowSpy = vi.spyOn(service as any, 'now');
+    nowSpy.mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValueOnce(1000);
+    await expect(service.extractWithOcr(bufferA, { docBudgetMs: 100 })).rejects.toMatchObject({ code: 'OCR_TIME_BUDGET_EXCEEDED' });
+    expect(workerA.terminate).toHaveBeenCalled();
+    createSpyA.mockRestore();
+    nowSpy.mockRestore();
+
+    const bufferB = await makePdf(Array(2).fill(''));
+    const workerB = { recognize: vi.fn().mockResolvedValue({ data: { text: 'OCR' } }), terminate: vi.fn().mockResolvedValue(undefined) };
+    const createSpyB = vi.spyOn(service as any, 'createTesseractWorker');
+    createSpyB.mockResolvedValue(workerB);
+    const persistPage = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('persist boom'));
+    await expect(service.extractWithOcr(bufferB, {}, new Set(), persistPage)).rejects.toThrow('persist boom');
+    expect(workerB.terminate).toHaveBeenCalled();
+    createSpyB.mockRestore();
   });
 
-  it('T10 env validation budget settings', async () => {
-    // covered in env spec
-    expect(true).toBe(true);
+  it('item1a: late-created worker terminated on timeout', async () => {
+    vi.useRealTimers();
+    let release!: (v: any) => void;
+    const latePromise = new Promise<any>(res => { release = res; });
+    const worker1 = { recognize: vi.fn(() => new Promise(() => {})), terminate: vi.fn().mockResolvedValue(undefined) };
+    const worker2 = { recognize: vi.fn().mockResolvedValue({ data: { text: 'OCR2' } }), terminate: vi.fn().mockResolvedValue(undefined) };
+    const createSpy = vi.spyOn(service as any, 'createTesseractWorker');
+    createSpy.mockImplementationOnce(() => latePromise.then(() => worker1));
+    createSpy.mockResolvedValueOnce(worker2);
+    const buffer = await makePdf(Array(2).fill(''));
+    const promise = service.extractWithOcr(buffer, { pageTimeoutMs: 2000 });
+    await new Promise(res => setTimeout(res, 2100));
+    release(worker1);
+    await new Promise(res => setTimeout(res, 2200));
+    const result = await promise;
+
+    expect(worker1.terminate).toHaveBeenCalled();
+    expect(createSpy).toHaveBeenCalledTimes(2);
+    expect(result.pages[1].ocrUsed).toBe(true);
+    vi.useFakeTimers();
+  }, 15000);
+
+  it('item1b: created count equals terminated count', async () => {
+    vi.useRealTimers();
+    const worker = { recognize: vi.fn().mockResolvedValue({ data: { text: 'OCR' } }), terminate: vi.fn().mockResolvedValue(undefined) };
+    const createSpy = vi.spyOn(service as any, 'createTesseractWorker');
+    createSpy.mockResolvedValue(worker);
+    const buffer = await makePdf(Array(2).fill(''));
+    await service.extractWithOcr(buffer);
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    vi.useFakeTimers();
+  });
+
+  it('sync throw becomes page ocrError', async () => {
+    const buffer = await makePdf(Array(1).fill(''));
+    const ocrPage = () => { throw new Error('sync boom'); };
+    const result = await service.extractWithOcr(buffer, {}, new Set(), undefined, ocrPage as any);
+    expect(result.pages[0].ocrError).toBe('sync boom');
+    expect(result.pages[0].ocrUsed).toBe(false);
   });
 
   it('T11 failure surface (mocked prisma): limit failure FAILED with reason starting with code', async () => {

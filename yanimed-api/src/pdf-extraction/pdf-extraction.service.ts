@@ -196,6 +196,10 @@ export class PdfExtractionService {
     return Date.now();
   }
 
+  protected now(): number {
+    return Date.now();
+  }
+
   private async destroyDocumentProxy(pdf: any): Promise<void> {
     if (typeof pdf?.destroy === 'function') {
       await pdf.destroy();
@@ -274,9 +278,22 @@ export class PdfExtractionService {
       throw error;
     }
 
-    let worker: Worker | null = null;
+    const workers = new Set<any>();
+    let worker: any = null;
+    let generation = 0;
     const defaultOcrPage = async (pageNumber: number, pageBytes: Uint8Array): Promise<string> => {
-      if (!worker) worker = await this.createTesseractWorker();
+      const pageGeneration = generation;
+      const created = worker ? worker : await this.createTesseractWorker();
+      if (pageGeneration !== generation) {
+        try { await created.terminate(); } catch {}
+        throw new Error(`OCR_PAGE_TIMEOUT ${pageTimeoutMs}`);
+      }
+      if (worker && worker !== created) {
+        try { await worker.terminate(); } catch {}
+        workers.delete(worker);
+      }
+      workers.add(created);
+      worker = created;
       const image = await renderPageAsImage(pageBytes, pageNumber, {
         scale: 2,
         canvasImport: () => import('@napi-rs/canvas'),
@@ -294,19 +311,30 @@ export class PdfExtractionService {
           if (persistPage) await persistPage(page);
           continue;
         }
+        generation++;
+        const pageGeneration = generation;
         if (this.now() - startTime >= docBudgetMs) {
-          const error: any = new Error(`OCR_TIME_BUDGET_EXCEEDED: elapsed ${this.now() - startTime}ms exceeds budget ${docBudgetMs}ms`);
+          const elapsed = this.now() - startTime;
+          const error: any = new Error(`OCR_TIME_BUDGET_EXCEEDED: elapsed ${elapsed}ms exceeds budget ${docBudgetMs}ms`);
           error.code = 'OCR_TIME_BUDGET_EXCEEDED';
           throw error;
         }
         let timedOut = false;
         let timer: any = null;
-        const rawOcrPromise = runOcr(page.pageNumber, new Uint8Array(inputBytes));
-        rawOcrPromise.catch(() => {});
-        const ocrPromise = rawOcrPromise;
+        let ocrPromise: Promise<string>;
+        try {
+          ocrPromise = runOcr(page.pageNumber, new Uint8Array(inputBytes));
+        } catch (syncError) {
+          page.ocrUsed = false;
+          page.ocrError = syncError instanceof Error ? syncError.message : String(syncError);
+          if (persistPage) await persistPage(page);
+          continue;
+        }
+        (ocrPromise as any).catch(() => {});
         const timeoutPromise = new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
             timedOut = true;
+            generation++;
             reject(new Error(`OCR_PAGE_TIMEOUT ${pageTimeoutMs}`));
           }, pageTimeoutMs);
         });
@@ -325,7 +353,11 @@ export class PdfExtractionService {
           page.ocrUsed = false;
           page.ocrError = error instanceof Error ? error.message : String(error);
           if (timedOut && !ocrPage && worker) {
-            try { await (worker as any).terminate(); } catch {}
+            generation++;
+            for (const w of workers) {
+              try { await (w as any).terminate(); } catch {}
+            }
+            workers.clear();
             worker = null;
           }
         } finally {
@@ -336,14 +368,14 @@ export class PdfExtractionService {
         }
       }
     } finally {
-      if (worker) {
-        try { await (worker as Worker).terminate(); } catch {}
-        worker = null;
+      for (const w of workers) {
+        try { await (w as any).terminate(); } catch {}
       }
+      workers.clear();
+      worker = null;
     }
     return result;
   }
-
   async extractFromPdf(
     buffer: Buffer | Uint8Array | ArrayBuffer,
     options?: PdfExtractionOptions,
@@ -574,4 +606,5 @@ function toUint8Array(buffer: Buffer | Uint8Array | ArrayBuffer): Uint8Array {
   if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer);
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 }
+
 
