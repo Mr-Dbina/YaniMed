@@ -416,3 +416,112 @@ describe('PdfExtractionService', () => {
     expect(update?.[0]?.data?.processedPages).toBe(2);
   });
 });
+
+describe('PdfExtractionService scanned-page detection', () => {
+  let service: PdfExtractionService;
+  let getOperatorListSpy: any;
+  let pageProto: any;
+  let originalGetOperatorList: any;
+
+  async function makeImagePdf(text: string, width: number, height: number): Promise<Buffer> {
+    const { createCanvas } = await import('@napi-rs/canvas');
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'red';
+    ctx.fillRect(0, 0, width, height);
+    const png = canvas.toBuffer('image/png');
+    const pdf = await PDFDocument.create();
+    const image = await pdf.embedPng(png);
+    const page = pdf.addPage([Math.max(1, width), Math.max(1, height)]);
+    if (text) {
+      const font = await pdf.embedFont(StandardFonts.Helvetica);
+      page.drawText(text, { x: 5, y: Math.max(12, height - 12), size: 12, font });
+    }
+    page.drawImage(image, { x: 0, y: 0, width, height });
+    return Buffer.from(await pdf.save());
+  }
+
+  beforeAll(async () => {
+    const { getDocumentProxy } = await import('unpdf');
+    const buf = await makeImagePdf('', 10, 10);
+    const doc = await getDocumentProxy(new Uint8Array(buf));
+    const page = await doc.getPage(1);
+    originalGetOperatorList = Object.getPrototypeOf(page).getOperatorList;
+    await doc.loadingTask.destroy();
+  });
+
+  beforeEach(async () => {
+    service = new PdfExtractionService();
+    const { getDocumentProxy } = await import('unpdf');
+    const buf = await makeImagePdf('', 10, 10);
+    const doc = await getDocumentProxy(new Uint8Array(buf));
+    const page = await doc.getPage(1);
+    pageProto = Object.getPrototypeOf(page);
+    await doc.loadingTask.destroy();
+    getOperatorListSpy = vi.spyOn(pageProto, 'getOperatorList');
+    getOperatorListSpy.mockImplementation(async function (this: any) {
+      return originalGetOperatorList.call(this);
+    });
+    getOperatorListSpy.mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('T1: large image + short text "12" -> needsOcr true', async () => {
+    const buffer = await makeImagePdf('12', 200, 100);
+    const result = await service.extractFromBuffer(buffer);
+    expect(result.pages[0].needsOcr).toBe(true);
+  });
+
+  it('T2: large image + caption under 50 chars -> needsOcr true', async () => {
+    const buffer = await makeImagePdf('Fig 1', 200, 100);
+    const result = await service.extractFromBuffer(buffer);
+    expect(result.pages[0].needsOcr).toBe(true);
+  });
+
+  it('T3: large image + >=50 chars text -> needsOcr false, getOperatorList not called', async () => {
+    const longText = 'This sentence is definitely longer than fifty characters in total.';
+    const buffer = await makeImagePdf(longText, 400, 200);
+    const result = await service.extractFromBuffer(buffer);
+    expect(result.pages[0].needsOcr).toBe(false);
+    expect(getOperatorListSpy).not.toHaveBeenCalled();
+  });
+
+  it('T4: tiny image + short text falls back to text-length rule', async () => {
+    const buffer = await makeImagePdf('', 10, 10);
+    const result = await service.extractFromBuffer(buffer);
+    expect(result.pages[0].needsOcr).toBe(true);
+  });
+
+  it('T5: text-only page with enough text -> getOperatorList not called', async () => {
+    const buffer = await makePdf(['This page has plenty of text content for extraction.']);
+    const result = await service.extractFromBuffer(buffer);
+    expect(result.pages[0].needsOcr).toBe(false);
+    expect(getOperatorListSpy).not.toHaveBeenCalled();
+  });
+
+  it('T6: enableImageDetection=false makes T1/T2 behave like old code', async () => {
+    const b1 = await makeImagePdf('12', 200, 100);
+    const r1 = await service.extractFromBuffer(b1, { enableImageDetection: false });
+    expect(r1.pages[0].needsOcr).toBe(false);
+    const b2 = await makeImagePdf('Fig 1', 200, 100);
+    const r2 = await service.extractFromBuffer(b2, { enableImageDetection: false });
+    expect(r2.pages[0].needsOcr).toBe(false);
+  });
+
+  it('T8: cleanup called when detection throws', async () => {
+    const cleanupSpy = vi.spyOn(pageProto, 'cleanup');
+    cleanupSpy.mockImplementation(function (this: any) {
+      return true;
+    });
+    getOperatorListSpy.mockImplementationOnce(async () => {
+      throw new Error('detection boom');
+    });
+    const buffer = await makeImagePdf('12', 200, 100);
+    await expect(service.extractFromBuffer(buffer)).rejects.toThrow('detection boom');
+    expect(cleanupSpy).toHaveBeenCalled();
+    cleanupSpy.mockRestore();
+  });
+});

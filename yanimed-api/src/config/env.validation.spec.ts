@@ -49,7 +49,57 @@ describe('validateEnv R2 mappings', () => {
     delete process.env.R2_BUCKET_NAME;
 
     const cfg = validateEnv();
-
     expect(cfg.r2BucketName).toBe('');
+  });
+});
+
+describe('validateEnv PDF OCR settings', () => {
+  const keys = ['PDF_OCR_MIN_CHARS', 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE', 'PDF_OCR_MIN_IMAGE_PIXELS', 'PDF_OCR_IMAGE_DETECTION'] as const;
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of keys) saved[key] = process.env[key];
+    process.env.DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://example';
+  });
+
+  afterEach(() => {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  it('applies defaults', () => {
+    for (const key of keys) delete process.env[key];
+    const cfg = validateEnv();
+    expect(cfg.pdfOcrMinChars).toBe(1);
+    expect(cfg.ocrMinTextCharsWithImage).toBe(50);
+    expect(cfg.minImagePixels).toBe(10000);
+    expect(cfg.enableImageDetection).toBe(true);
+  });
+
+  it('applies overrides', () => {
+    process.env.PDF_OCR_MIN_CHARS = '5';
+    process.env.PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE = '75';
+    process.env.PDF_OCR_MIN_IMAGE_PIXELS = '20000';
+    process.env.PDF_OCR_IMAGE_DETECTION = 'false';
+    const cfg = validateEnv();
+    expect(cfg.pdfOcrMinChars).toBe(5);
+    expect(cfg.ocrMinTextCharsWithImage).toBe(75);
+    expect(cfg.minImagePixels).toBe(20000);
+    expect(cfg.enableImageDetection).toBe(false);
+  });
+
+  it('rejects invalid values', () => {
+    for (const [key, value] of [
+      ['PDF_OCR_MIN_CHARS', 'abc'],
+      ['PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE', '-1'],
+      ['PDF_OCR_MIN_IMAGE_PIXELS', '1.5'],
+      ['PDF_OCR_IMAGE_DETECTION', 'maybe'],
+    ] as const) {
+      for (const k of keys) delete process.env[k];
+      process.env[key] = value;
+      expect(() => validateEnv()).toThrow();
+    }
   });
 });
