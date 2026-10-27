@@ -91,10 +91,10 @@ export class PdfExtractionService {
     };
 
     return {
-      minCharsPerPage: readNumber(options.minCharsPerPage, 'PDF_OCR_MIN_CHARS', ['pdfOcrMinChars', 'pdfOcrMinCharsPerPage', 'minCharsPerPage'], 1),
-      ocrMinTextCharsWithImage: readNumber(options.ocrMinTextCharsWithImage, 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE', ['pdfOcrMinTextCharsWithImage', 'ocrMinTextCharsWithImage'], 50),
-      minImagePixels: readNumber(options.minImagePixels, 'PDF_OCR_MIN_IMAGE_PIXELS', ['pdfOcrMinImagePixels', 'minImagePixels'], 10000),
-      enableImageDetection: readBoolean(options.enableImageDetection, 'PDF_OCR_IMAGE_DETECTION', ['pdfOcrImageDetection', 'enableImageDetection'], true),
+      minCharsPerPage: readNumber(options.minCharsPerPage, 'PDF_OCR_MIN_CHARS', ['pdfOcrMinChars', 'pdfOcrMinCharsPerPage', 'minCharsPerPage', 'PDF_OCR_MIN_CHARS'], 1),
+      ocrMinTextCharsWithImage: readNumber(options.ocrMinTextCharsWithImage, 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE', ['pdfOcrMinTextCharsWithImage', 'ocrMinTextCharsWithImage', 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE'], 50),
+      minImagePixels: readNumber(options.minImagePixels, 'PDF_OCR_MIN_IMAGE_PIXELS', ['pdfOcrMinImagePixels', 'minImagePixels', 'PDF_OCR_MIN_IMAGE_PIXELS'], 10000),
+      enableImageDetection: readBoolean(options.enableImageDetection, 'PDF_OCR_IMAGE_DETECTION', ['pdfOcrImageDetection', 'enableImageDetection', 'PDF_OCR_IMAGE_DETECTION'], true),
     };
   }
 
