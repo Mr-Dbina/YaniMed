@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { getResolvedPDFJS } from 'unpdf';
+import { getResolvedPDFJS, renderPageAsImage } from 'unpdf';
 import { PdfExtractionService, isPageComplete } from './pdf-extraction.service.js';
 import { StorageService } from '../storage/storage.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -515,12 +515,16 @@ describe('PdfExtractionService scanned-page detection', () => {
   });
 
   it('T8: getOperatorList throws -> resolves, text rule result, cleanup + destroy called', async () => {
+    const originalCleanup = pageProto.cleanup;
     const cleanupSpy = vi.spyOn(pageProto, 'cleanup');
     cleanupSpy.mockImplementation(function (this: any) {
-      return true;
+      return originalCleanup.call(this);
     });
+    const originalDestroy = (service as any).destroyDocumentProxy.bind(service);
     const destroySpy = vi.spyOn(service as any, 'destroyDocumentProxy');
-    destroySpy.mockResolvedValue(undefined);
+    destroySpy.mockImplementation(async function (this: any, pdf: any) {
+      return originalDestroy(pdf);
+    });
     getOperatorListSpy.mockImplementationOnce(async () => {
       throw new Error('detection boom');
     });
@@ -531,6 +535,47 @@ describe('PdfExtractionService scanned-page detection', () => {
     expect(destroySpy).toHaveBeenCalled();
     cleanupSpy.mockRestore();
     destroySpy.mockRestore();
+  });
+
+  it('T8b: getPage throws -> rejects and destroyDocumentProxy runs', async () => {
+    const originalDestroy = (service as any).destroyDocumentProxy.bind(service);
+    const destroySpy = vi.spyOn(service as any, 'destroyDocumentProxy');
+    destroySpy.mockImplementation(async function (this: any, pdf: any) {
+      return originalDestroy(pdf);
+    });
+    const { getDocumentProxy } = await import('unpdf');
+    const buf = await makeImagePdf('12', 200, 100);
+    const doc = await getDocumentProxy(new Uint8Array(buf));
+    vi.spyOn(doc, 'getPage').mockRejectedValueOnce(new Error('page boom'));
+    const proxySpy = vi.spyOn(service as any, 'getDocumentProxy').mockResolvedValueOnce(doc as any);
+    const buffer = await makeImagePdf('12', 200, 100);
+    await expect(service.extractFromBuffer(buffer)).rejects.toThrow('page boom');
+    expect(destroySpy).toHaveBeenCalled();
+    proxySpy.mockRestore();
+    destroySpy.mockRestore();
+    await doc.loadingTask.destroy();
+  });
+
+  it('logging: catch path calls logger.warn with page number', async () => {
+    const loggerSpy = vi.spyOn((service as any).logger, 'warn');
+    getOperatorListSpy.mockImplementationOnce(async () => {
+      throw new Error('boom');
+    });
+    const buffer = await makeImagePdf('12', 200, 100);
+    await service.extractFromBuffer(buffer);
+    expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('page 1'));
+    loggerSpy.mockRestore();
+  });
+
+  it('buffer reuse: Uint8Array input unchanged and renderPageAsImage works', async () => {
+    const pdfBuffer = await makeImagePdf('12', 200, 100);
+    const bytes = new Uint8Array(pdfBuffer);
+    const originalLength = bytes.byteLength;
+    const svc = new PdfExtractionService();
+    await svc.extractFromBuffer(bytes);
+    expect(bytes.byteLength).toBe(originalLength);
+    const image = await renderPageAsImage(bytes, 1, { canvasImport: () => import('@napi-rs/canvas') });
+    expect(image).toBeTruthy();
   });
 
   it('T9: hasQualifyingImage/readImagePixels handle operator shapes', async () => {
@@ -598,7 +643,7 @@ describe('PdfExtractionService scanned-page detection', () => {
   });
 
   it('resolveOcrConfig uses ConfigService camelCase values', async () => {
-    const cfg = { get: (key: string) => (key === 'minImagePixels' ? 0 : undefined) };
+    const cfg = { get: (key: string) => (key === 'pdfOcrMinImagePixels' ? 0 : undefined) };
     const svc = new PdfExtractionService(undefined, undefined, undefined, cfg as any);
     const buffer = await makeImagePdf('12', 10, 10);
     const result = await svc.extractFromBuffer(buffer);

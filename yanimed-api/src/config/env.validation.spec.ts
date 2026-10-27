@@ -73,9 +73,9 @@ describe('validateEnv PDF OCR settings', () => {
     for (const key of keys) delete process.env[key];
     const cfg = validateEnv();
     expect(cfg.pdfOcrMinChars).toBe(1);
-    expect(cfg.ocrMinTextCharsWithImage).toBe(50);
-    expect(cfg.minImagePixels).toBe(10000);
-    expect(cfg.enableImageDetection).toBe(true);
+    expect(cfg.pdfOcrMinTextCharsWithImage).toBe(50);
+    expect(cfg.pdfOcrMinImagePixels).toBe(10000);
+    expect(cfg.pdfOcrImageDetection).toBe(true);
   });
 
   it('applies overrides', () => {
@@ -85,9 +85,9 @@ describe('validateEnv PDF OCR settings', () => {
     process.env.PDF_OCR_IMAGE_DETECTION = 'false';
     const cfg = validateEnv();
     expect(cfg.pdfOcrMinChars).toBe(5);
-    expect(cfg.ocrMinTextCharsWithImage).toBe(75);
-    expect(cfg.minImagePixels).toBe(20000);
-    expect(cfg.enableImageDetection).toBe(false);
+    expect(cfg.pdfOcrMinTextCharsWithImage).toBe(75);
+    expect(cfg.pdfOcrMinImagePixels).toBe(20000);
+    expect(cfg.pdfOcrImageDetection).toBe(false);
   });
 
   it('rejects invalid values', () => {

@@ -85,18 +85,9 @@ export function validateEnv() {
       .map((m) => m.trim())
       .filter(Boolean),
     pdfOcrMinChars,
-    pdfOcrMinCharsPerPage: pdfOcrMinChars,
-    minCharsPerPage: pdfOcrMinChars,
-    'PDF_OCR_MIN_CHARS': pdfOcrMinChars,
     pdfOcrMinTextCharsWithImage,
-    ocrMinTextCharsWithImage: pdfOcrMinTextCharsWithImage,
-    'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE': pdfOcrMinTextCharsWithImage,
     pdfOcrMinImagePixels,
-    minImagePixels: pdfOcrMinImagePixels,
-    'PDF_OCR_MIN_IMAGE_PIXELS': pdfOcrMinImagePixels,
     pdfOcrImageDetection,
-    enableImageDetection: pdfOcrImageDetection,
-    'PDF_OCR_IMAGE_DETECTION': pdfOcrImageDetection,
   };
 }
 

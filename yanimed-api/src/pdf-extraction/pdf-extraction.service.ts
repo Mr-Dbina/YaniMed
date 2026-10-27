@@ -91,10 +91,10 @@ export class PdfExtractionService {
     };
 
     return {
-      minCharsPerPage: readNumber(options.minCharsPerPage, 'PDF_OCR_MIN_CHARS', ['pdfOcrMinChars', 'pdfOcrMinCharsPerPage', 'minCharsPerPage', 'PDF_OCR_MIN_CHARS'], 1),
-      ocrMinTextCharsWithImage: readNumber(options.ocrMinTextCharsWithImage, 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE', ['pdfOcrMinTextCharsWithImage', 'ocrMinTextCharsWithImage', 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE'], 50),
-      minImagePixels: readNumber(options.minImagePixels, 'PDF_OCR_MIN_IMAGE_PIXELS', ['pdfOcrMinImagePixels', 'minImagePixels', 'PDF_OCR_MIN_IMAGE_PIXELS'], 10000),
-      enableImageDetection: readBoolean(options.enableImageDetection, 'PDF_OCR_IMAGE_DETECTION', ['pdfOcrImageDetection', 'enableImageDetection', 'PDF_OCR_IMAGE_DETECTION'], true),
+      minCharsPerPage: readNumber(options.minCharsPerPage, 'PDF_OCR_MIN_CHARS', ['pdfOcrMinChars'], 1),
+      ocrMinTextCharsWithImage: readNumber(options.ocrMinTextCharsWithImage, 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE', ['pdfOcrMinTextCharsWithImage'], 50),
+      minImagePixels: readNumber(options.minImagePixels, 'PDF_OCR_MIN_IMAGE_PIXELS', ['pdfOcrMinImagePixels'], 10000),
+      enableImageDetection: readBoolean(options.enableImageDetection, 'PDF_OCR_IMAGE_DETECTION', ['pdfOcrImageDetection'], true),
     };
   }
 
@@ -102,7 +102,8 @@ export class PdfExtractionService {
     buffer: Buffer | Uint8Array | ArrayBuffer,
     options: PdfExtractionOptions = {},
   ): Promise<PdfExtractionResult> {
-    const bytes = toUint8Array(buffer);
+    const inputBytes = toUint8Array(buffer);
+    const bytes = new Uint8Array(inputBytes);
     const config = this.resolveOcrConfig(options);
     const minChars = config.minCharsPerPage;
     const ocrMinTextCharsWithImage = config.ocrMinTextCharsWithImage;
@@ -142,7 +143,7 @@ export class PdfExtractionService {
           OPS.paintInlineImageXObject,
           OPS.paintImageXObjectRepeat,
         ]);
-        const pdf = await getDocumentProxy(bytes);
+        const pdf = await this.getDocumentProxy(new Uint8Array(inputBytes));
         try {
           for (const index of detectionIndexes) {
             const page = await pdf.getPage(index + 1);
@@ -179,6 +180,10 @@ export class PdfExtractionService {
       ocrPageNumbers,
       textPageNumbers,
     };
+  }
+
+  protected async getDocumentProxy(bytes: Uint8Array): Promise<any> {
+    return getDocumentProxy(bytes);
   }
 
   private async destroyDocumentProxy(pdf: any): Promise<void> {
@@ -319,6 +324,7 @@ export class PdfExtractionService {
   ): Promise<PdfExtractionResult> {
     const result = await this.extractFromBuffer(buffer, options);
     const bytes = toUint8Array(buffer);
+    const inputBytes = new Uint8Array(bytes);
 
     let worker: Worker | null = null;
     const defaultOcrPage = async (pageNumber: number, pageBytes: Uint8Array): Promise<string> => {
@@ -337,7 +343,7 @@ export class PdfExtractionService {
         if (skipPages.has(page.pageNumber)) continue;
         if (page.needsOcr) {
           try {
-            const ocrText = await runOcr(page.pageNumber, bytes);
+            const ocrText = await runOcr(page.pageNumber, inputBytes);
             if (ocrText.length > 0) {
               page.text = page.text.trim() ? `${page.text.trim()}\n${ocrText}` : ocrText;
               page.ocrUsed = true;
