@@ -313,8 +313,8 @@ export class PdfExtractionService {
         }
         generation++;
         const pageGeneration = generation;
-        if (this.now() - startTime >= docBudgetMs) {
-          const elapsed = this.now() - startTime;
+        const elapsed = this.now() - startTime;
+        if (elapsed >= docBudgetMs) {
           const error: any = new Error(`OCR_TIME_BUDGET_EXCEEDED: elapsed ${elapsed}ms exceeds budget ${docBudgetMs}ms`);
           error.code = 'OCR_TIME_BUDGET_EXCEEDED';
           throw error;
