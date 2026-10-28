@@ -18,6 +18,7 @@ export interface CompleteJobInput {
   success: boolean;
   errorCode?: string | null;
   errorMessage?: string | null;
+  retry?: { delayMs: number };
 }
 
 @Injectable()
@@ -82,6 +83,7 @@ export class ProcessingJobRepository {
           FROM "public"."ProcessingJob" j
           WHERE (
               (j."status" = 'QUEUED' AND j."nextRunAt" <= now())
+              OR (j."status" = 'RETRY_WAIT' AND j."nextRunAt" <= now())
               OR (j."status" = 'RUNNING' AND j."leaseUntil" IS NOT NULL AND j."leaseUntil" <= now())
             )
             AND j."attempt" < j."maxAttempts"
@@ -126,6 +128,9 @@ export class ProcessingJobRepository {
   }
 
   async complete(input: CompleteJobInput): Promise<void> {
+    const retry = input.success ? undefined : input.retry;
+    const status = input.success ? 'SUCCEEDED' : retry ? 'RETRY_WAIT' : 'FAILED';
+
     await this.prisma.$transaction(async tx => {
       const rows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
@@ -144,12 +149,17 @@ export class ProcessingJobRepository {
 
       await tx.$executeRaw`
         UPDATE "public"."ProcessingJob"
-        SET "status" = ${input.success ? 'SUCCEEDED' : 'FAILED'}::"public"."ProcessingJobStatus",
+        SET "status" = ${status}::"public"."ProcessingJobStatus",
+            "nextRunAt" = CASE
+              WHEN ${Boolean(retry)}::boolean
+              THEN now() + (${retry?.delayMs ?? 0}::double precision * interval '1 millisecond')
+              ELSE "nextRunAt"
+            END,
             "leaseOwner" = NULL,
             "leaseUntil" = NULL,
             "errorCode" = ${input.success ? null : input.errorCode ?? 'PROCESSING_FAILED'},
             "errorMessage" = ${input.success ? null : input.errorMessage ?? null},
-            "finishedAt" = now(),
+            "finishedAt" = CASE WHEN ${Boolean(retry)}::boolean THEN NULL ELSE now() END,
             "updatedAt" = now()
         WHERE "id" = ${input.job.id}
       `;
@@ -157,7 +167,7 @@ export class ProcessingJobRepository {
       const updated = await tx.document.updateMany({
         where: { id: input.job.documentId },
         data: {
-          status: input.success ? 'READY' : 'FAILED',
+          status: input.success ? 'READY' : retry ? 'QUEUED' : 'FAILED',
           errorMessage: input.success ? null : input.errorMessage ?? null,
         },
       });

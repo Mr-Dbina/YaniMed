@@ -107,12 +107,38 @@ describe('DocumentProcessingService', () => {
     });
   });
 
-  it('classifies transient failures and logs the policy', async () => {
-    const job = makeJob();
+  it('schedules an auto retry at attempt 1 of 4 with a bounded delay', async () => {
+    const job = makeJob({ attempt: 1, maxAttempts: 4 });
     const jobs = makeJobs([job]);
     const extraction = makeExtraction();
     extraction.processDocument.mockRejectedValue(Object.assign(new Error('socket reset'), { code: 'ECONNRESET' }));
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const service = new DocumentProcessingService(jobs as never, extraction as never, makeEmbeddings() as never);
+
+    await service.drain(1);
+
+    const completed = jobs.complete.mock.calls[0][0];
+    expect(completed).toMatchObject({
+      job,
+      success: false,
+      errorCode: 'ECONNRESET',
+      errorMessage: 'socket reset',
+    });
+    expect(completed.retry).toBeDefined();
+    expect(completed.retry.delayMs).toBeGreaterThanOrEqual(30_000);
+    expect(completed.retry.delayMs).toBeLessThanOrEqual(36_000);
+    const logged = warn.mock.calls.map(call => String(call[0])).join('\n');
+    expect(logged).toContain('code=ECONNRESET');
+    expect(logged).toContain('attempt=1');
+    expect(logged).toContain('delayMs=');
+    warn.mockRestore();
+  });
+
+  it('does not retry an auto-retry failure at the final attempt', async () => {
+    const job = makeJob({ attempt: 4, maxAttempts: 4 });
+    const jobs = makeJobs([job]);
+    const extraction = makeExtraction();
+    extraction.processDocument.mockRejectedValue(Object.assign(new Error('socket reset'), { code: 'ECONNRESET' }));
     const service = new DocumentProcessingService(jobs as never, extraction as never, makeEmbeddings() as never);
 
     await service.drain(1);
@@ -123,8 +149,25 @@ describe('DocumentProcessingService', () => {
       errorCode: 'ECONNRESET',
       errorMessage: 'socket reset',
     });
-    expect(warn.mock.calls.some(call => String(call[0]).includes('AUTO_RETRY'))).toBe(true);
-    warn.mockRestore();
+  });
+
+  it('never retries a CONFIG failure', async () => {
+    const job = makeJob({ attempt: 1, maxAttempts: 4 });
+    const jobs = makeJobs([job]);
+    const extraction = makeExtraction();
+    extraction.processDocument.mockRejectedValue(
+      Object.assign(new Error('page limit exceeded'), { code: 'OCR_PAGE_LIMIT_EXCEEDED' }),
+    );
+    const service = new DocumentProcessingService(jobs as never, extraction as never, makeEmbeddings() as never);
+
+    await service.drain(1);
+
+    expect(jobs.complete).toHaveBeenCalledWith({
+      job,
+      success: false,
+      errorCode: 'OCR_PAGE_LIMIT_EXCEEDED',
+      errorMessage: 'page limit exceeded',
+    });
   });
 
   it('marks the job FAILED when the document has no extractable text', async () => {

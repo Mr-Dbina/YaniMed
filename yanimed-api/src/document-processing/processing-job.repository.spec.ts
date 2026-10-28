@@ -84,6 +84,17 @@ describe('ProcessingJobRepository', () => {
     expect(candidateSql).toContain(`j."attempt" < j."maxAttempts"`);
   });
 
+  it('SQL shape: claim selects RETRY_WAIT only when nextRunAt is due', async () => {
+    const { prisma, tx } = makePrisma();
+    tx.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([job]);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    await repository.claimNext('owner-1', 180_000);
+
+    const candidateSql = sqlOf(tx.$queryRaw.mock.calls[1]);
+    expect(candidateSql).toContain(`j."status" = 'RETRY_WAIT' AND j."nextRunAt" <= now()`);
+  });
+
   it('SQL shape: claim never selects FAILED jobs', async () => {
     const { prisma, tx } = makePrisma();
     tx.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([job]);
@@ -215,6 +226,49 @@ describe('ProcessingJobRepository', () => {
       where: { id: 'doc-1' },
       data: { status: 'READY', errorMessage: null },
     });
+  });
+
+  it('SQL shape: complete with retry schedules RETRY_WAIT with a cast delay', async () => {
+    const { prisma, tx } = makePrisma();
+    tx.$queryRaw.mockResolvedValue([{ id: 'job-1' }]);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    await repository.complete({
+      job,
+      success: false,
+      errorCode: 'ECONNRESET',
+      errorMessage: 'socket reset',
+      retry: { delayMs: 33_000 },
+    });
+
+    const sql = sqlOf(tx.$executeRaw.mock.calls[0]);
+    const values = tx.$executeRaw.mock.calls[0].slice(1);
+    expect(sql).toContain('"status" = ?::"public"."ProcessingJobStatus"');
+    expect(sql).toContain(`THEN now() + (?::double precision * interval '1 millisecond')`);
+    expect(sql).toContain('"finishedAt" = CASE WHEN ?::boolean THEN NULL ELSE now() END');
+    expect(values).toContain('RETRY_WAIT');
+    expect(values).toContain(33_000);
+    expect(tx.document.updateMany).toHaveBeenCalledWith({
+      where: { id: 'doc-1' },
+      data: { status: 'QUEUED', errorMessage: 'socket reset' },
+    });
+  });
+
+  it('complete with retry writes nothing when the fence fails', async () => {
+    const { prisma, tx } = makePrisma();
+    tx.$queryRaw.mockResolvedValue([]);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    await expect(repository.complete({
+      job,
+      success: false,
+      errorCode: 'ECONNRESET',
+      errorMessage: 'socket reset',
+      retry: { delayMs: 33_000 },
+    })).rejects.toBeInstanceOf(LeaseLostError);
+
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(tx.document.updateMany).not.toHaveBeenCalled();
   });
 
   it('reports a lost lease when heartbeat renews zero rows', async () => {

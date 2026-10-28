@@ -4,6 +4,7 @@ import { PdfExtractionService } from '../pdf-extraction/pdf-extraction.service.j
 import { EmbeddingService } from '../embeddings/embedding.service.js';
 import { ProcessingJobRepository, type ClaimedJob } from './processing-job.repository.js';
 import { classifyProcessingError } from './processing-error.js';
+import { retryDelayMs } from './retry-policy.js';
 import { LeaseLostError, type JobContext } from './processing-job.types.js';
 
 function readPositiveInt(name: string, fallback: number): number {
@@ -131,10 +132,24 @@ export class DocumentProcessingService {
       const errorCode = classified.code;
       const timedOut = errorCode === 'PROCESSING_TIME_BUDGET_EXCEEDED';
       if (timedOut) ctx.lost = true;
-      this.logger.warn(`Processing job ${job.id} failed with policy ${classified.policy}.`);
+      const retryDelay = classified.policy === 'AUTO_RETRY' && !timedOut && job.attempt < job.maxAttempts
+        ? retryDelayMs(job.attempt)
+        : undefined;
+
+      if (retryDelay === undefined) {
+        this.logger.warn(`Processing job ${job.id} failed with policy ${classified.policy}.`);
+      } else {
+        this.logger.warn(`Processing job ${job.id} scheduled for retry with policy ${classified.policy}: code=${errorCode} attempt=${job.attempt} delayMs=${retryDelay}.`);
+      }
 
       try {
-        await this.jobs.complete({ job, success: false, errorCode, errorMessage });
+        await this.jobs.complete({
+          job,
+          success: false,
+          errorCode,
+          errorMessage,
+          ...(retryDelay === undefined ? {} : { retry: { delayMs: retryDelay } }),
+        });
       } catch (completeError) {
         if (completeError instanceof LeaseLostError) {
           this.logger.warn(`Stopping processing for job ${job.id} because its lease was lost.`);
