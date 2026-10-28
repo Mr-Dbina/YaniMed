@@ -196,10 +196,6 @@ export class PdfExtractionService {
     return Date.now();
   }
 
-  protected now(): number {
-    return Date.now();
-  }
-
   private async destroyDocumentProxy(pdf: any): Promise<void> {
     if (typeof pdf?.destroy === 'function') {
       await pdf.destroy();
@@ -312,7 +308,6 @@ export class PdfExtractionService {
           continue;
         }
         generation++;
-        const pageGeneration = generation;
         const elapsed = this.now() - startTime;
         if (elapsed >= docBudgetMs) {
           const error: any = new Error(`OCR_TIME_BUDGET_EXCEEDED: elapsed ${elapsed}ms exceeds budget ${docBudgetMs}ms`);
@@ -606,5 +601,3 @@ function toUint8Array(buffer: Buffer | Uint8Array | ArrayBuffer): Uint8Array {
   if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer);
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 }
-
-

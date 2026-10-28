@@ -585,7 +585,7 @@ describe('PdfExtractionService scanned-page detection', () => {
     const minImagePixels = 10000;
 
     // a. paintImageXObject above/below
-    let ops = { fnArray: [OPS.paintImageXObject], argsArray: [['id', 200, 100]] };
+    let ops: any = { fnArray: [OPS.paintImageXObject], argsArray: [['id', 200, 100]] };
     expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintImageXObject]), OPS)).toBe(true);
     ops = { fnArray: [OPS.paintImageXObject], argsArray: [['id', 10, 10]] };
     expect((svc as any).hasQualifyingImage(ops, minImagePixels, new Set([OPS.paintImageXObject]), OPS)).toBe(false);
@@ -734,6 +734,8 @@ describe('OCR time budget and page limit', () => {
     const result = await promise;
     expect(worker1.terminate).toHaveBeenCalled();
     expect(createSpy).toHaveBeenCalledTimes(2);
+    const terminated = worker1.terminate.mock.calls.length + worker2.terminate.mock.calls.length;
+    expect(terminated).toBe(createSpy.mock.calls.length);
     expect(result.pages[0].ocrError).toContain('OCR_PAGE_TIMEOUT');
     expect(worker2.recognize).toHaveBeenCalled();
     expect(worker2.terminate).toHaveBeenCalled();
@@ -808,8 +810,12 @@ describe('OCR time budget and page limit', () => {
     await new Promise(res => setTimeout(res, 2200));
     const result = await promise;
 
+    const terminated = worker1.terminate.mock.calls.length + worker2.terminate.mock.calls.length;
+    expect(terminated).toBe(createSpy.mock.calls.length);
     expect(worker1.terminate).toHaveBeenCalled();
+    expect(worker2.terminate).toHaveBeenCalled();
     expect(createSpy).toHaveBeenCalledTimes(2);
+    expect(result.pages[0].ocrError).toContain('OCR_PAGE_TIMEOUT');
     expect(result.pages[1].ocrUsed).toBe(true);
     vi.useFakeTimers();
   }, 15000);
@@ -829,10 +835,33 @@ describe('OCR time budget and page limit', () => {
   it('sync throw becomes page ocrError', async () => {
     const buffer = await makePdf(Array(1).fill(''));
     const ocrPage = () => { throw new Error('sync boom'); };
-    const result = await service.extractWithOcr(buffer, {}, new Set(), undefined, ocrPage as any);
+    const persistPage = vi.fn().mockResolvedValue(undefined);
+    const result = await service.extractWithOcr(buffer, {}, new Set(), persistPage, ocrPage as any);
     expect(result.pages[0].ocrError).toBe('sync boom');
     expect(result.pages[0].ocrUsed).toBe(false);
+    expect(persistPage).toHaveBeenCalledWith(expect.objectContaining({ pageNumber: 1, ocrError: 'sync boom' }));
   });
+
+  it('two consecutive timeouts then success: created count equals terminated count', async () => {
+    vi.useRealTimers();
+    const worker1 = { recognize: vi.fn(() => new Promise(() => {})), terminate: vi.fn().mockResolvedValue(undefined) };
+    const worker2 = { recognize: vi.fn(() => new Promise(() => {})), terminate: vi.fn().mockResolvedValue(undefined) };
+    const worker3 = { recognize: vi.fn().mockResolvedValue({ data: { text: 'OCR3' } }), terminate: vi.fn().mockResolvedValue(undefined) };
+    const createSpy = vi.spyOn(service as any, 'createTesseractWorker');
+    createSpy.mockResolvedValueOnce(worker1).mockResolvedValueOnce(worker2).mockResolvedValueOnce(worker3);
+    const buffer = await makePdf(Array(3).fill(''));
+    const result = await service.extractWithOcr(buffer, { pageTimeoutMs: 100 });
+    expect(createSpy).toHaveBeenCalledTimes(3);
+    const terminated =
+      worker1.terminate.mock.calls.length +
+      worker2.terminate.mock.calls.length +
+      worker3.terminate.mock.calls.length;
+    expect(terminated).toBe(createSpy.mock.calls.length);
+    expect(result.pages[0].ocrError).toContain('OCR_PAGE_TIMEOUT');
+    expect(result.pages[1].ocrError).toContain('OCR_PAGE_TIMEOUT');
+    expect(result.pages[2].ocrUsed).toBe(true);
+    vi.useFakeTimers();
+  }, 15000);
 
   it('T11 failure surface (mocked prisma): limit failure FAILED with reason starting with code', async () => {
     const buffer = await makePdf(Array(3).fill(''));

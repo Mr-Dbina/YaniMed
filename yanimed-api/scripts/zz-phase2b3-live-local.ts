@@ -78,7 +78,7 @@ async function main() {
   console.log(`LAST_PASS_TIME: ${lastPassAt - t0}ms`);
   console.log(`EXIT_TIME: ${Date.now() - t0}ms`);
   console.log(`PROCESS_UPTIME: ${process.uptime()}s`);
-  for (const h of process._getActiveHandles()) {
+  for (const h of (process as any)._getActiveHandles()) {
     try { (h as any)?.close?.(); } catch {}
     try { (h as any)?.destroy?.(); } catch {}
     (h as any)?.unref?.();
