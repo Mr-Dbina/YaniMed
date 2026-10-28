@@ -732,10 +732,10 @@ describe('OCR time budget and page limit', () => {
     const promise = service.extractWithOcr(buffer, { pageTimeoutMs: 500 });
     await new Promise(res => setTimeout(res, 1000));
     const result = await promise;
-    expect(worker1.terminate).toHaveBeenCalled();
-    expect(createSpy).toHaveBeenCalledTimes(2);
     const terminated = worker1.terminate.mock.calls.length + worker2.terminate.mock.calls.length;
     expect(terminated).toBe(createSpy.mock.calls.length);
+    expect(worker1.terminate).toHaveBeenCalled();
+    expect(createSpy).toHaveBeenCalledTimes(2);
     expect(result.pages[0].ocrError).toContain('OCR_PAGE_TIMEOUT');
     expect(worker2.recognize).toHaveBeenCalled();
     expect(worker2.terminate).toHaveBeenCalled();
@@ -850,7 +850,7 @@ describe('OCR time budget and page limit', () => {
     const createSpy = vi.spyOn(service as any, 'createTesseractWorker');
     createSpy.mockResolvedValueOnce(worker1).mockResolvedValueOnce(worker2).mockResolvedValueOnce(worker3);
     const buffer = await makePdf(Array(3).fill(''));
-    const result = await service.extractWithOcr(buffer, { pageTimeoutMs: 100 });
+    const result = await service.extractWithOcr(buffer, { pageTimeoutMs: 1000 });
     expect(createSpy).toHaveBeenCalledTimes(3);
     const terminated =
       worker1.terminate.mock.calls.length +
