@@ -275,7 +275,6 @@ export class PdfExtractionService {
     }
 
     const workers = new Set<any>();
-    const createdWorkers = new Set<any>();
     const terminatedWorkers = new Set<any>();
     const pendingCreations = new Set<Promise<any>>();
     let worker: any = null;
@@ -287,23 +286,25 @@ export class PdfExtractionService {
       try { await w.terminate(); } catch {}
     };
 
-    const createWorker = async () => {
-      const pending = this.createTesseractWorker();
+    const createWorker = async (pageGeneration: number) => {
+      const created = await this.createTesseractWorker();
+      if (pageGeneration !== generation) {
+        await terminateWorker(created);
+        throw new Error(`OCR_PAGE_TIMEOUT ${pageTimeoutMs}`);
+      }
+      return created;
+    };
+
+    const startCreate = (pageGeneration: number) => {
+      const pending = createWorker(pageGeneration);
       pendingCreations.add(pending);
-      const tracked = pending
-        .then((created) => {
-          createdWorkers.add(created);
-          return created;
-        })
-        .finally(() => {
-          pendingCreations.delete(pending);
-        });
-      return tracked;
+      pending.finally(() => pendingCreations.delete(pending)).catch(() => {});
+      return pending;
     };
 
     const defaultOcrPage = async (pageNumber: number, pageBytes: Uint8Array): Promise<string> => {
       const pageGeneration = generation;
-      const created = worker ? worker : await createWorker();
+      const created = worker ? worker : await startCreate(pageGeneration);
       if (pageGeneration !== generation) {
         await terminateWorker(created);
         throw new Error(`OCR_PAGE_TIMEOUT ${pageTimeoutMs}`);
@@ -388,10 +389,9 @@ export class PdfExtractionService {
       }
     } finally {
       await Promise.allSettled([...pendingCreations]);
-      for (const w of createdWorkers) {
+      for (const w of workers) {
         await terminateWorker(w);
       }
-      createdWorkers.clear();
       workers.clear();
       worker = null;
     }
