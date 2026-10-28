@@ -275,17 +275,41 @@ export class PdfExtractionService {
     }
 
     const workers = new Set<any>();
+    const createdWorkers = new Set<any>();
+    const terminatedWorkers = new Set<any>();
+    const pendingCreations = new Set<Promise<any>>();
     let worker: any = null;
     let generation = 0;
+
+    const terminateWorker = async (w: any) => {
+      if (!w || terminatedWorkers.has(w)) return;
+      terminatedWorkers.add(w);
+      try { await w.terminate(); } catch {}
+    };
+
+    const createWorker = async () => {
+      const pending = this.createTesseractWorker();
+      pendingCreations.add(pending);
+      const tracked = pending
+        .then((created) => {
+          createdWorkers.add(created);
+          return created;
+        })
+        .finally(() => {
+          pendingCreations.delete(pending);
+        });
+      return tracked;
+    };
+
     const defaultOcrPage = async (pageNumber: number, pageBytes: Uint8Array): Promise<string> => {
       const pageGeneration = generation;
-      const created = worker ? worker : await this.createTesseractWorker();
+      const created = worker ? worker : await createWorker();
       if (pageGeneration !== generation) {
-        try { await created.terminate(); } catch {}
+        await terminateWorker(created);
         throw new Error(`OCR_PAGE_TIMEOUT ${pageTimeoutMs}`);
       }
       if (worker && worker !== created) {
-        try { await worker.terminate(); } catch {}
+        await terminateWorker(worker);
         workers.delete(worker);
       }
       workers.add(created);
@@ -350,7 +374,7 @@ export class PdfExtractionService {
           if (timedOut && !ocrPage && worker) {
             generation++;
             for (const w of workers) {
-              try { await (w as any).terminate(); } catch {}
+              await terminateWorker(w);
             }
             workers.clear();
             worker = null;
@@ -363,9 +387,11 @@ export class PdfExtractionService {
         }
       }
     } finally {
-      for (const w of workers) {
-        try { await (w as any).terminate(); } catch {}
+      await Promise.allSettled([...pendingCreations]);
+      for (const w of createdWorkers) {
+        await terminateWorker(w);
       }
+      createdWorkers.clear();
       workers.clear();
       worker = null;
     }
