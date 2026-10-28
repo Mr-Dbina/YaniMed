@@ -21,6 +21,7 @@ describe('EmbeddingService', () => {
     global.fetch = vi.fn();
   });
   afterEach(() => {
+    vi.useRealTimers();
     global.fetch = originalFetch;
     delete process.env.GEMINI_API_KEY;
     vi.restoreAllMocks();
@@ -75,6 +76,76 @@ describe('EmbeddingService', () => {
     const vector = await service.embedText('text');
     expect(vector).toHaveLength(EMBEDDING_DIMENSIONS);
     expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('tags rate-limited failures after retries as EMBEDDING_TRANSIENT', async () => {
+    vi.useFakeTimers();
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 429,
+      text: async () => 'rate limited',
+    });
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 2 });
+    const result = expect(service.embedText('text')).rejects.toMatchObject({
+      code: 'EMBEDDING_TRANSIENT',
+      message: 'Gemini embedding request failed (429): rate limited',
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await result;
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('tags non-retryable HTTP failures as EMBEDDING_PERMANENT', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => 'bad request',
+    });
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 2 });
+    await expect(service.embedText('text')).rejects.toMatchObject({
+      code: 'EMBEDDING_PERMANENT',
+      message: 'Gemini embedding request failed (400): bad request',
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('tags fetch failures as EMBEDDING_TRANSIENT', async () => {
+    vi.useFakeTimers();
+    (global.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(new TypeError('fetch failed'));
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 2 });
+    const result = expect(service.embedText('text')).rejects.toMatchObject({
+      code: 'EMBEDDING_TRANSIENT',
+      message: 'fetch failed',
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await result;
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('tags a missing API key as EMBEDDING_PERMANENT', async () => {
+    delete process.env.GEMINI_API_KEY;
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 1 });
+    await expect(service.embedText('text')).rejects.toMatchObject({
+      code: 'EMBEDDING_PERMANENT',
+      message: 'GEMINI_API_KEY is not configured.',
+    });
+  });
+
+  it('rethrows the original coded chunk error from embedDocument', async () => {
+    const prisma = makePrisma([{ id: 'chunk-1', content: 'text', chunkIndex: 0 }]);
+    prisma.$queryRaw.mockResolvedValue([{ has_embedding: false, model: null }]);
+    const original = Object.assign(new Error('Gemini embedding request failed (429): rate limited'), {
+      code: 'EMBEDDING_TRANSIENT',
+    });
+    const service = new EmbeddingService(prisma as never, { requestsPerMinute: 100000, maxAttempts: 1 });
+    vi.spyOn(service, 'embedText').mockRejectedValue(original);
+
+    await expect(service.embedDocument('doc-1')).rejects.toBe(original);
+    const updates = (prisma.document.update as ReturnType<typeof vi.fn>).mock.calls.map((call: any) => call[0]?.data);
+    expect(updates).toContainEqual(expect.objectContaining({
+      status: 'FAILED',
+      errorMessage: 'Gemini embedding request failed (429): rate limited',
+    }));
   });
 
   it('skips already valid embeddings', async () => {

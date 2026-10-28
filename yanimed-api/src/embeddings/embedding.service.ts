@@ -1,10 +1,27 @@
 import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { isTransientNetworkError } from '../document-processing/processing-error.js';
 import { LeaseLostError, type JobContext } from '../document-processing/processing-job.types.js';
 
 export const EMBEDDING_MODEL = 'gemini-embedding-001';
 export const EMBEDDING_DIMENSIONS = 768;
+
+type EmbeddingErrorCode = 'EMBEDDING_TRANSIENT' | 'EMBEDDING_PERMANENT';
+
+function tagEmbeddingError(error: unknown, code: EmbeddingErrorCode): Error {
+  if (error instanceof Error) {
+    (error as Error & { code?: string }).code = code;
+    return error;
+  }
+  const wrapped = new Error(String(error));
+  (wrapped as Error & { code?: string }).code = code;
+  return wrapped;
+}
+
+function embeddingError(message: string, code: EmbeddingErrorCode): Error {
+  return tagEmbeddingError(new Error(message), code);
+}
 
 export interface EmbeddingResult {
   documentId: string;
@@ -64,7 +81,7 @@ export class EmbeddingService {
   }
 
   async embedText(text: string, taskType?: string): Promise<number[]> {
-    if (!this.apiKey) throw new Error('GEMINI_API_KEY is not configured.');
+    if (!this.apiKey) throw embeddingError('GEMINI_API_KEY is not configured.', 'EMBEDDING_PERMANENT');
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${EMBEDDING_MODEL}:embedContent?key=${this.apiKey}`;
     let lastError: unknown;
     for (let attempt = 0; attempt < this.maxAttempts; attempt++) {
@@ -83,23 +100,25 @@ export class EmbeddingService {
         if (!response.ok) {
           const body = await response.text();
           if (response.status === 429 || response.status >= 500) {
-            lastError = new Error(`Gemini embedding request failed (${response.status}): ${body}`);
+            lastError = embeddingError(`Gemini embedding request failed (${response.status}): ${body}`, 'EMBEDDING_TRANSIENT');
             await this.sleep(this.backoff(attempt) + this.jitter());
             continue;
           }
-          throw new Error(`Gemini embedding request failed (${response.status}): ${body}`);
+          throw embeddingError(`Gemini embedding request failed (${response.status}): ${body}`, 'EMBEDDING_PERMANENT');
         }
         const json = (await response.json()) as { embedding?: { values?: unknown } };
         const values = json?.embedding?.values;
         if (!Array.isArray(values) || values.length !== EMBEDDING_DIMENSIONS) {
-          throw new Error(`Gemini embedding returned ${Array.isArray(values) ? values.length : 'invalid'} dimensions; expected ${EMBEDDING_DIMENSIONS}.`);
+          throw embeddingError(`Gemini embedding returned ${Array.isArray(values) ? values.length : 'invalid'} dimensions; expected ${EMBEDDING_DIMENSIONS}.`, 'EMBEDDING_PERMANENT');
         }
         if (!values.every(value => typeof value === 'number' && Number.isFinite(value))) {
-          throw new Error('Gemini embedding returned non-finite values.');
+          throw embeddingError('Gemini embedding returned non-finite values.', 'EMBEDDING_PERMANENT');
         }
         return values as number[];
       } catch (error) {
-        lastError = error;
+        lastError = isTransientNetworkError(error)
+          ? tagEmbeddingError(error, 'EMBEDDING_TRANSIENT')
+          : error;
         if (attempt === this.maxAttempts - 1) break;
         if (error instanceof Error && /Gemini embedding request failed \([4]/.test(error.message)) {
           throw error;
@@ -107,7 +126,9 @@ export class EmbeddingService {
         await this.sleep(this.backoff(attempt) + this.jitter());
       }
     }
-    throw lastError instanceof Error ? lastError : new Error('Gemini embedding request failed.');
+    throw lastError instanceof Error
+      ? lastError
+      : embeddingError('Gemini embedding request failed.', 'EMBEDDING_TRANSIENT');
   }
 
   async embedDocument(documentId: string, ctx?: JobContext): Promise<EmbeddingResult> {
@@ -128,7 +149,7 @@ export class EmbeddingService {
 
       let embeddedChunks = 0;
       let skippedChunks = 0;
-      const failures: string[] = [];
+      const failures: unknown[] = [];
       for (const chunk of document.chunks) {
         if (ctx?.lost) throw new LeaseLostError();
         try {
@@ -143,20 +164,23 @@ export class EmbeddingService {
           embeddedChunks += 1;
         } catch (error) {
           if (error instanceof LeaseLostError) throw error;
-          failures.push(error instanceof Error ? error.message : String(error));
+          failures.push(error);
         }
       }
 
       const failedChunks = failures.length;
+      const firstFailure = failures[0];
+      const firstFailureMessage = firstFailure instanceof Error ? firstFailure.message : String(firstFailure);
       if (ctx?.lost) throw new LeaseLostError();
       await writeDocument({
         embeddedChunks,
         status: failedChunks > 0 ? 'FAILED' : 'PROCESSING',
-        errorMessage: failedChunks > 0 ? failures[0] : null,
+        errorMessage: failedChunks > 0 ? firstFailureMessage : null,
       });
 
       if (failedChunks > 0) {
-        throw new Error(failures[0]);
+        if (firstFailure instanceof Error) throw firstFailure;
+        throw new Error(String(firstFailure));
       }
 
       return {

@@ -39,6 +39,48 @@ describe('Reserved R2 storage (mocked SDK)', () => {
     send.mockRejectedValue({ $metadata: { httpStatusCode: 403 } });
     await expect(service.inspectReservedPdf(attempt.objectKey)).rejects.toMatchObject({ $metadata: { httpStatusCode: 403 } });
   });
+  it('tags getObject abort failures as STORAGE_TRANSIENT', async () => {
+    vi.spyOn(S3Client.prototype, 'send').mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    await expect(service.getObject('pdfs/key.pdf')).rejects.toMatchObject({
+      code: 'STORAGE_TRANSIENT',
+      message: 'Download timed out.',
+    });
+  });
+
+  it('tags getObject timeout failures as STORAGE_TRANSIENT', async () => {
+    vi.spyOn(S3Client.prototype, 'send').mockRejectedValue(Object.assign(new Error('timed out'), { name: 'TimeoutError' }));
+    await expect(service.getObject('pdfs/key.pdf')).rejects.toMatchObject({
+      code: 'STORAGE_TRANSIENT',
+      message: 'timed out',
+    });
+  });
+
+  it('tags getObject 503 failures as STORAGE_TRANSIENT', async () => {
+    vi.spyOn(S3Client.prototype, 'send').mockRejectedValue(
+      Object.assign(new Error('service unavailable'), { $metadata: { httpStatusCode: 503 } }),
+    );
+    await expect(service.getObject('pdfs/key.pdf')).rejects.toMatchObject({
+      code: 'STORAGE_TRANSIENT',
+      message: 'service unavailable',
+    });
+  });
+
+  it('tags getObject NoSuchKey failures as STORAGE_PERMANENT', async () => {
+    vi.spyOn(S3Client.prototype, 'send').mockRejectedValue(Object.assign(new Error('missing'), { name: 'NoSuchKey' }));
+    await expect(service.getObject('pdfs/key.pdf')).rejects.toMatchObject({
+      code: 'STORAGE_PERMANENT',
+      message: 'missing',
+    });
+  });
+
+  it('tags getObject AccessDenied failures as STORAGE_PERMANENT', async () => {
+    vi.spyOn(S3Client.prototype, 'send').mockRejectedValue(Object.assign(new Error('denied'), { name: 'AccessDenied' }));
+    await expect(service.getObject('pdfs/key.pdf')).rejects.toMatchObject({
+      code: 'STORAGE_PERMANENT',
+      message: 'denied',
+    });
+  });
+
   it('HEAD returns receipts and distinguishes a missing object from infrastructure errors', async () => {
     const send = vi.spyOn(S3Client.prototype, 'send').mockResolvedValue({
       ContentLength: 100, ETag: 'version', Metadata: { attemptid: 'attempt', sha256: 'hash' },

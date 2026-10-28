@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DocumentProcessingService } from './document-processing.service.js';
 import { LeaseLostError } from './processing-job.types.js';
@@ -104,6 +105,26 @@ describe('DocumentProcessingService', () => {
       errorCode: 'OCR_FAILED',
       errorMessage: 'ocr failed',
     });
+  });
+
+  it('classifies transient failures and logs the policy', async () => {
+    const job = makeJob();
+    const jobs = makeJobs([job]);
+    const extraction = makeExtraction();
+    extraction.processDocument.mockRejectedValue(Object.assign(new Error('socket reset'), { code: 'ECONNRESET' }));
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const service = new DocumentProcessingService(jobs as never, extraction as never, makeEmbeddings() as never);
+
+    await service.drain(1);
+
+    expect(jobs.complete).toHaveBeenCalledWith({
+      job,
+      success: false,
+      errorCode: 'ECONNRESET',
+      errorMessage: 'socket reset',
+    });
+    expect(warn.mock.calls.some(call => String(call[0]).includes('AUTO_RETRY'))).toBe(true);
+    warn.mockRestore();
   });
 
   it('marks the job FAILED when the document has no extractable text', async () => {
@@ -316,6 +337,54 @@ describe('DocumentProcessingService', () => {
     const drain = service.drain(1);
     await vi.advanceTimersByTimeAsync(2500);
     release();
+    await drain;
+
+    expect(jobs.contexts[0].lost).toBe(true);
+    expect(jobs.complete).not.toHaveBeenCalled();
+  });
+
+  it('marks a job lost when a heartbeat call hangs past the local lease estimate', async () => {
+    vi.useFakeTimers();
+    process.env.PROCESSING_LEASE_MS = '2000';
+    process.env.PROCESSING_HEARTBEAT_MS = '500';
+    const job = makeJob();
+    const jobs = makeJobs([job]);
+    jobs.heartbeat.mockImplementation(() => new Promise<boolean>(() => undefined));
+    const extraction = makeExtraction();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    extraction.processDocument.mockImplementation(async () => { await gate; });
+    const service = new DocumentProcessingService(jobs as never, extraction as never, makeEmbeddings() as never);
+
+    const drain = service.drain(1);
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(jobs.contexts[0].lost).toBe(true);
+    expect(jobs.heartbeat).toHaveBeenCalledTimes(1);
+    expect(jobs.complete).not.toHaveBeenCalled();
+
+    release();
+    await drain;
+  });
+
+  it('starts the local lease estimate before claimNext returns', async () => {
+    vi.useFakeTimers();
+    process.env.PROCESSING_LEASE_MS = '2000';
+    process.env.PROCESSING_HEARTBEAT_MS = '500';
+    const job = makeJob();
+    const jobs = makeJobs([job]);
+    jobs.claimNext.mockImplementation(async () => {
+      await new Promise<void>(resolve => setTimeout(resolve, 1000));
+      return job;
+    });
+    jobs.heartbeat.mockImplementation(() => new Promise<boolean>(() => undefined));
+    const extraction = makeExtraction();
+    extraction.processDocument.mockImplementation(async () => new Promise<void>(() => undefined));
+    const service = new DocumentProcessingService(jobs as never, extraction as never, makeEmbeddings() as never);
+
+    const drain = service.drain(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1500);
     await drain;
 
     expect(jobs.contexts[0].lost).toBe(true);

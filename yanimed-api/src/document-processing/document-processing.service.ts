@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { PdfExtractionService } from '../pdf-extraction/pdf-extraction.service.js';
 import { EmbeddingService } from '../embeddings/embedding.service.js';
 import { ProcessingJobRepository, type ClaimedJob } from './processing-job.repository.js';
+import { classifyProcessingError } from './processing-error.js';
 import { LeaseLostError, type JobContext } from './processing-job.types.js';
 
 function readPositiveInt(name: string, fallback: number): number {
@@ -59,15 +60,16 @@ export class DocumentProcessingService {
 
   private async drainInternal(maxJobs: number): Promise<void> {
     for (let processed = 0; processed < maxJobs; processed++) {
+      const claimedAt = Date.now();
       const job = await this.jobs.claimNext(this.owner, this.leaseMs);
       if (!job) return;
-      await this.runJob(job);
+      await this.runJob(job, claimedAt);
     }
   }
 
-  private async runJob(job: ClaimedJob): Promise<void> {
+  private async runJob(job: ClaimedJob, claimedAt: number): Promise<void> {
     const ctx = this.jobs.createContext(job);
-    let localLeaseUntil = Date.now() + this.leaseMs;
+    let localLeaseUntil = claimedAt + this.leaseMs;
     let heartbeatInFlight = false;
     let finished = false;
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
@@ -95,7 +97,8 @@ export class DocumentProcessingService {
     });
 
     const heartbeatTimer = setInterval(() => {
-      if (heartbeatInFlight) return;
+      if (Date.now() > localLeaseUntil) markLost();
+      if (heartbeatInFlight || ctx.lost) return;
       heartbeatInFlight = true;
       const heartbeatStartedAt = Date.now();
       void this.jobs.heartbeat(job, this.leaseMs).then(alive => {
@@ -123,12 +126,12 @@ export class DocumentProcessingService {
         return;
       }
 
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorCode = typeof (error as { code?: unknown })?.code === 'string'
-        ? String((error as { code: string }).code)
-        : 'PROCESSING_FAILED';
+      const classified = classifyProcessingError(error);
+      const errorMessage = classified.message;
+      const errorCode = classified.code;
       const timedOut = errorCode === 'PROCESSING_TIME_BUDGET_EXCEEDED';
       if (timedOut) ctx.lost = true;
+      this.logger.warn(`Processing job ${job.id} failed with policy ${classified.policy}.`);
 
       try {
         await this.jobs.complete({ job, success: false, errorCode, errorMessage });

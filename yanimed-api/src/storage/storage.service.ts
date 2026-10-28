@@ -10,12 +10,48 @@ import { S3Client, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand, Get
 import { createHash } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { r2Env, requireEnv } from '../config/env.validation.js';
+import { isTransientNetworkError } from '../document-processing/processing-error.js';
 
 export const R2_PDF_MAX_BYTES = 256 * 1024 * 1024;
 export const PDF_SIGNATURE = Buffer.from('%PDF-');
 export const R2_UPLOAD_TIMEOUT_MS = 60_000;
 export const R2_METADATA_TIMEOUT_MS = 15_000;
 export const R2_DOWNLOAD_TIMEOUT_MS = 60_000;
+
+type StorageErrorCode = 'STORAGE_TRANSIENT' | 'STORAGE_PERMANENT';
+
+function storageErrorName(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const name = (error as { name?: unknown }).name;
+  if (typeof name === 'string') return name;
+  const code = (error as { Code?: unknown }).Code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+function storageHttpStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const status = (error as { $metadata?: { httpStatusCode?: unknown } }).$metadata?.httpStatusCode;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function tagStorageError(error: unknown, code: StorageErrorCode): unknown {
+  if (typeof error === 'object' && error !== null) {
+    (error as { code?: string }).code = code;
+  }
+  return error;
+}
+
+function isPermanentStorageError(error: unknown): boolean {
+  const name = storageErrorName(error);
+  return name === 'NoSuchKey' || name === 'AccessDenied';
+}
+
+function isTransientStorageError(error: unknown): boolean {
+  if (error instanceof Error && error.name === 'TimeoutError') return true;
+  const status = storageHttpStatus(error);
+  if (status === 429 || (typeof status === 'number' && status >= 500)) return true;
+  return isTransientNetworkError(error);
+}
 
 export interface ReservedPdf {
   id: string;
@@ -155,8 +191,11 @@ export class StorageService implements OnModuleInit {
       return Buffer.concat(chunks);
     } catch (error) {
       this.logger.warn(`R2 download failed after ${Date.now() - started}ms`);
-      if (error instanceof Error && error.name === 'AbortError')
-        throw new BadRequestException('Download timed out.');
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw tagStorageError(new BadRequestException('Download timed out.'), 'STORAGE_TRANSIENT');
+      }
+      if (isPermanentStorageError(error)) throw tagStorageError(error, 'STORAGE_PERMANENT');
+      if (isTransientStorageError(error)) throw tagStorageError(error, 'STORAGE_TRANSIENT');
       throw error;
     }
   }
