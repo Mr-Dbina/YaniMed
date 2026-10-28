@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { LeaseLostError, type JobContext } from '../document-processing/processing-job.types.js';
 
 export interface ChunkingOptions {
   maxChars?: number;
@@ -18,7 +19,7 @@ export class ChunkingService {
 
   constructor(@Optional() private readonly prisma?: PrismaService) {}
 
-  async chunkDocument(documentId: string, options: ChunkingOptions = {}): Promise<ChunkingResult> {
+  async chunkDocument(documentId: string, options: ChunkingOptions = {}, ctx?: JobContext): Promise<ChunkingResult> {
     if (!this.prisma) throw new Error('PrismaService is not available.');
     const document = await this.prisma.document.findUnique({
       where: { id: documentId },
@@ -68,6 +69,10 @@ export class ChunkingService {
     const newRecords = records.filter(record => !existingByIndex.has(record.chunkIndex));
 
     await this.prisma.$transaction(async tx => {
+      if (ctx?.lost) throw new LeaseLostError();
+      if (ctx) {
+        await ctx.updateDocument({ status: 'PROCESSING' }, tx);
+      }
       if (newRecords.length > 0) {
         await tx.chunk.createMany({ data: newRecords });
       }
@@ -109,10 +114,12 @@ export class ChunkingService {
       if (staleIds.length > 0) {
         await tx.chunk.deleteMany({ where: { id: { in: staleIds } } });
       }
-      await tx.document.update({
-        where: { id: document.id },
-        data: { status: 'PROCESSING' },
-      });
+      if (!ctx) {
+        await tx.document.update({
+          where: { id: document.id },
+          data: { status: 'PROCESSING' },
+        });
+      }
     }, { timeout: 30000 });
 
     return {

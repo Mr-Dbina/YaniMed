@@ -4,6 +4,7 @@ import { getResolvedPDFJS, renderPageAsImage } from 'unpdf';
 import { PdfExtractionService, isPageComplete } from './pdf-extraction.service.js';
 import { StorageService } from '../storage/storage.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { LeaseLostError } from '../document-processing/processing-job.types.js';
 
 async function makePdf(texts: string[]): Promise<Buffer> {
   const pdf = await PDFDocument.create();
@@ -161,6 +162,76 @@ describe('PdfExtractionService', () => {
     expect(result.pages[0].pageNumber).toBe(1);
     const updateCalls = vi.mocked(prisma.document.update).mock.calls.map(c => c[0]?.data?.status);
     expect(updateCalls).not.toContain('READY');
+  });
+
+  it('fences document writes through the job context', async () => {
+    const buffer = await makePdf(['Fenced page']);
+    const prisma = {
+      document: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'doc-ctx',
+          subjectId: 'subject-ctx',
+          title: 'fenced.pdf',
+          fileUrl: 'subject-ctx/doc-ctx.pdf',
+          subject: { id: 'subject-ctx' },
+        }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      documentPage: {
+        findMany: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([{ pageNumber: 1, needsOcr: false, ocrUsed: false, ocrError: null }]),
+        upsert: vi.fn().mockResolvedValue({}),
+      },
+    } as unknown as PrismaService;
+    const storage = { getObject: vi.fn().mockResolvedValue(buffer) } as unknown as StorageService;
+    const ctx = {
+      jobId: 'job-1',
+      documentId: 'doc-ctx',
+      owner: 'owner-1',
+      token: 1,
+      lost: false,
+      updateDocument: vi.fn().mockResolvedValue(undefined),
+    };
+    const svc = new PdfExtractionService(prisma, storage);
+
+    await svc.processDocument('doc-ctx', {}, ctx);
+
+    expect(ctx.updateDocument).toHaveBeenCalledWith({ status: 'PROCESSING', errorMessage: null });
+    expect(ctx.updateDocument).toHaveBeenCalledWith(expect.objectContaining({ pageCount: 1 }));
+    expect(vi.mocked(prisma.document.update)).not.toHaveBeenCalled();
+  });
+
+  it('stops without writing FAILED when the job lease is already lost', async () => {
+    const buffer = await makePdf(['Lost page']);
+    const prisma = {
+      document: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'doc-lost',
+          subjectId: 'subject-lost',
+          title: 'lost.pdf',
+          fileUrl: 'subject-lost/doc-lost.pdf',
+          subject: { id: 'subject-lost' },
+        }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      documentPage: {
+        findMany: vi.fn().mockResolvedValue([]),
+        upsert: vi.fn().mockResolvedValue({}),
+      },
+    } as unknown as PrismaService;
+    const storage = { getObject: vi.fn().mockResolvedValue(buffer) } as unknown as StorageService;
+    const ctx = {
+      jobId: 'job-1',
+      documentId: 'doc-lost',
+      owner: 'owner-1',
+      token: 1,
+      lost: true,
+      updateDocument: vi.fn().mockResolvedValue(undefined),
+    };
+    const svc = new PdfExtractionService(prisma, storage);
+
+    await expect(svc.processDocument('doc-lost', {}, ctx)).rejects.toBeInstanceOf(LeaseLostError);
+    expect(vi.mocked(prisma.documentPage.upsert)).not.toHaveBeenCalled();
+    expect(vi.mocked(prisma.document.update)).not.toHaveBeenCalled();
   });
 
   it('sets FAILED and does not persist on corrupted input', async () => {

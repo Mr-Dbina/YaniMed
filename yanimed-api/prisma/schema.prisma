@@ -15,6 +15,14 @@ enum DocumentStatus {
   FAILED
 }
 
+enum ProcessingJobStatus {
+  QUEUED
+  RUNNING
+  RETRY_WAIT
+  SUCCEEDED
+  FAILED
+}
+
 enum SubjectStatus {
   ACTIVE
   DELETING
@@ -102,13 +110,40 @@ model Document {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
-  chunks       Chunk[]
-  pages        DocumentPage[]
-  citations    MessageCitation[]
-  initialUpload UploadAttempt?
+  chunks         Chunk[]
+  pages          DocumentPage[]
+  citations      MessageCitation[]
+  initialUpload  UploadAttempt?
+  processingJobs ProcessingJob[]
 
   @@index([subjectId])
   @@index([status])
+}
+
+model ProcessingJob {
+  id           String              @id @default(uuid())
+  documentId   String
+  document     Document            @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  status       ProcessingJobStatus @default(QUEUED)
+  attempt      Int                 @default(0)
+  maxAttempts  Int                 @default(4)
+  nextRunAt    DateTime            @default(now())
+
+  leaseOwner   String?
+  leaseUntil   DateTime?
+  fencingToken Int                 @default(0)
+
+  errorCode    String?
+  errorMessage String?
+
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([status, nextRunAt])
+  @@index([documentId])
 }
 
 model Chunk {

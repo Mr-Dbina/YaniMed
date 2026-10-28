@@ -1,9 +1,9 @@
 import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnModuleDestroy } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
 import { DocumentProcessingService } from './document-processing.service.js';
 
 const RECONCILE_DELAY_MS = 30_000;
-const BATCH_SIZE = 5;
+const ORPHAN_BATCH_SIZE = 20;
+const DRAIN_BATCH_SIZE = 5;
 
 @Injectable()
 export class DocumentProcessingReconciler implements OnApplicationBootstrap, OnModuleDestroy {
@@ -13,7 +13,6 @@ export class DocumentProcessingReconciler implements OnApplicationBootstrap, OnM
 
   constructor(
     @Inject(DocumentProcessingService) private readonly processing: DocumentProcessingService,
-    @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
 
   onApplicationBootstrap() {
@@ -31,19 +30,8 @@ export class DocumentProcessingReconciler implements OnApplicationBootstrap, OnM
   }
 
   private async runBatch() {
-    const documents = await this.prisma.document.findMany({
-      where: { status: { in: ['QUEUED', 'PROCESSING'] } },
-      orderBy: { updatedAt: 'asc' },
-      take: BATCH_SIZE,
-      select: { id: true },
-    });
-    for (const document of documents) {
-      try {
-        await this.processing.processDocument(document.id);
-      } catch {
-        this.logger.warn(`Document processing deferred for ${document.id}.`);
-      }
-    }
+    await this.processing.enqueueOrphans(ORPHAN_BATCH_SIZE);
+    await this.processing.drain(DRAIN_BATCH_SIZE);
   }
 
   async onModuleDestroy() {

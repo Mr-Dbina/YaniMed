@@ -1,5 +1,7 @@
 import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { LeaseLostError, type JobContext } from '../document-processing/processing-job.types.js';
 
 export const EMBEDDING_MODEL = 'gemini-embedding-001';
 export const EMBEDDING_DIMENSIONS = 768;
@@ -108,7 +110,7 @@ export class EmbeddingService {
     throw lastError instanceof Error ? lastError : new Error('Gemini embedding request failed.');
   }
 
-  async embedDocument(documentId: string): Promise<EmbeddingResult> {
+  async embedDocument(documentId: string, ctx?: JobContext): Promise<EmbeddingResult> {
     if (!this.prisma) throw new Error('PrismaService is not available.');
     return this.withDocumentLock(documentId, async () => {
       const document = await this.prisma!.document.findUnique({
@@ -117,15 +119,18 @@ export class EmbeddingService {
       });
       if (!document) throw new NotFoundException(`Document ${documentId} not found.`);
 
-      await this.prisma!.document.update({
-        where: { id: document.id },
-        data: { status: 'PROCESSING', errorMessage: null },
-      });
+      const writeDocument = (data: Prisma.DocumentUpdateInput) =>
+        ctx
+          ? ctx.updateDocument(data)
+          : this.prisma!.document.update({ where: { id: document.id }, data });
+
+      await writeDocument({ status: 'PROCESSING', errorMessage: null });
 
       let embeddedChunks = 0;
       let skippedChunks = 0;
       const failures: string[] = [];
       for (const chunk of document.chunks) {
+        if (ctx?.lost) throw new LeaseLostError();
         try {
           if (await this.hasValidEmbedding(chunk.id)) {
             skippedChunks += 1;
@@ -133,21 +138,21 @@ export class EmbeddingService {
             continue;
           }
           const vector = await this.embedText(chunk.content);
+          if (ctx?.lost) throw new LeaseLostError();
           await this.persistEmbedding(chunk.id, vector);
           embeddedChunks += 1;
         } catch (error) {
+          if (error instanceof LeaseLostError) throw error;
           failures.push(error instanceof Error ? error.message : String(error));
         }
       }
 
       const failedChunks = failures.length;
-      await this.prisma!.document.update({
-        where: { id: document.id },
-        data: {
-          embeddedChunks,
-          status: failedChunks > 0 ? 'FAILED' : 'PROCESSING',
-          errorMessage: failedChunks > 0 ? failures[0] : null,
-        },
+      if (ctx?.lost) throw new LeaseLostError();
+      await writeDocument({
+        embeddedChunks,
+        status: failedChunks > 0 ? 'FAILED' : 'PROCESSING',
+        errorMessage: failedChunks > 0 ? failures[0] : null,
       });
 
       if (failedChunks > 0) {

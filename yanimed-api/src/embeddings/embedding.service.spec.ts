@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmbeddingService, EMBEDDING_DIMENSIONS } from './embedding.service.js';
+import { LeaseLostError } from '../document-processing/processing-job.types.js';
 
 const originalFetch = global.fetch;
 
@@ -107,6 +108,48 @@ describe('EmbeddingService', () => {
     await expect(service.embedDocument('doc-1')).rejects.toThrow(/db write failed/);
     const statuses = (prisma.document.update as ReturnType<typeof vi.fn>).mock.calls.map((c: any) => c[0]?.data?.status);
     expect(statuses).toContain('FAILED');
+  });
+
+  it('uses the job context to fence document writes', async () => {
+    const prisma = makePrisma([{ id: 'chunk-1', content: 'text', chunkIndex: 0 }]);
+    prisma.$queryRaw.mockResolvedValue([{ has_embedding: false, model: null }]);
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ embedding: { values: Array(EMBEDDING_DIMENSIONS).fill(0.1) } }),
+    });
+    const ctx = {
+      jobId: 'job-1',
+      documentId: 'doc-1',
+      owner: 'owner-1',
+      token: 1,
+      lost: false,
+      updateDocument: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new EmbeddingService(prisma as never, { requestsPerMinute: 100000, maxAttempts: 1 });
+
+    await service.embedDocument('doc-1', ctx);
+
+    expect(ctx.updateDocument).toHaveBeenCalledWith({ status: 'PROCESSING', errorMessage: null });
+    expect(ctx.updateDocument).toHaveBeenCalledWith(expect.objectContaining({ embeddedChunks: 1 }));
+    expect(prisma.document.update).not.toHaveBeenCalled();
+  });
+
+  it('stops embedding without writing FAILED when the lease is lost', async () => {
+    const prisma = makePrisma([{ id: 'chunk-1', content: 'text', chunkIndex: 0 }]);
+    prisma.$queryRaw.mockResolvedValue([{ has_embedding: false, model: null }]);
+    const ctx = {
+      jobId: 'job-1',
+      documentId: 'doc-1',
+      owner: 'owner-1',
+      token: 1,
+      lost: false,
+      updateDocument: vi.fn().mockImplementation(async () => { ctx.lost = true; }),
+    };
+    const service = new EmbeddingService(prisma as never, { requestsPerMinute: 100000, maxAttempts: 1 });
+
+    await expect(service.embedDocument('doc-1', ctx)).rejects.toBeInstanceOf(LeaseLostError);
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    expect(prisma.document.update).not.toHaveBeenCalled();
   });
 
   it('verifies embedding integrity', async () => {

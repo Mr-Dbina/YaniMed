@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ChunkingService } from './chunking.service.js';
+import { LeaseLostError } from '../document-processing/processing-job.types.js';
 
 function makePrisma(pages: Array<{ pageNumber: number; text: string; extractionMethod?: string; needsOcr?: boolean }>) {
   const chunks: any[] = [];
@@ -144,5 +145,40 @@ describe('ChunkingService', () => {
     await service.chunkDocument('doc-1');
     expect(prisma.chunk.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ page: 2, extractionMethod: 'OCR', needsReview: true }) }));
     expect(prisma.chunk.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ embeddingModel: null }) }));
+  });
+
+  it('uses the job context to fence the document write inside the chunk transaction', async () => {
+    const { prisma } = makePrisma([{ pageNumber: 1, text: 'Stable text.' }]);
+    const ctx = {
+      jobId: 'job-1',
+      documentId: 'doc-1',
+      owner: 'owner-1',
+      token: 1,
+      lost: false,
+      updateDocument: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new ChunkingService(prisma as never);
+
+    await service.chunkDocument('doc-1', {}, ctx);
+
+    expect(ctx.updateDocument).toHaveBeenCalledWith({ status: 'PROCESSING' }, prisma);
+    expect(prisma.document.update).not.toHaveBeenCalled();
+  });
+
+  it('does not write chunks when the job context is already lost', async () => {
+    const { prisma } = makePrisma([{ pageNumber: 1, text: 'Stable text.' }]);
+    const ctx = {
+      jobId: 'job-1',
+      documentId: 'doc-1',
+      owner: 'owner-1',
+      token: 1,
+      lost: true,
+      updateDocument: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new ChunkingService(prisma as never);
+
+    await expect(service.chunkDocument('doc-1', {}, ctx)).rejects.toBeInstanceOf(LeaseLostError);
+    expect(prisma.chunk.createMany).not.toHaveBeenCalled();
+    expect(prisma.document.update).not.toHaveBeenCalled();
   });
 });

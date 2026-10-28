@@ -71,6 +71,15 @@ export function validateEnv() {
   const pdfOcrDocBudgetMs = parseOptionalInt(process.env.PDF_OCR_DOC_BUDGET_MS, 600000, 'PDF_OCR_DOC_BUDGET_MS', 1);
   const pdfOcrMaxPages = parseOptionalInt(process.env.PDF_OCR_MAX_PAGES, 300, 'PDF_OCR_MAX_PAGES', 1);
 
+  const processingLeaseMs = parseOptionalInt(process.env.PROCESSING_LEASE_MS, 180000, 'PROCESSING_LEASE_MS', 1);
+  const processingHeartbeatMs = parseOptionalInt(process.env.PROCESSING_HEARTBEAT_MS, 30000, 'PROCESSING_HEARTBEAT_MS', 1);
+  const processingJobMaxMs = parseOptionalInt(process.env.PROCESSING_JOB_MAX_MS, 3600000, 'PROCESSING_JOB_MAX_MS', 1);
+  const processingMaxAttempts = parseOptionalInt(process.env.PROCESSING_MAX_ATTEMPTS, 4, 'PROCESSING_MAX_ATTEMPTS', 1);
+
+  if (processingLeaseMs <= processingHeartbeatMs * 2) {
+    throw new Error('PROCESSING_LEASE_MS must be greater than twice PROCESSING_HEARTBEAT_MS.');
+  }
+
   return {
     port: Number(process.env.PORT ?? 3000),
   r2AccountId: process.env.R2_ACCOUNT_ID,
@@ -94,6 +103,10 @@ export function validateEnv() {
     pdfOcrPageTimeoutMs,
     pdfOcrDocBudgetMs,
     pdfOcrMaxPages,
+    processingLeaseMs,
+    processingHeartbeatMs,
+    processingJobMaxMs,
+    processingMaxAttempts,
   };
 }
 

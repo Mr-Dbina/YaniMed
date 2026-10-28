@@ -4,8 +4,9 @@ import { extractText, getDocumentProxy, getResolvedPDFJS, renderPageAsImage } fr
 import { createWorker, type Worker } from 'tesseract.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService } from '../storage/storage.service.js';
-import { ExtractionMethod } from '@prisma/client';
+import { ExtractionMethod, type Prisma } from '@prisma/client';
 import { ChunkingService } from '../chunking/chunking.service.js';
+import { LeaseLostError, type JobContext } from '../document-processing/processing-job.types.js';
 
 export interface ExtractedPdfPage {
   pageNumber: number;
@@ -478,6 +479,7 @@ export class PdfExtractionService {
   async processDocument(
     documentId: string,
     options: PdfExtractionOptions = {},
+    ctx?: JobContext,
   ): Promise<PdfExtractionResult & { persistedPages: number }> {
     if (!this.prisma) throw new Error('PrismaService is not available.');
     if (!this.storage) throw new Error('StorageService is not available.');
@@ -488,10 +490,12 @@ export class PdfExtractionService {
     });
     if (!document) throw new NotFoundException(`Document ${documentId} not found.`);
 
-    await this.prisma.document.update({
-      where: { id: document.id },
-      data: { status: 'PROCESSING', errorMessage: null },
-    });
+    const writeDocument = (data: Prisma.DocumentUpdateInput) =>
+      ctx
+        ? ctx.updateDocument(data)
+        : this.prisma!.document.update({ where: { id: document.id }, data });
+
+    await writeDocument({ status: 'PROCESSING', errorMessage: null });
 
     try {
       const buffer = await this.storage.getObject(document.fileUrl);
@@ -502,6 +506,7 @@ export class PdfExtractionService {
       );
 
       const persistPage = async (page: ExtractedPdfPage) => {
+        if (ctx?.lost) throw new LeaseLostError();
         const method =
           page.extractionMethod === 'OCR'
             ? ExtractionMethod.OCR
@@ -540,23 +545,20 @@ export class PdfExtractionService {
       const persistedPages = await this.prisma.documentPage.findMany({ where: { documentId: document.id } });
 
       if (this.chunking) {
-        await this.chunking.chunkDocument(document.id, {});
+        await this.chunking.chunkDocument(document.id, {}, ctx);
       }
 
       const hasOcrFailure = persistedPages.some(page => page.ocrError != null);
       const ocrPages = persistedPages.filter(page => page.ocrUsed).length;
       const completePages = persistedPages.filter(page => isPageComplete(page)).length;
-      await this.prisma.document.update({
-        where: { id: document.id },
-        data: {
-          pageCount: result.pageCount,
-          ocrPages,
-          processedPages: completePages,
-          status: hasOcrFailure ? 'FAILED' : 'PROCESSING',
-          errorMessage: hasOcrFailure
-            ? persistedPages.find(page => page.ocrError)?.ocrError ?? 'OCR failed.'
-            : null,
-        },
+      await writeDocument({
+        pageCount: result.pageCount,
+        ocrPages,
+        processedPages: completePages,
+        status: hasOcrFailure ? 'FAILED' : 'PROCESSING',
+        errorMessage: hasOcrFailure
+          ? persistedPages.find(page => page.ocrError)?.ocrError ?? 'OCR failed.'
+          : null,
       });
 
       if (hasOcrFailure) {
@@ -572,12 +574,12 @@ export class PdfExtractionService {
         persistedPages: persistedPages.length,
       };
     } catch (error) {
-      await this.prisma.document.update({
-        where: { id: document.id },
-        data: {
-          status: 'FAILED',
-          errorMessage: error instanceof Error ? error.message : String(error),
-        },
+      if (error instanceof LeaseLostError || ctx?.lost) {
+        throw error instanceof LeaseLostError ? error : new LeaseLostError();
+      }
+      await writeDocument({
+        status: 'FAILED',
+        errorMessage: error instanceof Error ? error.message : String(error),
       });
       throw error;
     }

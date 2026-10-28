@@ -149,3 +149,63 @@ describe('validateEnv PDF OCR budget settings', () => {
     }
   });
 });
+
+describe('validateEnv processing job settings', () => {
+  const keys = [
+    'PROCESSING_LEASE_MS',
+    'PROCESSING_HEARTBEAT_MS',
+    'PROCESSING_JOB_MAX_MS',
+    'PROCESSING_MAX_ATTEMPTS',
+  ] as const;
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of keys) saved[key] = process.env[key];
+    for (const key of keys) delete process.env[key];
+    process.env.DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://example';
+  });
+
+  afterEach(() => {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  it('applies defaults', () => {
+    const cfg = validateEnv();
+    expect(cfg.processingLeaseMs).toBe(180000);
+    expect(cfg.processingHeartbeatMs).toBe(30000);
+    expect(cfg.processingJobMaxMs).toBe(3600000);
+    expect(cfg.processingMaxAttempts).toBe(4);
+  });
+
+  it('applies overrides', () => {
+    process.env.PROCESSING_LEASE_MS = '120000';
+    process.env.PROCESSING_HEARTBEAT_MS = '10000';
+    process.env.PROCESSING_JOB_MAX_MS = '5000';
+    process.env.PROCESSING_MAX_ATTEMPTS = '2';
+    const cfg = validateEnv();
+    expect(cfg.processingLeaseMs).toBe(120000);
+    expect(cfg.processingHeartbeatMs).toBe(10000);
+    expect(cfg.processingJobMaxMs).toBe(5000);
+    expect(cfg.processingMaxAttempts).toBe(2);
+  });
+
+  it('rejects invalid values', () => {
+    for (const value of ['abc', '0', '-1', '1.5']) {
+      for (const key of keys) delete process.env[key];
+      for (const key of keys) {
+        process.env[key] = value;
+        expect(() => validateEnv()).toThrow();
+        delete process.env[key];
+      }
+    }
+  });
+
+  it('requires the lease to be longer than two heartbeats', () => {
+    process.env.PROCESSING_LEASE_MS = '60000';
+    process.env.PROCESSING_HEARTBEAT_MS = '30000';
+    expect(() => validateEnv()).toThrow(/PROCESSING_LEASE_MS/);
+  });
+});
