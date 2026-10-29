@@ -9,6 +9,6 @@ import { ProcessingJobRepository } from './processing-job.repository.js';
 @Module({
   imports: [PrismaModule, PdfExtractionModule, EmbeddingModule],
   providers: [ProcessingJobRepository, DocumentProcessingService, DocumentProcessingReconciler],
-  exports: [DocumentProcessingService],
+  exports: [DocumentProcessingService, ProcessingJobRepository],
 })
 export class DocumentProcessingModule {}

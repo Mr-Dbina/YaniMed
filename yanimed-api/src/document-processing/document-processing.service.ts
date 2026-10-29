@@ -46,6 +46,11 @@ export class DocumentProcessingService {
     })();
   }
 
+  async retry(documentId: string): Promise<void> {
+    await this.jobs.retryFailed(documentId, this.maxAttempts);
+    this.schedule(documentId);
+  }
+
   async enqueueOrphans(limit: number): Promise<void> {
     const documentIds = await this.jobs.findOrphanDocumentIds(limit);
     for (const documentId of documentIds) {

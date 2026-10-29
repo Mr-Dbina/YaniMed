@@ -4,6 +4,10 @@ import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { ChatGuard } from '../chat/chat.guard.js';
+import { DocumentProcessingService } from '../document-processing/document-processing.service.js';
+import { ProcessingJobRepository } from '../document-processing/processing-job.repository.js';
+import { RetryDocumentNotFoundError, RetryNotAllowedError } from '../document-processing/processing-job.types.js';
 import { SubjectsController } from '../subjects/subjects.controller.js';
 import { SubjectsService } from '../subjects/subjects.service.js';
 import { DocumentStatusController } from './document-status.controller.js';
@@ -18,9 +22,17 @@ const document = { id: documentId, subjectId, title: 'example.pdf', status: 'PRO
   createdAt: date, updatedAt: date, pageCount: 10, processedPages: 2, embeddedChunks: 1,
   ocrPages: 1, fileUrl: 'private/key.pdf', errorMessage: 'secret upstream details' };
 
+const failureMessages = {
+  PROCESSING_FAILED: 'Document processing failed. Retry the document.',
+  OCR_PAGE_LIMIT_EXCEEDED: 'Document exceeds the configured OCR page limit. Raise the OCR page limit, then retry.',
+  DB_TRANSIENT: 'The database was temporarily unavailable. Retry the document.',
+};
+
 describe('Read-only Subject and processing-status HTTP contracts', () => {
   let app: INestApplication;
   let db: ReturnType<typeof database>;
+  let jobs: { getLatestJob: ReturnType<typeof vi.fn> };
+  let processing: { retry: ReturnType<typeof vi.fn> };
   function database() {
     return {
       subject: { findMany: vi.fn().mockResolvedValue([subject]), findUnique: vi.fn().mockResolvedValue(subject) },
@@ -33,15 +45,24 @@ describe('Read-only Subject and processing-status HTTP contracts', () => {
     vi.stubEnv('NODE_ENV', 'test');
     vi.stubEnv('CORS_ORIGINS', 'http://localhost:3001');
     db = database();
+    jobs = { getLatestJob: vi.fn().mockResolvedValue(null) };
+    processing = { retry: vi.fn().mockResolvedValue(undefined) };
     const module = await Test.createTestingModule({
       controllers: [SubjectsController, DocumentStatusController],
-      providers: [SubjectsService, { provide: PrismaService, useValue: db }],
+      providers: [
+        SubjectsService,
+        ChatGuard,
+        { provide: PrismaService, useValue: db },
+        { provide: ProcessingJobRepository, useValue: jobs },
+        { provide: DocumentProcessingService, useValue: processing },
+      ],
     }).compile();
     app = module.createNestApplication();
     await app.init();
   });
   afterEach(async () => { await app?.close(); vi.unstubAllEnvs(); });
   const get = (path: string) => request(app.getHttpServer()).get(path).set('Host', 'localhost:3000');
+  const post = (path: string) => request(app.getHttpServer()).post(path).set('Host', 'localhost:3000');
 
   it('lists safe Subject metadata with deterministic ordering', async () => {
     const { body } = await get('/subjects').expect(200);
@@ -79,13 +100,62 @@ describe('Read-only Subject and processing-status HTTP contracts', () => {
     db.document.findUnique.mockResolvedValue(row);
     const snapshot = structuredClone(row);
     const { body } = await get(`/documents/${documentId}/status`).expect(200);
-    expect(body).toMatchObject({ documentId, subjectId, status, readyForRetrieval: status === 'READY', retryAllowed: false });
-    expect(body.failure).toEqual(status === 'FAILED'
-      ? { code: 'PROCESSING_FAILED', message: 'Document processing failed. Controlled retry is not yet available.' } : null);
+    const failed = status === 'FAILED';
+    expect(body).toMatchObject({ documentId, subjectId, status, readyForRetrieval: status === 'READY',
+      retryAllowed: failed, retryUnavailableReason: failed ? null : 'NOT_FAILED' });
+    expect(body.failure).toEqual(failed
+      ? { code: 'PROCESSING_FAILED', message: failureMessages.PROCESSING_FAILED, retryAllowed: true }
+      : null);
+    expect(body).not.toHaveProperty('processing');
     expect(JSON.stringify(body)).not.toMatch(/secret|private|fileUrl|errorMessage/);
     expect(row).toEqual(snapshot);
     // DB double deliberately exposes only read methods; any mutation would fail.
     expect(db.document.findUnique).toHaveBeenCalledTimes(1);
+    expect(jobs.getLatestJob).toHaveBeenCalledWith(documentId);
+  });
+  it('allows retry with the whitelisted code and a fixed message', async () => {
+    db.document.findUnique.mockResolvedValue({ ...document, status: 'FAILED' });
+    jobs.getLatestJob.mockResolvedValue({ status: 'FAILED', attempt: 4, maxAttempts: 4, nextRunAt: date,
+      errorCode: 'OCR_PAGE_LIMIT_EXCEEDED', errorMessage: 'provider secret details' });
+    const { body } = await get(`/documents/${documentId}/status`).expect(200);
+    expect(body).toMatchObject({
+      retryAllowed: true,
+      retryUnavailableReason: null,
+      failure: { code: 'OCR_PAGE_LIMIT_EXCEEDED', message: failureMessages.OCR_PAGE_LIMIT_EXCEEDED, retryAllowed: true },
+    });
+    expect(JSON.stringify(body)).not.toMatch(/provider secret details|secret upstream details/);
+  });
+  it('falls back to PROCESSING_FAILED for an unknown job error code', async () => {
+    db.document.findUnique.mockResolvedValue({ ...document, status: 'FAILED' });
+    jobs.getLatestJob.mockResolvedValue({ status: 'FAILED', attempt: 1, maxAttempts: 4, nextRunAt: date,
+      errorCode: 'PROVIDER_SECRET_CODE', errorMessage: 'provider secret details' });
+    const { body } = await get(`/documents/${documentId}/status`).expect(200);
+    expect(body.failure).toEqual({
+      code: 'PROCESSING_FAILED',
+      message: failureMessages.PROCESSING_FAILED,
+      retryAllowed: true,
+    });
+    expect(JSON.stringify(body)).not.toMatch(/provider secret details|PROVIDER_SECRET_CODE|secret upstream details/);
+  });
+  it('disallows retry while RETRY_WAIT is active and reports progress', async () => {
+    const nextRunAt = new Date('2026-10-24T00:05:00Z');
+    db.document.findUnique.mockResolvedValue({ ...document, status: 'FAILED' });
+    jobs.getLatestJob.mockResolvedValue({ status: 'RETRY_WAIT', attempt: 2, maxAttempts: 4, nextRunAt,
+      errorCode: 'DB_TRANSIENT' });
+    const { body } = await get(`/documents/${documentId}/status`).expect(200);
+    expect(body).toMatchObject({
+      retryAllowed: false,
+      retryUnavailableReason: 'RETRY_IN_PROGRESS',
+      processing: { attempt: 2, maxAttempts: 4, nextRunAt: nextRunAt.toISOString() },
+      failure: { code: 'DB_TRANSIENT', message: failureMessages.DB_TRANSIENT, retryAllowed: false },
+    });
+  });
+  it.each(['QUEUED', 'RUNNING'])('disallows retry while a %s job is active', async status => {
+    db.document.findUnique.mockResolvedValue({ ...document, status: 'FAILED' });
+    jobs.getLatestJob.mockResolvedValue({ status, attempt: 1, maxAttempts: 4, nextRunAt: date, errorCode: null });
+    const { body } = await get(`/documents/${documentId}/status`).expect(200);
+    expect(body).toMatchObject({ retryAllowed: false, retryUnavailableReason: 'RETRY_IN_PROGRESS' });
+    expect(body).not.toHaveProperty('processing');
   });
   it('returns 404 for an unknown document', async () => {
     db.document.findUnique.mockResolvedValue(null);
@@ -108,8 +178,37 @@ describe('Read-only Subject and processing-status HTTP contracts', () => {
     const { body } = await get(`/subjects/${subjectId}/documents`).expect(503);
     expect(JSON.stringify(body)).not.toContain('private query');
   });
-  it('does not expose a retry route', async () => {
-    await request(app.getHttpServer()).post(`/documents/${documentId}/retry`).set('Host', 'localhost:3000').expect(404);
+  it('sanitizes latest-job lookup failures', async () => {
+    jobs.getLatestJob.mockRejectedValue(new Error('private query'));
+    const { body } = await get(`/documents/${documentId}/status`).expect(503);
+    expect(JSON.stringify(body)).not.toContain('private query');
+  });
+  it('retries a failed document and returns 202', async () => {
+    const { body } = await post(`/documents/${documentId}/retry`).expect(202);
+    expect(body).toEqual({ documentId, status: 'QUEUED' });
+    expect(processing.retry).toHaveBeenCalledWith(documentId);
+  });
+  it('returns 404 when retry reports an unknown document', async () => {
+    processing.retry.mockRejectedValue(new RetryDocumentNotFoundError());
+    await post(`/documents/${documentId}/retry`).expect(404);
+  });
+  it.each(['NOT_FAILED', 'RETRY_IN_PROGRESS'] as const)('returns 409 RETRY_NOT_ALLOWED with reason %s', async reason => {
+    processing.retry.mockRejectedValue(new RetryNotAllowedError(reason));
+    const { body } = await post(`/documents/${documentId}/retry`).expect(409);
+    expect(body).toMatchObject({ code: 'RETRY_NOT_ALLOWED', reason });
+  });
+  it('sanitizes retry database errors', async () => {
+    processing.retry.mockRejectedValue(new Error('credential-bearing error'));
+    const { body } = await post(`/documents/${documentId}/retry`).expect(503);
+    expect(JSON.stringify(body)).not.toContain('credential-bearing');
+  });
+  it('validates the retry document id', async () => {
+    await post('/documents/not-a-uuid/retry').expect(400);
+    expect(processing.retry).not.toHaveBeenCalled();
+  });
+  it('applies the chat guard to the retry route', async () => {
+    await post(`/documents/${documentId}/retry`).set('Host', 'remote.example').expect(403);
+    expect(processing.retry).not.toHaveBeenCalled();
   });
   it('does not apply the chat guard to read-only GET routes', async () => {
     const { status } = await get('/subjects');

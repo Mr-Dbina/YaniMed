@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { LeaseLostError, type JobContext, type ProcessingTransaction } from './processing-job.types.js';
+import {
+  LeaseLostError,
+  RetryDocumentNotFoundError,
+  RetryNotAllowedError,
+  type JobContext,
+  type ProcessingTransaction,
+} from './processing-job.types.js';
 
 export interface ClaimedJob {
   id: string;
@@ -11,6 +17,29 @@ export interface ClaimedJob {
   maxAttempts: number;
   fencingToken: number;
   leaseOwner: string;
+}
+
+export interface LatestProcessingJob {
+  status: string;
+  attempt: number;
+  maxAttempts: number;
+  nextRunAt: Date;
+  errorCode: string | null;
+}
+
+function isActiveJobConflict(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const record = error as { code?: unknown; meta?: unknown; message?: unknown };
+  const meta = typeof record.meta === 'object' && record.meta !== null
+    ? record.meta as { code?: unknown; message?: unknown; target?: unknown }
+    : undefined;
+  if (record.code === 'P2002' || record.code === '23505') return true;
+  if (meta?.code === 'P2002' || meta?.code === '23505') return true;
+  const text = [record.message, meta?.message, meta?.target]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ');
+  return text.includes('ProcessingJob_documentId_active_key')
+    || (text.includes('duplicate key value') && text.includes('ProcessingJob'));
 }
 
 export interface CompleteJobInput {
@@ -39,6 +68,69 @@ export class ProcessingJobRepository {
       RETURNING "id"
     `;
     return rows[0]?.id ?? null;
+  }
+
+  async getLatestJob(documentId: string): Promise<LatestProcessingJob | null> {
+    return this.prisma.processingJob.findFirst({
+      where: { documentId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        status: true,
+        attempt: true,
+        maxAttempts: true,
+        nextRunAt: true,
+        errorCode: true,
+      },
+    });
+  }
+
+  async retryFailed(documentId: string, maxAttempts: number): Promise<string> {
+    try {
+      return await this.prisma.$transaction(async tx => {
+        const rows = await tx.$queryRaw<Array<{ status: string; hasActiveJob: boolean }>>`
+          SELECT d."status" AS "status",
+                 EXISTS (
+                   SELECT 1
+                   FROM "public"."ProcessingJob" j
+                   WHERE j."documentId" = d."id"
+                     AND j."status" IN ('QUEUED', 'RUNNING', 'RETRY_WAIT')
+                 ) AS "hasActiveJob"
+          FROM "public"."Document" d
+          WHERE d."id" = ${documentId}
+          FOR UPDATE OF d
+        `;
+
+        const current = rows[0];
+        if (!current) throw new RetryDocumentNotFoundError();
+        if (current.status !== 'FAILED') throw new RetryNotAllowedError('NOT_FAILED');
+        if (current.hasActiveJob) throw new RetryNotAllowedError('RETRY_IN_PROGRESS');
+
+        const inserted = await tx.$queryRaw<Array<{ id: string }>>`
+          INSERT INTO "public"."ProcessingJob" (
+            "id", "documentId", "status", "attempt", "maxAttempts",
+            "nextRunAt", "fencingToken", "createdAt", "updatedAt"
+          )
+          VALUES (
+            ${randomUUID()}, ${documentId}, 'QUEUED', 0, ${maxAttempts}::integer,
+            now(), 0, now(), now()
+          )
+          RETURNING "id"
+        `;
+
+        const jobId = inserted[0]?.id;
+        if (!jobId) throw new Error('Processing job insert returned no id.');
+
+        await tx.document.update({
+          where: { id: documentId },
+          data: { status: 'QUEUED', errorMessage: null },
+        });
+
+        return jobId;
+      }, { timeout: 15_000 });
+    } catch (error) {
+      if (isActiveJobConflict(error)) throw new RetryNotAllowedError('RETRY_IN_PROGRESS');
+      throw error;
+    }
   }
 
   async claimNext(owner: string, leaseMs: number): Promise<ClaimedJob | null> {

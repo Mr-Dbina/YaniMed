@@ -19,3 +19,25 @@ export class LeaseLostError extends Error {
     this.name = 'LeaseLostError';
   }
 }
+
+export type RetryNotAllowedReason = 'NOT_FAILED' | 'RETRY_IN_PROGRESS';
+
+export class RetryNotAllowedError extends Error {
+  readonly code = 'RETRY_NOT_ALLOWED';
+
+  constructor(readonly reason: RetryNotAllowedReason) {
+    super(reason === 'NOT_FAILED'
+      ? 'Only a FAILED document can be retried.'
+      : 'A processing job is already active for this document.');
+    this.name = 'RetryNotAllowedError';
+  }
+}
+
+export class RetryDocumentNotFoundError extends Error {
+  readonly code = 'DOCUMENT_NOT_FOUND';
+
+  constructor(message = 'Document not found.') {
+    super(message);
+    this.name = 'RetryDocumentNotFoundError';
+  }
+}

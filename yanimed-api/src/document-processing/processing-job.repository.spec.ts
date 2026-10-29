@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ProcessingJobRepository, type ClaimedJob } from './processing-job.repository.js';
-import { LeaseLostError, type JobContext } from './processing-job.types.js';
+import {
+  LeaseLostError,
+  RetryDocumentNotFoundError,
+  RetryNotAllowedError,
+  type JobContext,
+} from './processing-job.types.js';
 
 const job: ClaimedJob = {
   id: 'job-1',
@@ -27,6 +32,7 @@ function makePrisma() {
   const prisma = {
     $queryRaw: vi.fn(),
     $executeRaw: vi.fn().mockResolvedValue(1),
+    processingJob: { findFirst: vi.fn() },
     $transaction: vi.fn(async (work: (client: typeof tx) => Promise<unknown>) => work(tx)),
   };
   return { prisma, tx };
@@ -57,6 +63,122 @@ describe('ProcessingJobRepository', () => {
     expect(sql).toContain('ON CONFLICT DO NOTHING');
     expect(sql).not.toContain(`'READY'`);
     expect(sql).not.toContain(`'FAILED'`);
+  });
+
+  it('reads the newest processing job for a document', async () => {
+    const { prisma } = makePrisma();
+    const latest = { status: 'RETRY_WAIT', attempt: 2, maxAttempts: 4, nextRunAt: new Date('2026-10-24T00:00:05Z'), errorCode: 'DB_TRANSIENT' };
+    prisma.processingJob.findFirst.mockResolvedValue(latest);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    await expect(repository.getLatestJob('doc-1')).resolves.toEqual(latest);
+
+    expect(prisma.processingJob.findFirst).toHaveBeenCalledWith({
+      where: { documentId: 'doc-1' },
+      orderBy: { createdAt: 'desc' },
+      select: { status: true, attempt: true, maxAttempts: true, nextRunAt: true, errorCode: true },
+    });
+  });
+
+  it('returns null when a document has no processing job', async () => {
+    const { prisma } = makePrisma();
+    prisma.processingJob.findFirst.mockResolvedValue(null);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    await expect(repository.getLatestJob('doc-1')).resolves.toBeNull();
+  });
+
+  it('creates a new job and requeues a FAILED document', async () => {
+    const { prisma, tx } = makePrisma();
+    tx.$queryRaw
+      .mockResolvedValueOnce([{ status: 'FAILED', hasActiveJob: false }])
+      .mockResolvedValueOnce([{ id: 'job-new' }]);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    await expect(repository.retryFailed('doc-1', 4)).resolves.toBe('job-new');
+
+    expect(tx.document.update).toHaveBeenCalledWith({
+      where: { id: 'doc-1' },
+      data: { status: 'QUEUED', errorMessage: null },
+    });
+  });
+
+  it('SQL shape: retryFailed locks the document and inserts a QUEUED attempt starting at zero', async () => {
+    const { prisma, tx } = makePrisma();
+    tx.$queryRaw
+      .mockResolvedValueOnce([{ status: 'FAILED', hasActiveJob: false }])
+      .mockResolvedValueOnce([{ id: 'job-new' }]);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    await repository.retryFailed('doc-1', 4);
+
+    const selectSql = sqlOf(tx.$queryRaw.mock.calls[0]);
+    expect(selectSql).toContain('FOR UPDATE OF d');
+    expect(selectSql).toContain(`j."status" IN ('QUEUED', 'RUNNING', 'RETRY_WAIT')`);
+    const insertSql = sqlOf(tx.$queryRaw.mock.calls[1]);
+    expect(insertSql).toContain('INSERT INTO "public"."ProcessingJob"');
+    expect(insertSql).toContain(`'QUEUED', 0, ?::integer`);
+    expect(insertSql).toContain('RETURNING "id"');
+    expect(tx.$queryRaw.mock.calls[1].slice(1)).toContain(4);
+  });
+
+  it('rejects retry for an unknown document without writing', async () => {
+    const { prisma, tx } = makePrisma();
+    tx.$queryRaw.mockResolvedValueOnce([]);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    await expect(repository.retryFailed('doc-1', 4)).rejects.toBeInstanceOf(RetryDocumentNotFoundError);
+
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.document.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['READY', 'QUEUED', 'PROCESSING'])('rejects retry for a %s document without writing', async status => {
+    const { prisma, tx } = makePrisma();
+    tx.$queryRaw.mockResolvedValueOnce([{ status, hasActiveJob: false }]);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    await expect(repository.retryFailed('doc-1', 4)).rejects.toMatchObject({
+      name: 'RetryNotAllowedError',
+      code: 'RETRY_NOT_ALLOWED',
+      reason: 'NOT_FAILED',
+    });
+
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.document.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects retry while an active job exists without writing', async () => {
+    const { prisma, tx } = makePrisma();
+    tx.$queryRaw.mockResolvedValueOnce([{ status: 'FAILED', hasActiveJob: true }]);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    await expect(repository.retryFailed('doc-1', 4)).rejects.toMatchObject({
+      name: 'RetryNotAllowedError',
+      code: 'RETRY_NOT_ALLOWED',
+      reason: 'RETRY_IN_PROGRESS',
+    });
+
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.document.update).not.toHaveBeenCalled();
+  });
+
+  it('maps a partial unique-index race to RETRY_IN_PROGRESS without writing', async () => {
+    const { prisma, tx } = makePrisma();
+    const conflict = Object.assign(
+      new Error('duplicate key value violates unique constraint "ProcessingJob_documentId_active_key"'),
+      { code: 'P2010', meta: { code: '23505' } },
+    );
+    tx.$queryRaw
+      .mockResolvedValueOnce([{ status: 'FAILED', hasActiveJob: false }])
+      .mockRejectedValueOnce(conflict);
+    const repository = new ProcessingJobRepository(prisma as never);
+
+    const error = await repository.retryFailed('doc-1', 4).catch(reason => reason);
+    expect(error).toBeInstanceOf(RetryNotAllowedError);
+    expect(error).toMatchObject({ code: 'RETRY_NOT_ALLOWED', reason: 'RETRY_IN_PROGRESS' });
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(tx.document.update).not.toHaveBeenCalled();
   });
 
   it('SQL shape: claim raises the fencing token and increments attempt', async () => {

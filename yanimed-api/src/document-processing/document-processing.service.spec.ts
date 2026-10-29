@@ -29,6 +29,7 @@ function makeJobs(claimQueue: Array<ClaimedJob | null>) {
   const contexts: Array<ReturnType<typeof makeContext>> = [];
   return {
     enqueue: vi.fn().mockResolvedValue('job-1'),
+    retryFailed: vi.fn().mockResolvedValue('job-1'),
     claimNext: vi.fn().mockImplementation(async () => queue.shift() ?? null),
     heartbeat: vi.fn().mockResolvedValue(true),
     complete: vi.fn().mockResolvedValue(undefined),
@@ -551,6 +552,25 @@ describe('DocumentProcessingService', () => {
 
     expect(jobs.enqueue).toHaveBeenCalledWith('doc-1', 4);
     expect(extraction.processDocument).toHaveBeenCalled();
+  });
+
+  it('retries a failed document by creating a job and scheduling it', async () => {
+    const jobs = makeJobs([null]);
+    const service = new DocumentProcessingService(jobs as never, makeExtraction() as never, makeEmbeddings() as never);
+
+    await service.retry('doc-1');
+
+    expect(jobs.retryFailed).toHaveBeenCalledWith('doc-1', 4);
+    await vi.waitFor(() => expect(jobs.enqueue).toHaveBeenCalledWith('doc-1', 4));
+  });
+
+  it('does not schedule a retry when retryFailed rejects', async () => {
+    const jobs = makeJobs([null]);
+    jobs.retryFailed.mockRejectedValue(new Error('retry not allowed'));
+    const service = new DocumentProcessingService(jobs as never, makeExtraction() as never, makeEmbeddings() as never);
+
+    await expect(service.retry('doc-1')).rejects.toThrow('retry not allowed');
+    expect(jobs.enqueue).not.toHaveBeenCalled();
   });
 
   it('enqueues orphaned documents before draining', async () => {
