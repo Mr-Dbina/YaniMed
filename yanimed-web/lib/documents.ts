@@ -6,16 +6,75 @@ export interface DocumentStatus {
   documentId: string;
   subjectId: string;
   filename: string;
-  status: "UPLOADED" | "PROCESSING" | "READY" | "FAILED";
+  status: "QUEUED" | "PROCESSING" | "READY" | "FAILED";
 }
 
-export async function uploadSubjectPdf(subjectId: string, file: File): Promise<DocumentStatus> {
+export class DuplicatePdfError extends Error {
+  constructor(
+    readonly scope: string,
+    readonly existingDocumentId: string,
+    readonly existingSubjectId: string,
+    readonly existingFilename: string,
+    readonly allowedActions: string[],
+  ) {
+    super("Duplicate PDF");
+    this.name = "DuplicatePdfError";
+  }
+}
+
+interface DuplicatePdfBody {
+  code: "DUPLICATE_PDF";
+  scope: string;
+  existingDocumentId: string;
+  existingSubjectId: string;
+  existingFilename: string;
+  allowedActions: string[];
+}
+
+function isDuplicatePdfBody(value: unknown): value is DuplicatePdfBody {
+  if (typeof value !== "object" || value === null) return false;
+  const body = value as Record<string, unknown>;
+  return body.code === "DUPLICATE_PDF"
+    && typeof body.scope === "string"
+    && typeof body.existingDocumentId === "string"
+    && typeof body.existingSubjectId === "string"
+    && typeof body.existingFilename === "string"
+    && Array.isArray(body.allowedActions)
+    && body.allowedActions.every((action) => typeof action === "string");
+}
+
+export async function uploadSubjectPdf(
+  subjectId: string,
+  file: File,
+  duplicateAction?: string,
+): Promise<DocumentStatus> {
   const form = new FormData();
   form.append("subjectId", subjectId);
+  if (duplicateAction !== undefined) form.append("duplicateAction", duplicateAction);
   form.append("file", file, file.name);
   const response = await fetch("http://localhost:3000/documents/upload", { method: "POST", body: form });
-  if (!response.ok) throw new Error(await response.text() || "Upload failed");
-  return response.json();
+  const text = await response.text();
+  if (!response.ok) {
+    if (response.status === 409) {
+      let body: unknown;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = null;
+      }
+      if (isDuplicatePdfBody(body)) {
+        throw new DuplicatePdfError(
+          body.scope,
+          body.existingDocumentId,
+          body.existingSubjectId,
+          body.existingFilename,
+          body.allowedActions,
+        );
+      }
+    }
+    throw new Error(text || "Upload failed");
+  }
+  return JSON.parse(text) as DocumentStatus;
 }
 
 export async function getSubjectDocuments(subjectId: string): Promise<DocumentStatus[]> {

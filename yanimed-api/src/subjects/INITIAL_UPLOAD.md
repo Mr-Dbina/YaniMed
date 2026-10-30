@@ -31,11 +31,39 @@ Accepted requests return HTTP 202 with:
 }
 ```
 
-When `uploadStatus` is `UPLOADED`, `documentId` is non-null and Document.status is
-`UPLOADED`, not `READY`. `GET /subjects/initial-upload/:idempotencyKey` returns the
-same status contract without uploading. Unknown keys return 404. Invalid inputs
-return 400/413; duplicate names or conflicting key reuse return 409. An unavailable
-database may return a sanitized 503; always retain the same key after such a response.
+When `uploadStatus` is `UPLOADED`, `documentId` is non-null and the new
+Document.status is `QUEUED`, not `UPLOADED` or `READY`.
+`GET /subjects/initial-upload/:idempotencyKey` returns the same status contract
+without uploading. Unknown keys return 404. Invalid inputs return 400/413;
+duplicate names or conflicting key reuse return 409. An unavailable database may
+return a sanitized 503; always retain the same key after such a response.
+
+## Duplicate PDFs
+
+For a new idempotency key, initial upload checks the PDF SHA-256 without a Subject
+scope. Bytes already present in any Subject are therefore reported as
+`other_subject`.
+
+Without `duplicateAction`, the request returns 409 with:
+
+```json
+{
+  "code": "DUPLICATE_PDF",
+  "scope": "other_subject",
+  "existingDocumentId": "existing-document-id",
+  "existingSubjectId": "existing-subject-id",
+  "existingFilename": "existing.pdf",
+  "allowedActions": ["keep_existing", "replace_existing"]
+}
+```
+
+`keep_existing` is accepted. It does not reuse or modify the existing Document.
+The upload still creates a new Subject, UploadAttempt and Document, but the new
+Document's title is set to the existing Document's filename.
+
+`replace_existing` is accepted for compatibility only. It performs no replacement
+or deletion; the upload proceeds normally and the new Document keeps the uploaded
+filename. Any other `duplicateAction` returns 400.
 
 Neither this flow nor `POST /subjects` enables workspace chat. Both report
 `INCOMPLETE` and `chatAvailable: false`. The existing ungrounded development chat
