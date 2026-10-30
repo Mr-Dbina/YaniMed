@@ -16,7 +16,7 @@ type MulterFile = { originalname: string; mimetype: string; size: number; buffer
 import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ChatGuard } from '../chat/chat.guard.js';
-import { StorageService, validatePdfUpload } from '../storage/storage.service.js';
+import { validatePdfUpload } from '../storage/storage.service.js';
 import { Optional } from '@nestjs/common';
 import { PdfObjectService } from '../pdf-objects/pdf-object.service.js';
 import { createHash } from 'node:crypto';
@@ -40,9 +40,8 @@ function isDocumentSubjectPdfUniqueViolation(error: unknown): boolean {
 export class DocumentController {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(StorageService) private readonly storage: StorageService,
+    private readonly pdfObjects: PdfObjectService,
     @Optional() private readonly processing?: DocumentProcessingService,
-    @Optional() private readonly pdfObjects?: PdfObjectService,
   ) {}
 
   @Post('upload')
@@ -63,7 +62,7 @@ export class DocumentController {
     const { buffer, originalname } = validatePdfUpload(file as never);
     const sha256 = createHash('sha256').update(buffer).digest('hex');
 
-    const duplicate = this.pdfObjects ? await this.pdfObjects.findDuplicate(sha256, subject.id) : null;
+    const duplicate = await this.pdfObjects.findDuplicate(sha256, subject.id);
     if (duplicate?.scope === 'same_subject') {
       if (!duplicateAction) {
         throw new ConflictException({
@@ -105,9 +104,7 @@ export class DocumentController {
       }
     }
 
-    const pdfObject = this.pdfObjects
-      ? await this.pdfObjects.ensureFromBuffer(buffer, sha256, buffer.length)
-      : undefined;
+    const pdfObject = await this.pdfObjects.ensureFromBuffer(buffer, sha256, buffer.length);
 
     const title = duplicate && duplicateAction === 'keep_existing'
       ? duplicate.existingFilename
@@ -119,17 +116,17 @@ export class DocumentController {
         data: {
           subjectId: subject.id,
           title,
-          fileUrl: pdfObject ? pdfObject.r2Key : '',
+          fileUrl: pdfObject.r2Key,
           fileSize: buffer.length,
           status: 'QUEUED',
           processedPages: 0,
           embeddedChunks: 0,
           ocrPages: 0,
-          pdfObjectId: pdfObject?.id ?? null,
+          pdfObjectId: pdfObject.id,
         },
       });
     } catch (error) {
-      if (pdfObject && isDocumentSubjectPdfUniqueViolation(error)) {
+      if (isDocumentSubjectPdfUniqueViolation(error)) {
         const existing = await this.prisma.document.findFirst({
           where: { subjectId: subject.id, pdfObjectId: pdfObject.id },
           orderBy: { createdAt: 'asc' },
@@ -146,12 +143,6 @@ export class DocumentController {
         }
       }
       throw error;
-    }
-
-    // If PdfObjectService is unavailable, fall back to the legacy R2 upload path.
-    if (!pdfObject) {
-      const result = await this.storage.uploadPdf(subject.id, buffer, originalname);
-      await this.prisma.document.update({ where: { id: document.id }, data: { fileUrl: result.key, fileSize: result.bytes } });
     }
 
     this.processing?.schedule(document.id);

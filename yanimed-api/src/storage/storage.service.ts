@@ -67,12 +67,6 @@ export interface StoredPdf {
   sha256: string;
 }
 
-export interface UploadResult {
-  key: string;
-  etag: string | null;
-  bytes: number;
-}
-
 export interface R2Config {
   accountId: string | undefined;
   accessKeyId: string;
@@ -244,41 +238,6 @@ export class StorageService implements OnModuleInit {
     return stored.etag;
   }
 
-  async uploadPdf(subjectId: string, file: Buffer, filename: string): Promise<UploadResult> {
-    if (!this.client || !this.bucket)
-      throw new ServiceUnavailableException('R2 storage is not configured.');
-    if (!file.length || file.length > R2_PDF_MAX_BYTES)
-      throw new BadRequestException(
-        `PDF must be between 1 byte and ${R2_PDF_MAX_BYTES} bytes.`,
-      );
-    if (!file.subarray(0, PDF_SIGNATURE.length).equals(PDF_SIGNATURE))
-      throw new BadRequestException('File signature does not match a PDF.');
-    const key = `${subjectId}/${Date.now()}-${crypto.randomUUID()}.pdf`;
-    const started = Date.now();
-    try {
-      const result = await this.client.send(
-        new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: key,
-          Body: file,
-          ContentType: 'application/pdf',
-          ContentLength: file.length,
-          CacheControl: 'private, no-store',
-          Metadata: {
-            originalFilename: sanitizeFilename(filename).slice(0, 256),
-            subjectId,
-          },
-        }),
-        { abortSignal: AbortSignal.timeout(R2_UPLOAD_TIMEOUT_MS) },
-      );
-      return { key, etag: result.ETag ?? null, bytes: file.length };
-    } catch (error) {
-      this.logger.warn(`R2 upload failed after ${Date.now() - started}ms`);
-      if (error instanceof Error && error.name === 'AbortError')
-        throw new BadRequestException('Upload timed out.');
-      throw new InternalServerErrorException('R2 upload failed. No document record was created.');
-    }
-  }
 }
 
 export function sanitizeFilename(filename: string): string {

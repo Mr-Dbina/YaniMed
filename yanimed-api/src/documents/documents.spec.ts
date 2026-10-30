@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { StorageService } from '../storage/storage.service.js';
 import { PdfObjectService } from '../pdf-objects/pdf-object.service.js';
 import { DocumentController } from './documents.controller.js';
 import request from 'supertest';
@@ -56,15 +55,15 @@ function pdfObjectsMock(duplicate: unknown) {
 
 async function makeController(
   prisma: ReturnType<typeof prismaMock>,
-  pdfObjects?: ReturnType<typeof pdfObjectsMock>,
-  storage: { uploadPdf: ReturnType<typeof vi.fn> } = { uploadPdf: vi.fn() },
+  pdfObjects: ReturnType<typeof pdfObjectsMock>,
 ) {
-  const providers: any[] = [
-    { provide: PrismaService, useValue: prisma },
-    { provide: StorageService, useValue: storage },
-  ];
-  if (pdfObjects) providers.push({ provide: PdfObjectService, useValue: pdfObjects });
-  const module = await Test.createTestingModule({ controllers: [DocumentController], providers }).compile();
+  const module = await Test.createTestingModule({
+    controllers: [DocumentController],
+    providers: [
+      { provide: PrismaService, useValue: prisma },
+      { provide: PdfObjectService, useValue: pdfObjects },
+    ],
+  }).compile();
   return module.get(DocumentController);
 }
 
@@ -99,21 +98,62 @@ describe('document upload contract', () => {
   it('requires a subject and validates the PDF before storage', async () => {
     const prisma = prismaMock();
     prisma.subject.findUnique.mockResolvedValue(null);
-    const storage = { uploadPdf: vi.fn() };
-    const controller = await makeController(prisma, undefined, storage);
+    const pdfObjects = pdfObjectsMock(null);
+    const controller = await makeController(prisma, pdfObjects);
     await expect(controller.upload('missing', undefined, undefined as never, response() as never)).rejects.toThrow('Subject does not exist.');
-    expect(storage.uploadPdf).not.toHaveBeenCalled();
+    expect(pdfObjects.ensureFromBuffer).not.toHaveBeenCalled();
     expect(prisma.document.create).not.toHaveBeenCalled();
   });
 
   it('rejects invalid PDF content before R2 upload', async () => {
     const prisma = prismaMock();
-    const storage = { uploadPdf: vi.fn() };
-    const controller = await makeController(prisma, undefined, storage);
+    const pdfObjects = pdfObjectsMock(null);
+    const controller = await makeController(prisma, pdfObjects);
     const invalid = { originalname: 'bad.pdf', mimetype: 'application/pdf', size: Buffer.from('not pdf').length, buffer: Buffer.from('not pdf') };
     await expect(controller.upload('subject-1', undefined, invalid as never, response() as never)).rejects.toThrow('File signature does not match a PDF.');
-    expect(storage.uploadPdf).not.toHaveBeenCalled();
+    expect(pdfObjects.ensureFromBuffer).not.toHaveBeenCalled();
     expect(prisma.document.create).not.toHaveBeenCalled();
+  });
+
+  it('always uses ensureFromBuffer and persists its r2Key', async () => {
+    const prisma = prismaMock();
+    prisma.document.findUniqueOrThrow.mockResolvedValue({
+      id: 'doc-new',
+      subjectId: 'subject-1',
+      title: 'new.pdf',
+      fileUrl: 'pdfs/hash.pdf',
+      status: 'QUEUED',
+    });
+    const pdfObjects = pdfObjectsMock(null);
+    const controller = await makeController(prisma, pdfObjects);
+    const result = await controller.upload('subject-1', undefined, file() as never, response() as never);
+    expect(pdfObjects.findDuplicate).toHaveBeenCalledWith(expect.any(String), 'subject-1');
+    expect(pdfObjects.ensureFromBuffer).toHaveBeenCalledTimes(1);
+    expect(prisma.document.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        fileUrl: 'pdfs/hash.pdf',
+        pdfObjectId: 'po-1',
+      }),
+    });
+    expect(prisma.document.update).not.toHaveBeenCalled();
+    expect(result.storageKey).toBe('pdfs/hash.pdf');
+  });
+
+  it('does not create a fallback Document when ensureFromBuffer returns undefined', async () => {
+    const prisma = prismaMock();
+    const pdfObjects = pdfObjectsMock(null);
+    pdfObjects.ensureFromBuffer.mockResolvedValue(undefined);
+    const controller = await makeController(prisma, pdfObjects);
+    await expect(controller.upload('subject-1', undefined, file() as never, response() as never)).rejects.toThrow();
+    expect(prisma.document.create).not.toHaveBeenCalled();
+    expect(prisma.document.update).not.toHaveBeenCalled();
+  });
+
+  it('requires PdfObjectService to construct the controller', async () => {
+    await expect(Test.createTestingModule({
+      controllers: [DocumentController],
+      providers: [{ provide: PrismaService, useValue: prismaMock() }],
+    }).compile()).rejects.toThrow();
   });
 
   describe('duplicate PDF actions', () => {
@@ -157,12 +197,10 @@ describe('document upload contract', () => {
       vi.stubEnv('NODE_ENV', 'test');
       const prisma = prismaMock();
       const pdfObjects = pdfObjectsMock(sameSubjectDuplicate);
-      const storage = { uploadPdf: vi.fn() };
       const module = await Test.createTestingModule({
         controllers: [DocumentController],
         providers: [
           { provide: PrismaService, useValue: prisma },
-          { provide: StorageService, useValue: storage },
           { provide: PdfObjectService, useValue: pdfObjects },
         ],
       }).compile();
@@ -185,7 +223,6 @@ describe('document upload contract', () => {
         });
         expect(pdfObjects.ensureFromBuffer).not.toHaveBeenCalled();
         expect(prisma.document.create).not.toHaveBeenCalled();
-        expect(storage.uploadPdf).not.toHaveBeenCalled();
       } finally {
         await app.close();
         vi.unstubAllEnvs();
@@ -262,25 +299,25 @@ describe('document upload contract', () => {
   it('upload to a DELETING Subject is rejected', async () => {
     const prisma = prismaMock();
     prisma.subject.findUnique.mockResolvedValue({ id: 'subject-1', status: 'DELETING' });
-    const storage = { uploadPdf: vi.fn() };
-    const controller = await makeController(prisma, undefined, storage);
+    const pdfObjects = pdfObjectsMock(null);
+    const controller = await makeController(prisma, pdfObjects);
     await expect(controller.upload('subject-1', undefined, file() as never, response() as never)).rejects.toMatchObject({ status: 400 });
-    expect(storage.uploadPdf).not.toHaveBeenCalled();
+    expect(pdfObjects.ensureFromBuffer).not.toHaveBeenCalled();
   });
 
-  describe('legacy upload multipart parser', () => {
+  describe('upload multipart parser', () => {
     it('accepts the full field set including duplicateAction', async () => {
       vi.stubEnv('NODE_ENV', 'test');
       const prisma = prismaMock();
       prisma.document.findUniqueOrThrow.mockResolvedValue({
         id: 'doc-1', subjectId: 'subject-1', title: 'kept.pdf', fileUrl: 'key', status: 'QUEUED',
       });
-      const storage = { uploadPdf: vi.fn().mockResolvedValue({ key: 'key', etag: 'e', bytes: Buffer.from('%PDF-1.4').length }) };
+      const pdfObjects = pdfObjectsMock(otherSubjectDuplicate);
       const module = await Test.createTestingModule({
         controllers: [DocumentController],
         providers: [
           { provide: PrismaService, useValue: prisma },
-          { provide: StorageService, useValue: storage },
+          { provide: PdfObjectService, useValue: pdfObjects },
         ],
       }).compile();
       const app = module.createNestApplication();
@@ -289,6 +326,7 @@ describe('document upload contract', () => {
         const post = () => request(app.getHttpServer()).post('/documents/upload').set('Host', 'localhost:3000');
         await post().field('subjectId', 'subject-1').field('duplicateAction', 'keep_existing')
           .attach('file', Buffer.from('%PDF-1.4'), { filename: 'test.pdf', contentType: 'application/pdf' }).expect(201);
+        expect(pdfObjects.ensureFromBuffer).toHaveBeenCalledTimes(1);
       } finally {
         await app.close();
         vi.unstubAllEnvs();
