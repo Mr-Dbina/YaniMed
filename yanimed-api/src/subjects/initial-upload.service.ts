@@ -44,7 +44,7 @@ export class InitialUploadService {
             existingDocumentId: duplicate.existingDocumentId,
             existingSubjectId: duplicate.existingSubjectId,
             existingFilename: duplicate.existingFilename,
-            allowedActions: duplicate.scope === 'same_subject' ? ['upload_anyway'] : ['keep_existing', 'replace_existing'],
+            allowedActions: ['keep_existing', 'replace_existing'],
           });
         }
         if (duplicate && dto.duplicateAction && !['keep_existing', 'replace_existing'].includes(dto.duplicateAction)) {

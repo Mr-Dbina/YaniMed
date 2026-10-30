@@ -116,6 +116,7 @@ model Document {
   initialUpload  UploadAttempt?
   processingJobs ProcessingJob[]
 
+  @@unique([subjectId, pdfObjectId])
   @@index([subjectId])
   @@index([status])
 }

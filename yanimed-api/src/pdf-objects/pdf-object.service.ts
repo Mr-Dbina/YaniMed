@@ -26,9 +26,11 @@ export class PdfObjectService {
       include: { documents: { include: { subject: true }, orderBy: { createdAt: 'asc' } } },
     });
     if (!pdfObject || pdfObject.documents.length === 0) return null;
-    const existing = pdfObject.documents[0];
-    const scope = subjectId && pdfObject.documents.some(document => document.subjectId === subjectId)
-      ? 'same_subject' : 'other_subject';
+    const sameSubjectDocuments = subjectId
+      ? pdfObject.documents.filter(document => document.subjectId === subjectId)
+      : [];
+    const existing = sameSubjectDocuments[0] ?? pdfObject.documents[0];
+    const scope = sameSubjectDocuments.length > 0 ? 'same_subject' : 'other_subject';
     return {
       scope,
       existingDocumentId: existing.id,

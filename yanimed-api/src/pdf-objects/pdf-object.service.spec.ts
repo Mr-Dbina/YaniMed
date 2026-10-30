@@ -49,6 +49,25 @@ describe('PdfObjectService', () => {
     expect(duplicate?.existingDocumentId).toBe('doc-1');
   });
 
+  it('prefers the oldest same-Subject Document over an older other-Subject Document', async () => {
+    const pdfObject = {
+      id: 'po-1',
+      sha256: 'c'.repeat(64),
+      documents: [
+        { id: 'doc-old-other', subjectId: 'subject-2', title: 'other.pdf' },
+        { id: 'doc-same-oldest', subjectId: 'subject-1', title: 'same-oldest.pdf' },
+        { id: 'doc-same-newer', subjectId: 'subject-1', title: 'same-newer.pdf' },
+      ],
+    };
+    const prisma = { pdfObject: { findUnique: vi.fn().mockResolvedValue(pdfObject) } };
+    const service = new PdfObjectService(prisma as never, {} as never);
+    const duplicate = await service.findDuplicate('c'.repeat(64), 'subject-1');
+    expect(duplicate?.scope).toBe('same_subject');
+    expect(duplicate?.existingDocumentId).toBe('doc-same-oldest');
+    expect(duplicate?.existingSubjectId).toBe('subject-1');
+    expect(duplicate?.existingFilename).toBe('same-oldest.pdf');
+  });
+
   it('ensureFromStaging copies new bytes then verifies size', async () => {
     const sha = 'd'.repeat(64);
     const storage = {

@@ -164,6 +164,31 @@ describe('P2002 constraint assertions', () => {
       }
     });
   });
+
+  it('asserts Document subjectId/pdfObjectId P2002 and meta.target', async () => {
+    await rollback(async tx => {
+      const subject = await tx.subject.create({ data: { name: 'PhaseOneDocumentPair' } });
+      const pdfObject = await tx.pdfObject.create({ data: { sha256: 'k'.repeat(64), r2Key: 'key-k', sizeBytes: 1 } });
+      await tx.document.create({ data: {
+        subjectId: subject.id, title: 'first.pdf', fileUrl: 'key-k', fileSize: 1, pdfObjectId: pdfObject.id,
+      } });
+      let caught: unknown;
+      try {
+        await tx.document.create({ data: {
+          subjectId: subject.id, title: 'second.pdf', fileUrl: 'key-k', fileSize: 1, pdfObjectId: pdfObject.id,
+        } });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+      expect((caught as any).code).toBe('P2002');
+      const target = Array.isArray((caught as any).meta?.target)
+        ? (caught as any).meta.target.join(',')
+        : String((caught as any).meta?.target ?? '');
+      expect(target).toContain('subjectId');
+      expect(target).toContain('pdfObjectId');
+    });
+  });
 });
 
 it('ensureFromBuffer concurrent same hash yields one PdfObject row', async () => {

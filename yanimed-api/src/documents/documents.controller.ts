@@ -1,10 +1,12 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   HttpCode,
   Inject,
   Post,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -17,11 +19,20 @@ import { ChatGuard } from '../chat/chat.guard.js';
 import { StorageService, validatePdfUpload } from '../storage/storage.service.js';
 import { Optional } from '@nestjs/common';
 import { PdfObjectService } from '../pdf-objects/pdf-object.service.js';
-import { ConflictException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { DocumentProcessingService } from '../document-processing/document-processing.service.js';
+import { Prisma } from '@prisma/client';
+import type { Response } from 'express';
 
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
+
+function isDocumentSubjectPdfUniqueViolation(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return false;
+  const target = error.meta?.target;
+  const text = Array.isArray(target) ? target.join(',') : typeof target === 'string' ? target : '';
+  return text.includes('Document_subjectId_pdfObjectId_key')
+    || (text.includes('subjectId') && text.includes('pdfObjectId'));
+}
 
 @ApiTags('Documents (local development)')
 @UseGuards(ChatGuard)
@@ -45,6 +56,7 @@ export class DocumentController {
     @Body('subjectId') subjectId: string,
     @Body('duplicateAction') duplicateAction: string | undefined,
     @UploadedFile() file: MulterFile | undefined,
+    @Res({ passthrough: true }) res: Response,
   ) {
     const subject = await this.prisma.subject.findUnique({ where: { id: subjectId } });
     if (!subject || subject.status !== 'ACTIVE') throw new BadRequestException('Subject does not exist.');
@@ -52,18 +64,45 @@ export class DocumentController {
     const sha256 = createHash('sha256').update(buffer).digest('hex');
 
     const duplicate = this.pdfObjects ? await this.pdfObjects.findDuplicate(sha256, subject.id) : null;
-    if (duplicate && !duplicateAction) {
-      throw new ConflictException({
-        code: 'DUPLICATE_PDF', scope: duplicate.scope,
-        existingDocumentId: duplicate.existingDocumentId,
-        existingSubjectId: duplicate.existingSubjectId,
-        existingFilename: duplicate.existingFilename,
-        allowedActions: duplicate.scope === 'same_subject' ? ['upload_anyway'] : ['keep_existing', 'replace_existing'],
+    if (duplicate?.scope === 'same_subject') {
+      if (!duplicateAction) {
+        throw new ConflictException({
+          code: 'DUPLICATE_PDF', scope: duplicate.scope,
+          existingDocumentId: duplicate.existingDocumentId,
+          existingSubjectId: duplicate.existingSubjectId,
+          existingFilename: duplicate.existingFilename,
+          allowedActions: ['keep_existing'],
+        });
+      }
+      if (duplicateAction !== 'keep_existing') {
+        throw new BadRequestException('duplicateAction is not valid for this upload.');
+      }
+      const existing = await this.prisma.document.findUniqueOrThrow({
+        where: { id: duplicate.existingDocumentId },
+        select: { id: true, title: true, subjectId: true, status: true, fileUrl: true },
       });
+      res.status(200);
+      return {
+        documentId: existing.id,
+        filename: existing.title,
+        subjectId: existing.subjectId,
+        status: existing.status,
+        storageKey: existing.fileUrl,
+      };
     }
-    if (duplicate && duplicateAction) {
-      const allowed = duplicate.scope === 'same_subject' ? ['upload_anyway'] : ['keep_existing', 'replace_existing'];
-      if (!allowed.includes(duplicateAction)) throw new BadRequestException('duplicateAction is not valid for this upload.');
+    if (duplicate) {
+      if (!duplicateAction) {
+        throw new ConflictException({
+          code: 'DUPLICATE_PDF', scope: duplicate.scope,
+          existingDocumentId: duplicate.existingDocumentId,
+          existingSubjectId: duplicate.existingSubjectId,
+          existingFilename: duplicate.existingFilename,
+          allowedActions: ['keep_existing', 'replace_existing'],
+        });
+      }
+      if (!['keep_existing', 'replace_existing'].includes(duplicateAction)) {
+        throw new BadRequestException('duplicateAction is not valid for this upload.');
+      }
     }
 
     const pdfObject = this.pdfObjects
@@ -74,19 +113,40 @@ export class DocumentController {
       ? duplicate.existingFilename
       : originalname;
 
-    const document = await this.prisma.document.create({
-      data: {
-        subjectId: subject.id,
-        title,
-        fileUrl: pdfObject ? pdfObject.r2Key : '',
-        fileSize: buffer.length,
-        status: 'QUEUED',
-        processedPages: 0,
-        embeddedChunks: 0,
-        ocrPages: 0,
-        pdfObjectId: pdfObject?.id ?? null,
-      },
-    });
+    let document: { id: string };
+    try {
+      document = await this.prisma.document.create({
+        data: {
+          subjectId: subject.id,
+          title,
+          fileUrl: pdfObject ? pdfObject.r2Key : '',
+          fileSize: buffer.length,
+          status: 'QUEUED',
+          processedPages: 0,
+          embeddedChunks: 0,
+          ocrPages: 0,
+          pdfObjectId: pdfObject?.id ?? null,
+        },
+      });
+    } catch (error) {
+      if (pdfObject && isDocumentSubjectPdfUniqueViolation(error)) {
+        const existing = await this.prisma.document.findFirst({
+          where: { subjectId: subject.id, pdfObjectId: pdfObject.id },
+          orderBy: { createdAt: 'asc' },
+          select: { id: true, subjectId: true, title: true },
+        });
+        if (existing) {
+          throw new ConflictException({
+            code: 'DUPLICATE_PDF', scope: 'same_subject',
+            existingDocumentId: existing.id,
+            existingSubjectId: existing.subjectId,
+            existingFilename: existing.title,
+            allowedActions: ['keep_existing'],
+          });
+        }
+      }
+      throw error;
+    }
 
     // If PdfObjectService is unavailable, fall back to the legacy R2 upload path.
     if (!pdfObject) {
