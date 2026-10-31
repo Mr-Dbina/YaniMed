@@ -56,7 +56,6 @@ export class ChatController {
 
   @Post('subject-answer')
   @HttpCode(200)
-  @UseGuards(ChatGuard)
   async subjectAnswer(
     @Body(new ValidationPipe({
       transform: true, whitelist: true, forbidNonWhitelisted: true,

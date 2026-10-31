@@ -2,8 +2,9 @@ import { Injectable, Logger, NotFoundException, ServiceUnavailableException } fr
 import { PrismaService } from '../prisma/prisma.service.js';
 import { OmniRouteService } from '../omniroute/omniroute.service.js';
 import { RetrievalService, type RetrievalMatch } from '../retrieval/retrieval.service.js';
-import { ChatGuard } from './chat.guard.js';
 import { sanitizePassageText, sanitizeQuestion, sanitizeTitle } from './prompt-sanitize.js';
+
+type ResolvedChat = { id: string; subjectId: string } | null;
 
 interface SubjectChatRequest {
   subjectId: string;
@@ -61,12 +62,14 @@ export class SubjectChatService {
     const subject = await this.prisma.subject.findUnique({ where: { id: request.subjectId } });
     if (!subject) throw new NotFoundException('Subject not found.');
 
+    const chat = await this.resolveChat(request.chatId, subject.id);
+
     const retrievalResult = await this.retrieval.retrieve(request.subjectId, request.prompt, {
       topK: request.topK ?? 5,
     });
 
     if (!retrievalResult.hasReadyDocuments || retrievalResult.matches.length === 0) {
-      return this.persistInsufficient(request, subject.id, started, 'No relevant passages were retrieved from the uploaded PDFs.');
+      return this.persistInsufficient(request, subject.id, started, 'No relevant passages were retrieved from the uploaded PDFs.', 0, chat);
     }
 
     const sourceMap = new Map<string, RetrievalMatch>();
@@ -95,19 +98,19 @@ export class SubjectChatService {
 
     const validCitations = await this.extractCitations(completion.content, sourceMap);
     if (validCitations.length === 0) {
-      return this.persistInsufficient(request, subject.id, started, 'The model did not provide verifiable citations from the uploaded PDFs.');
+      return this.persistInsufficient(request, subject.id, started, 'The model did not provide verifiable citations from the uploaded PDFs.', retrievalResult.matches.length, chat);
     }
 
-    const chat = await this.getOrCreateChat(request.chatId, subject.id);
     const uniqueCitations = this.dedupeCitations(validCitations);
 
-    const response = await this.prisma.$transaction(async tx => {
+    const saved = await this.prisma.$transaction(async tx => {
+      const activeChat = chat ?? await tx.chat.create({ data: { subjectId: subject.id, title: null } });
       const userMessage = await tx.message.create({
-        data: { chatId: chat.id, role: 'USER', content: request.prompt },
+        data: { chatId: activeChat.id, role: 'USER', content: request.prompt },
       });
       const assistantMessage = await tx.message.create({
         data: {
-          chatId: chat.id,
+          chatId: activeChat.id,
           role: 'ASSISTANT',
           content: completion.content,
           answerMode: 'GENERATED',
@@ -126,11 +129,11 @@ export class SubjectChatService {
           },
         });
       }
-      return { userMessage, assistantMessage };
+      return { chat: activeChat, userMessage, assistantMessage };
     });
 
     return {
-      chatId: chat.id,
+      chatId: saved.chat.id,
       answer: completion.content,
       citations: uniqueCitations.map(citation => ({
         sourceId: citation.sourceId,
@@ -152,15 +155,13 @@ export class SubjectChatService {
     };
   }
 
-  private async getOrCreateChat(chatId: string | undefined, subjectId: string) {
-    if (chatId) {
-      const existing = await this.prisma.chat.findUnique({ where: { id: chatId } });
-      if (!existing || existing.subjectId !== subjectId) {
-        throw new NotFoundException('Chat not found for this subject.');
-      }
-      return existing;
+  private async resolveChat(chatId: string | undefined, subjectId: string): Promise<ResolvedChat> {
+    if (!chatId) return null;
+    const existing = await this.prisma.chat.findUnique({ where: { id: chatId } });
+    if (!existing || existing.subjectId !== subjectId) {
+      throw new NotFoundException('Chat not found for this subject.');
     }
-    return this.prisma.chat.create({ data: { subjectId, title: null } });
+    return existing;
   }
 
   private async extractCitations(content: string, sourceMap: Map<string, RetrievalMatch>) {
@@ -203,16 +204,19 @@ export class SubjectChatService {
     });
   }
 
-  private async persistInsufficient(request: SubjectChatRequest, subjectId: string, started: number, reason: string): Promise<SubjectChatResponse> {
-    const chat = await this.getOrCreateChat(request.chatId, subjectId);
-    await this.prisma.message.createMany({
-      data: [
-        { chatId: chat.id, role: 'USER', content: request.prompt },
-        { chatId: chat.id, role: 'ASSISTANT', content: reason, answerMode: 'NOT_FOUND', provider: null, model: null },
-      ],
+  private async persistInsufficient(request: SubjectChatRequest, subjectId: string, started: number, reason: string, retrievedChunks: number, chat: ResolvedChat): Promise<SubjectChatResponse> {
+    const savedChat = await this.prisma.$transaction(async tx => {
+      const activeChat = chat ?? await tx.chat.create({ data: { subjectId, title: null } });
+      await tx.message.create({
+        data: { chatId: activeChat.id, role: 'USER', content: request.prompt },
+      });
+      await tx.message.create({
+        data: { chatId: activeChat.id, role: 'ASSISTANT', content: reason, answerMode: 'NOT_FOUND', provider: null, model: null },
+      });
+      return activeChat;
     });
     return {
-      chatId: chat.id,
+      chatId: savedChat.id,
       answer: reason,
       citations: [],
       grounding: 'insufficient_evidence',
@@ -222,7 +226,7 @@ export class SubjectChatService {
         servedModel: null,
         provider: null,
         durationMs: Date.now() - started,
-        retrievedChunks: 0,
+        retrievedChunks,
       },
     };
   }

@@ -5,6 +5,7 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatController } from './chat.controller.js';
 import { ChatGuard } from './chat.guard.js';
+import { SubjectChatService } from './subject-chat.service.js';
 import { OmniRouteService } from '../omniroute/omniroute.service.js';
 
 describe('Chat HTTP contract (mocked gateway, no database)', () => {
@@ -108,5 +109,40 @@ describe('Chat loopback and quota window', () => {
     expect(() => guard.canActivate(context('::1'))).toThrow('limit exceeded');
     now.mockReturnValue(160_000);
     expect(guard.canActivate(context('::1'))).toBe(true);
+  });
+});
+
+describe('Chat HTTP subject-answer throttle', () => {
+  let app: INestApplication;
+  const subjectAnswer = vi.fn();
+  beforeEach(async () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.stubEnv('CORS_ORIGINS', 'http://localhost:3001');
+    subjectAnswer.mockReset().mockResolvedValue({ chatId: 'chat-1' });
+    const module = await Test.createTestingModule({
+      controllers: [ChatController],
+      providers: [
+        ChatGuard,
+        { provide: OmniRouteService, useValue: { complete: vi.fn(), getRequestedModel: () => 'yanimed' } },
+        { provide: SubjectChatService, useValue: { answer: subjectAnswer } },
+      ],
+    }).compile();
+    app = module.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }));
+    await app.init();
+  });
+  afterEach(async () => {
+    await app?.close();
+    vi.unstubAllEnvs();
+  });
+  const post = () => request(app.getHttpServer()).post('/chat/subject-answer')
+    .set('Host', 'localhost:3000').set('Origin', 'http://localhost:3001');
+
+  it('T11 consumes one throttle unit per subject-answer request', async () => {
+    for (let index = 0; index < 10; index++) {
+      await post().send({ subjectId: 'subject-1', prompt: 'Hello' }).expect(200);
+    }
+    await post().send({ subjectId: 'subject-1', prompt: 'Hello' }).expect(429);
+    expect(subjectAnswer).toHaveBeenCalledTimes(10);
   });
 });
