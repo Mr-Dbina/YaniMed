@@ -4,6 +4,9 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { EmbeddingService, EMBEDDING_DIMENSIONS } from '../embeddings/embedding.service.js';
 
 const RRF_K = 60;
+const IVFFLAT_PROBES = 100;
+const SET_IVFFLAT_PROBES = `SET LOCAL ivfflat.probes = ${IVFFLAT_PROBES}`;
+const KEYWORD_WEIGHT = 2;
 
 interface RetrievalRow {
   chunkId: string;
@@ -83,7 +86,9 @@ export class RetrievalService {
 
     const literal = `[${queryVector.join(',')}]`;
     const [vectorRows, keywordRows] = await Promise.all([
-      this.prisma.$queryRaw<VectorRow[]>`
+      this.prisma.$transaction(async tx => {
+        await tx.$executeRawUnsafe(SET_IVFFLAT_PROBES);
+        return tx.$queryRaw<VectorRow[]>`
         SELECT c."id" AS "chunkId",
                c."documentId" AS "documentId",
                d."title" AS "documentTitle",
@@ -98,7 +103,8 @@ export class RetrievalService {
           AND c."embedding" IS NOT NULL
         ORDER BY c."embedding" <=> ${literal}::vector ASC, c."id" ASC
         LIMIT ${candidateLimit}
-      `,
+      `;
+      }, { timeout: 15000, maxWait: 10000 }),
       this.prisma.$queryRaw<RetrievalRow[]>`
         SELECT c."id" AS "chunkId",
                c."documentId" AS "documentId",
@@ -169,7 +175,7 @@ export class RetrievalService {
     const matches = withExistingPages
       .map<RetrievalMatch>(candidate => {
         const vectorPart = candidate.vectorRank === null ? 0 : 1 / (RRF_K + candidate.vectorRank);
-        const keywordPart = candidate.keywordRank === null ? 0 : 1 / (RRF_K + candidate.keywordRank);
+        const keywordPart = candidate.keywordRank === null ? 0 : KEYWORD_WEIGHT / (RRF_K + candidate.keywordRank);
         return {
           chunkId: candidate.row.chunkId,
           documentId: candidate.row.documentId,
