@@ -2,6 +2,12 @@ import { NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { SubjectChatService } from './subject-chat.service.js';
 
+const NO_CITATIONS_MESSAGE = 'The model did not provide verifiable citations from the uploaded PDFs.';
+
+function spyOnLoggerWarn(service: SubjectChatService) {
+  return vi.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+}
+
 function makePrisma() {
   const tx = {
     chat: { create: vi.fn().mockResolvedValue({ id: 'chat-tx', subjectId: 'subject-1' }) },
@@ -297,5 +303,123 @@ describe('SubjectChatService', () => {
     expect(prisma._tx.message.create).toHaveBeenCalledTimes(2);
     expect(prisma._tx.message.create.mock.calls.map(([call]) => call.data.role)).toEqual(['USER', 'ASSISTANT']);
     expect(prisma._tx.message.create.mock.invocationCallOrder[0]).toBeLessThan(prisma._tx.message.create.mock.invocationCallOrder[1]);
+  });
+
+  it('L1 logs one warn for a no-citation completion and keeps the generic response', async () => {
+    const prisma = makePrisma();
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [
+          { chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 1, content: 'passage one', extractionMethod: 'TEXT' },
+          { chunkId: 'chunk-2', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 2, content: 'passage two', extractionMethod: 'TEXT' },
+        ],
+      }),
+    };
+    const completionText = 'The passages do not answer this question.';
+    const omniroute = { complete: vi.fn().mockResolvedValue({ content: completionText, model: 'served-model-l1' }), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+    const warn = spyOnLoggerWarn(service);
+    const result = await service.answer({ subjectId: 'subject-1', prompt: 'question L1' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const logged = String(warn.mock.calls[0][0]);
+    expect(logged).toContain('No verifiable citations');
+    expect(logged).toContain('subject=subject-1');
+    expect(logged).toContain('retrievedChunks=2');
+    expect(logged).toContain('model=served-model-l1');
+    expect(logged).toContain(completionText);
+    expect(result.grounding).toBe('insufficient_evidence');
+    expect(result.answer).toBe(NO_CITATIONS_MESSAGE);
+    expect(prisma._tx.message.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ role: 'ASSISTANT', content: NO_CITATIONS_MESSAGE, answerMode: 'NOT_FOUND' }),
+    });
+  });
+
+  it('L2 truncates the logged completion to 500 sanitized characters and reports the original length', async () => {
+    const prisma = makePrisma();
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [{ chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 1, content: 'passage', extractionMethod: 'TEXT' }],
+      }),
+    };
+    const completionText = 'x'.repeat(501);
+    const omniroute = { complete: vi.fn().mockResolvedValue({ content: completionText, model: 'served-model-l2' }), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+    const warn = spyOnLoggerWarn(service);
+    await service.answer({ subjectId: 'subject-1', prompt: 'question L2' });
+    const logged = String(warn.mock.calls[0][0]);
+    expect(logged).toContain('completionChars=501');
+    expect(logged).toContain(`text="${'x'.repeat(500)}..."`);
+  });
+
+  it('L3 collapses newlines, tabs and control characters in the logged completion', async () => {
+    const prisma = makePrisma();
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [{ chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 1, content: 'passage', extractionMethod: 'TEXT' }],
+      }),
+    };
+    const completionText = 'line-one\nline-two\tline-three\u0000line-four\rline-five';
+    const omniroute = { complete: vi.fn().mockResolvedValue({ content: completionText, model: 'served-model-l3' }), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+    const warn = spyOnLoggerWarn(service);
+    await service.answer({ subjectId: 'subject-1', prompt: 'question L3' });
+    const logged = String(warn.mock.calls[0][0]);
+    expect(logged).toContain('line-one line-two line-three line-four line-five');
+    expect(logged).not.toMatch(/[\u0000-\u001F\u007F-\u009F]/u);
+  });
+
+  it('L4 does not warn on the grounded path', async () => {
+    const prisma = makePrisma();
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [{ chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 1, content: 'passage', extractionMethod: 'TEXT' }],
+      }),
+    };
+    const omniroute = { complete: vi.fn().mockResolvedValue({ content: 'Answer [S1].', model: 'served-model-l4' }), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+    const warn = spyOnLoggerWarn(service);
+    const result = await service.answer({ subjectId: 'subject-1', prompt: 'question L4' });
+    expect(result.grounding).toBe('grounded');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('L5 does not warn and does not call the model when no documents are ready', async () => {
+    const prisma = makePrisma();
+    const retrieval = { retrieve: vi.fn().mockResolvedValue({ hasReadyDocuments: false, matches: [] }) };
+    const omniroute = { complete: vi.fn(), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+    const warn = spyOnLoggerWarn(service);
+    const result = await service.answer({ subjectId: 'subject-1', prompt: 'question L5' });
+    expect(result.grounding).toBe('insufficient_evidence');
+    expect(warn).not.toHaveBeenCalled();
+    expect(omniroute.complete).not.toHaveBeenCalled();
+  });
+
+  it('L6 never logs the user prompt, passage content, or document title', async () => {
+    const prisma = makePrisma();
+    const promptMarker = 'PROMPT_MARKER_PHASE3D';
+    const passageMarker = 'PASSAGE_MARKER_PHASE3D';
+    const titleMarker = 'TITLE_MARKER_PHASE3D';
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [{ chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: `doc ${titleMarker}`, pageNumber: 1, content: `passage ${passageMarker}`, extractionMethod: 'TEXT' }],
+      }),
+    };
+    const completionText = 'No citations in this model response.';
+    const omniroute = { complete: vi.fn().mockResolvedValue({ content: completionText, model: 'served-model-l6' }), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+    const warn = spyOnLoggerWarn(service);
+    await service.answer({ subjectId: 'subject-1', prompt: promptMarker });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const logged = String(warn.mock.calls[0][0]);
+    expect(logged).toContain(completionText);
+    expect(logged).not.toContain(promptMarker);
+    expect(logged).not.toContain(passageMarker);
+    expect(logged).not.toContain(titleMarker);
   });
 });

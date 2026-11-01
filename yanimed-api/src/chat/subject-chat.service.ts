@@ -47,6 +47,25 @@ const SYSTEM_PROMPT = [
   'Never invent source identifiers, filenames, page numbers, or passages.',
 ].join(' ');
 
+const NO_CITATIONS_LOG_TEXT_LIMIT = 500;
+
+function formatNoVerifiableCitationsLog(
+  subjectId: string,
+  retrievedChunks: number,
+  completion: { content: string; model?: string | null },
+): string {
+  const rawContent = completion.content ?? '';
+  const sanitized = rawContent
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+    .replace(/\s+/g, ' ');
+  const excerpt =
+    sanitized.length > NO_CITATIONS_LOG_TEXT_LIMIT
+      ? `${sanitized.slice(0, NO_CITATIONS_LOG_TEXT_LIMIT)}...`
+      : sanitized;
+  const markers = rawContent.match(/\[S\d+\]/g)?.length ?? 0;
+  return `No verifiable citations subject=${subjectId} retrievedChunks=${retrievedChunks} model=${completion.model ?? 'unknown'} completionChars=${rawContent.length} markers=${markers} text="${excerpt}"`;
+}
+
 @Injectable()
 export class SubjectChatService {
   private readonly logger = new Logger(SubjectChatService.name);
@@ -98,6 +117,7 @@ export class SubjectChatService {
 
     const validCitations = await this.extractCitations(completion.content, sourceMap);
     if (validCitations.length === 0) {
+      this.logger.warn(formatNoVerifiableCitationsLog(subject.id, retrievalResult.matches.length, completion));
       return this.persistInsufficient(request, subject.id, started, 'The model did not provide verifiable citations from the uploaded PDFs.', retrievalResult.matches.length, chat);
     }
 
