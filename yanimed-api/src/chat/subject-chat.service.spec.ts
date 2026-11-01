@@ -422,4 +422,84 @@ describe('SubjectChatService', () => {
     expect(logged).not.toContain(passageMarker);
     expect(logged).not.toContain(titleMarker);
   });
+
+  it('N1 normalizes fullwidth citations into grounded ASCII citations', async () => {
+    const prisma = makePrisma();
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [
+          { chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 1, content: 'passage one', extractionMethod: 'TEXT' },
+          { chunkId: 'chunk-2', documentId: 'doc-2', documentTitle: 'doc.pdf', pageNumber: 2, content: 'passage two', extractionMethod: 'TEXT' },
+          { chunkId: 'chunk-3', documentId: 'doc-3', documentTitle: 'doc.pdf', pageNumber: 3, content: 'passage three', extractionMethod: 'TEXT' },
+        ],
+      }),
+    };
+    const omniroute = { complete: vi.fn().mockResolvedValue({ content: 'The source says X【S3】.', model: 'served-model-n1' }), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+    const result = await service.answer({ subjectId: 'subject-1', prompt: 'question N1' });
+    expect(result.grounding).toBe('grounded');
+    expect(result.citations).toHaveLength(1);
+    expect(result.citations[0].sourceId).toBe('S3');
+    expect(result.answer).toContain('[S3]');
+    expect(result.answer).not.toContain('【');
+  });
+
+  it('N2 persists the normalized assistant message instead of the raw completion', async () => {
+    const prisma = makePrisma();
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [
+          { chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 1, content: 'passage one', extractionMethod: 'TEXT' },
+          { chunkId: 'chunk-2', documentId: 'doc-2', documentTitle: 'doc.pdf', pageNumber: 2, content: 'passage two', extractionMethod: 'TEXT' },
+          { chunkId: 'chunk-3', documentId: 'doc-3', documentTitle: 'doc.pdf', pageNumber: 3, content: 'passage three', extractionMethod: 'TEXT' },
+        ],
+      }),
+    };
+    const raw = 'The source says X【S3】.';
+    const omniroute = { complete: vi.fn().mockResolvedValue({ content: raw, model: 'served-model-n2' }), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+    await service.answer({ subjectId: 'subject-1', prompt: 'question N2' });
+    const assistantCall = prisma._tx.message.create.mock.calls.find(([call]) => call.data.role === 'ASSISTANT');
+    expect(assistantCall?.[0].data.content).toBe('The source says X[S3].');
+    expect(assistantCall?.[0].data.content).not.toBe(raw);
+  });
+
+  it('N3 keeps the raw fullwidth marker in the no-citation warning', async () => {
+    const prisma = makePrisma();
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [
+          { chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 1, content: 'passage one', extractionMethod: 'TEXT' },
+          { chunkId: 'chunk-2', documentId: 'doc-2', documentTitle: 'doc.pdf', pageNumber: 2, content: 'passage two', extractionMethod: 'TEXT' },
+          { chunkId: 'chunk-3', documentId: 'doc-3', documentTitle: 'doc.pdf', pageNumber: 3, content: 'passage three', extractionMethod: 'TEXT' },
+        ],
+      }),
+    };
+    const raw = 'The source says 【S99】.';
+    const omniroute = { complete: vi.fn().mockResolvedValue({ content: raw, model: 'served-model-n3' }), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+    const warn = spyOnLoggerWarn(service);
+    const result = await service.answer({ subjectId: 'subject-1', prompt: 'question N3' });
+    expect(result.grounding).toBe('insufficient_evidence');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('【S99】');
+  });
+
+  it('N4 instructs the model to use plain ASCII square brackets', async () => {
+    const prisma = makePrisma();
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [{ chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 3, content: 'passage', extractionMethod: 'TEXT' }],
+      }),
+    };
+    const omniroute = { complete: vi.fn().mockResolvedValue({ content: 'Answer [S1].', model: 'm' }), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+    await service.answer({ subjectId: 'subject-1', prompt: 'question N4' });
+    const systemPrompt = omniroute.complete.mock.calls[0][1] as string;
+    expect(systemPrompt).toContain('Write each source identifier with plain ASCII square brackets exactly like [S1]; never use other bracket characters or symbols around it.');
+  });
 });

@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, ServiceUnavailableException } fr
 import { PrismaService } from '../prisma/prisma.service.js';
 import { OmniRouteService } from '../omniroute/omniroute.service.js';
 import { RetrievalService, type RetrievalMatch } from '../retrieval/retrieval.service.js';
+import { normalizeCitationBrackets } from './citation-normalize.js';
 import { sanitizePassageText, sanitizeQuestion, sanitizeTitle } from './prompt-sanitize.js';
 
 type ResolvedChat = { id: string; subjectId: string } | null;
@@ -45,6 +46,7 @@ const SYSTEM_PROMPT = [
   'If the passages do not contain enough evidence, say that the answer cannot be established from the uploaded PDFs.',
   'Cite every factual statement with source identifiers like [S1], [S2].',
   'Never invent source identifiers, filenames, page numbers, or passages.',
+  'Write each source identifier with plain ASCII square brackets exactly like [S1]; never use other bracket characters or symbols around it.',
 ].join(' ');
 
 const NO_CITATIONS_LOG_TEXT_LIMIT = 500;
@@ -115,7 +117,8 @@ export class SubjectChatService {
       throw new ServiceUnavailableException('AI answer unavailable. Please try again shortly.');
     }
 
-    const validCitations = await this.extractCitations(completion.content, sourceMap);
+    const content = normalizeCitationBrackets(completion.content);
+    const validCitations = await this.extractCitations(content, sourceMap);
     if (validCitations.length === 0) {
       this.logger.warn(formatNoVerifiableCitationsLog(subject.id, retrievalResult.matches.length, completion));
       return this.persistInsufficient(request, subject.id, started, 'The model did not provide verifiable citations from the uploaded PDFs.', retrievalResult.matches.length, chat);
@@ -132,7 +135,7 @@ export class SubjectChatService {
         data: {
           chatId: activeChat.id,
           role: 'ASSISTANT',
-          content: completion.content,
+          content,
           answerMode: 'GENERATED',
           provider: null,
           model: completion.model,
@@ -154,7 +157,7 @@ export class SubjectChatService {
 
     return {
       chatId: saved.chat.id,
-      answer: completion.content,
+      answer: content,
       citations: uniqueCitations.map(citation => ({
         sourceId: citation.sourceId,
         documentId: citation.documentId,
