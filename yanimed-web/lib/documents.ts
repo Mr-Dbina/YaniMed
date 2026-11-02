@@ -77,9 +77,3 @@ export async function uploadSubjectPdf(
   }
   return JSON.parse(text) as DocumentStatus;
 }
-
-export async function getSubjectDocuments(subjectId: string): Promise<DocumentStatus[]> {
-  const response = await fetch(`/api/documents?subjectId=${encodeURIComponent(subjectId)}`);
-  if (!response.ok) throw new Error(await response.text() || "Could not load documents");
-  return response.json();
-}

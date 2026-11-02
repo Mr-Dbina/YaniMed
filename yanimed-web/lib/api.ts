@@ -19,7 +19,7 @@ export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhos
   "",
 );
 
-async function errorDetails(res: Response): Promise<{ message: string; code?: string }> {
+export async function errorDetails(res: Response): Promise<{ message: string; code?: string }> {
   try {
     const body = (await res.json()) as { message?: string | string[] | { code?: unknown }; code?: unknown };
     let message: string | undefined;
@@ -40,7 +40,7 @@ async function errorDetails(res: Response): Promise<{ message: string; code?: st
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
