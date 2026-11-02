@@ -60,6 +60,14 @@ export class SubjectNameConflictError extends ApiError {
 
 export type DocumentProcessingStatus = "QUEUED" | "PROCESSING" | "READY" | "FAILED";
 
+export type UploadedDocument = {
+  documentId: string;
+  filename: string;
+  subjectId: string;
+  status: DocumentProcessingStatus;
+  storageKey: string;
+};
+
 export interface BackendSubject {
   id: string;
   name: string;
@@ -116,6 +124,15 @@ export interface BackendDocumentStatus extends BackendDocument {
 
 function isDocumentProcessingStatus(value: unknown): value is DocumentProcessingStatus {
   return value === "QUEUED" || value === "PROCESSING" || value === "READY" || value === "FAILED";
+}
+
+function isUploadedDocument(value: unknown): value is UploadedDocument {
+  return isRecord(value) &&
+    typeof value.documentId === "string" &&
+    typeof value.filename === "string" &&
+    typeof value.subjectId === "string" &&
+    isDocumentProcessingStatus(value.status) &&
+    typeof value.storageKey === "string";
 }
 
 function isBackendSubject(value: unknown): value is BackendSubject {
@@ -364,4 +381,75 @@ export async function getInitialUploadStatus(idempotencyKey: string): Promise<In
 // recovery may still move them to UPLOADED.
 export function isInitialUploadTerminal(result: InitialUploadResult): boolean {
   return result.uploadStatus === "UPLOADED";
+}
+
+export async function uploadPdfToSubject(input: {
+  subjectId: string;
+  file: File;
+  duplicateAction?: DuplicateAction;
+}): Promise<{ document: UploadedDocument; created: boolean }> {
+  const subjectId = input.subjectId.trim();
+  if (!subjectId) throw new ApiError("Subject ID is required.");
+  if (!input.file.name.trim()) throw new ApiError("The selected file must have a filename.");
+  if (input.duplicateAction !== undefined && !isDuplicateAction(input.duplicateAction)) {
+    throw new ApiError("Duplicate action must be 'keep_existing' or 'replace_existing'.");
+  }
+
+  const form = new FormData();
+  form.append("subjectId", subjectId);
+  if (input.duplicateAction !== undefined) form.append("duplicateAction", input.duplicateAction);
+  form.append("file", input.file, input.file.name);
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, UPLOAD_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/documents/upload`, {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      let body: unknown;
+      try {
+        body = await res.json();
+      } catch {
+        throw new ApiError(`Request failed with status ${res.status}`, res.status);
+      }
+
+      if (res.status === 409 && isInitialUploadDuplicateBody(body)) {
+        throw new InitialUploadDuplicateError(body);
+      }
+      const { message, code } = errorDetailsFromBody(res.status, body);
+      throw new ApiError(message, res.status, code);
+    }
+
+    if (res.status !== 200 && res.status !== 201) {
+      throw new ApiError("The API returned an invalid upload response. Please try again.");
+    }
+
+    const body: unknown = await res.json();
+    if (!isUploadedDocument(body)) {
+      throw new ApiError("The API returned an invalid upload response. Please try again.");
+    }
+    return { document: body, created: res.status === 201 };
+  } catch (err) {
+    if (timedOut) {
+      throw new ApiError(
+        "The upload timed out after 60 seconds. It may have reached the server, so check this subject's documents before retrying.",
+      );
+    }
+    if (err instanceof ApiError) throw err;
+    if (err instanceof SyntaxError) throw new ApiError("The API returned an invalid JSON response.");
+    throw new ApiError(
+      `Could not reach the API at ${API_BASE_URL}. Check the server and allowed frontend origin, then try again.`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }
