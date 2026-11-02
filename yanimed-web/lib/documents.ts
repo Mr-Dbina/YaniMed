@@ -1,6 +1,7 @@
 import type { LibraryFile } from "@/lib/format";
 import type { Subject } from "@/lib/types";
 import { getLibraryDir, listLibraryFiles, summarizeStorage } from "@/lib/library";
+import { API_BASE_URL } from "@/lib/api";
 
 export interface DocumentStatus {
   documentId: string;
@@ -52,7 +53,7 @@ export async function uploadSubjectPdf(
   form.append("subjectId", subjectId);
   if (duplicateAction !== undefined) form.append("duplicateAction", duplicateAction);
   form.append("file", file, file.name);
-  const response = await fetch("http://localhost:3000/documents/upload", { method: "POST", body: form });
+  const response = await fetch(`${API_BASE_URL}/documents/upload`, { method: "POST", body: form });
   const text = await response.text();
   if (!response.ok) {
     if (response.status === 409) {

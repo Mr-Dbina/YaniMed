@@ -4,26 +4,40 @@ export const MAX_PROMPT_LENGTH = 2000;
 const REQUEST_TIMEOUT_MS = 70_000;
 
 export class ApiError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly code?: string,
+  ) {
     super(message);
     this.name = "ApiError";
   }
 }
 
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000").replace(
+export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000").replace(
   /\/+$/,
   "",
 );
 
-async function errorMessage(res: Response): Promise<string> {
+async function errorDetails(res: Response): Promise<{ message: string; code?: string }> {
   try {
-    const body = (await res.json()) as { message?: string | string[] };
-    if (Array.isArray(body.message)) return body.message.join(" ");
-    if (typeof body.message === "string" && body.message) return body.message;
+    const body = (await res.json()) as { message?: string | string[] | { code?: unknown }; code?: unknown };
+    let message: string | undefined;
+    if (Array.isArray(body.message)) message = body.message.join(" ");
+    else if (typeof body.message === "string" && body.message) message = body.message;
+    const code = typeof body.code === "string"
+      ? body.code
+      : isRecord(body.message) && typeof body.message.code === "string"
+        ? body.message.code
+        : undefined;
+    return {
+      message: message ?? `Request failed with status ${res.status}`,
+      ...(code !== undefined ? { code } : {}),
+    };
   } catch {
     // Non-JSON error bodies fall through to the generic status message.
+    return { message: `Request failed with status ${res.status}` };
   }
-  return `Request failed with status ${res.status}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -77,7 +91,10 @@ export async function requestAnswer(
       body: JSON.stringify({ prompt: prompt.trim() }),
       signal: controller.signal,
     });
-    if (!res.ok) throw new ApiError(await errorMessage(res));
+    if (!res.ok) {
+      const { message, code } = await errorDetails(res);
+      throw new ApiError(message, res.status, code);
+    }
 
     const body: unknown = await res.json();
     if (!isAnswer(body)) throw new ApiError("The API returned an invalid chat response. Please try again.");
