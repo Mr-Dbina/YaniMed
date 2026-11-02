@@ -187,7 +187,12 @@ describe('SubjectChatService', () => {
   it('T1 rejects an invalid chatId before retrieval or model use', async () => {
     const prisma = makePrisma();
     prisma.chat.findUnique.mockResolvedValue(null);
-    const retrieval = { retrieve: vi.fn() };
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [{ chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 3, content: 'passage', extractionMethod: 'TEXT' }],
+      }),
+    };
     const omniroute = { complete: vi.fn(), getRequestedModel: () => 'primary' };
     const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
     await expect(service.answer({ subjectId: 'subject-1', prompt: 'question', chatId: 'missing' })).rejects.toBeInstanceOf(NotFoundException);
@@ -198,7 +203,12 @@ describe('SubjectChatService', () => {
   it('T2 rejects a chatId belonging to another subject before retrieval or model use', async () => {
     const prisma = makePrisma();
     prisma.chat.findUnique.mockResolvedValue({ id: 'chat-other', subjectId: 'subject-2' });
-    const retrieval = { retrieve: vi.fn() };
+    const retrieval = {
+      retrieve: vi.fn().mockResolvedValue({
+        hasReadyDocuments: true,
+        matches: [{ chunkId: 'chunk-1', documentId: 'doc-1', documentTitle: 'doc.pdf', pageNumber: 3, content: 'passage', extractionMethod: 'TEXT' }],
+      }),
+    };
     const omniroute = { complete: vi.fn(), getRequestedModel: () => 'primary' };
     const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
     await expect(service.answer({ subjectId: 'subject-1', prompt: 'question', chatId: 'chat-other' })).rejects.toBeInstanceOf(NotFoundException);
