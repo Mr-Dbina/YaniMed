@@ -1,6 +1,62 @@
 import { API_BASE_URL, ApiError, errorDetails, isRecord } from "@/lib/api";
 
 const REQUEST_TIMEOUT_MS = 15_000;
+const UPLOAD_TIMEOUT_MS = 60_000;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const SUBJECT_NAME_CONFLICT_MESSAGE = "A subject with this name already exists.";
+
+export type UploadAttemptStatus =
+  | "PENDING"
+  | "UPLOADING"
+  | "AWAITING_RETRY"
+  | "CLEANUP_PENDING"
+  | "UPLOADED";
+
+export type DuplicateAction = "keep_existing" | "replace_existing";
+
+export interface InitialUploadResult {
+  subjectId: string;
+  documentId: string | null;
+  uploadStatus: UploadAttemptStatus;
+  subjectStatus: string;
+  chatAvailable: boolean;
+  retryable: boolean;
+  errorCode: string | null;
+}
+
+export interface InitialUploadDuplicateBody {
+  code: "DUPLICATE_PDF";
+  scope: string;
+  existingDocumentId: string;
+  existingSubjectId: string;
+  existingFilename: string;
+  allowedActions: DuplicateAction[];
+}
+
+export class InitialUploadDuplicateError extends ApiError {
+  readonly scope: string;
+  readonly existingDocumentId: string;
+  readonly existingSubjectId: string;
+  readonly existingFilename: string;
+  readonly allowedActions: DuplicateAction[];
+
+  constructor(body: InitialUploadDuplicateBody) {
+    super("Duplicate PDF", 409, "DUPLICATE_PDF");
+    this.name = "InitialUploadDuplicateError";
+    this.scope = body.scope;
+    this.existingDocumentId = body.existingDocumentId;
+    this.existingSubjectId = body.existingSubjectId;
+    this.existingFilename = body.existingFilename;
+    this.allowedActions = body.allowedActions;
+  }
+}
+
+export class SubjectNameConflictError extends ApiError {
+  constructor() {
+    super(SUBJECT_NAME_CONFLICT_MESSAGE, 409);
+    this.name = "SubjectNameConflictError";
+  }
+}
 
 export type DocumentProcessingStatus = "QUEUED" | "PROCESSING" | "READY" | "FAILED";
 
@@ -113,6 +169,61 @@ function isBackendDocumentStatus(value: unknown): value is BackendDocumentStatus
     (value.failure === null || isBackendDocumentFailure(value.failure));
 }
 
+function isUploadAttemptStatus(value: unknown): value is UploadAttemptStatus {
+  return value === "PENDING" ||
+    value === "UPLOADING" ||
+    value === "AWAITING_RETRY" ||
+    value === "CLEANUP_PENDING" ||
+    value === "UPLOADED";
+}
+
+function isDuplicateAction(value: unknown): value is DuplicateAction {
+  return value === "keep_existing" || value === "replace_existing";
+}
+
+function isInitialUploadDuplicateBody(value: unknown): value is InitialUploadDuplicateBody {
+  return isRecord(value) &&
+    value.code === "DUPLICATE_PDF" &&
+    typeof value.scope === "string" &&
+    typeof value.existingDocumentId === "string" &&
+    typeof value.existingSubjectId === "string" &&
+    typeof value.existingFilename === "string" &&
+    Array.isArray(value.allowedActions) &&
+    value.allowedActions.every(isDuplicateAction);
+}
+
+function isInitialUploadResult(value: unknown): value is InitialUploadResult {
+  return isRecord(value) &&
+    typeof value.subjectId === "string" &&
+    (value.documentId === null || typeof value.documentId === "string") &&
+    isUploadAttemptStatus(value.uploadStatus) &&
+    typeof value.subjectStatus === "string" &&
+    typeof value.chatAvailable === "boolean" &&
+    typeof value.retryable === "boolean" &&
+    (value.errorCode === null || typeof value.errorCode === "string");
+}
+
+function isIdempotencyKey(value: string): boolean {
+  return value.length >= 8 && value.length <= 128 && IDEMPOTENCY_KEY_PATTERN.test(value);
+}
+
+function errorDetailsFromBody(status: number, body: unknown): { message: string; code?: string } {
+  let message: string | undefined;
+  if (isRecord(body)) {
+    if (Array.isArray(body.message)) message = body.message.join(" ");
+    else if (typeof body.message === "string" && body.message) message = body.message;
+  }
+  const code = isRecord(body) && typeof body.code === "string"
+    ? body.code
+    : isRecord(body) && isRecord(body.message) && typeof body.message.code === "string"
+      ? body.message.code
+      : undefined;
+  return {
+    message: message ?? `Request failed with status ${status}`,
+    ...(code !== undefined ? { code } : {}),
+  };
+}
+
 async function requestJson<T>(
   path: string,
   isShape: (value: unknown) => value is T,
@@ -169,4 +280,88 @@ export async function getDocumentStatus(documentId: string): Promise<BackendDocu
     isBackendDocumentStatus,
     "The API returned an invalid document status response. Please try again.",
   );
+}
+
+export async function createInitialSubject(input: {
+  name: string;
+  idempotencyKey: string;
+  file: File;
+  duplicateAction?: DuplicateAction;
+}): Promise<InitialUploadResult> {
+  const name = input.name.trim();
+  if (!name) throw new ApiError("Subject name is required.");
+  if (!isIdempotencyKey(input.idempotencyKey)) {
+    throw new ApiError(
+      "Idempotency key must be 8-128 characters and use only letters, numbers, '.', '_', ':', or '-'.",
+    );
+  }
+  if (!input.file.name.trim()) throw new ApiError("The selected file must have a filename.");
+
+  const form = new FormData();
+  form.append("name", name);
+  form.append("idempotencyKey", input.idempotencyKey);
+  if (input.duplicateAction !== undefined) form.append("duplicateAction", input.duplicateAction);
+  form.append("file", input.file, input.file.name);
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, UPLOAD_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/subjects/initial-upload`, {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      let body: unknown;
+      try {
+        body = await res.json();
+      } catch {
+        throw new ApiError(`Request failed with status ${res.status}`, res.status);
+      }
+
+      if (res.status === 409 && isInitialUploadDuplicateBody(body)) {
+        throw new InitialUploadDuplicateError(body);
+      }
+      const { message, code } = errorDetailsFromBody(res.status, body);
+      if (res.status === 409 && message === SUBJECT_NAME_CONFLICT_MESSAGE) {
+        throw new SubjectNameConflictError();
+      }
+      throw new ApiError(message, res.status, code);
+    }
+
+    const body: unknown = await res.json();
+    if (!isInitialUploadResult(body)) {
+      throw new ApiError("The API returned an invalid initial upload response. Please try again.");
+    }
+    return body;
+  } catch (err) {
+    if (timedOut) throw new ApiError("The upload timed out after 60 seconds. Please try again.");
+    if (err instanceof ApiError) throw err;
+    if (err instanceof SyntaxError) throw new ApiError("The API returned an invalid JSON response.");
+    throw new ApiError(
+      `Could not reach the API at ${API_BASE_URL}. Check the server and allowed frontend origin, then try again.`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function getInitialUploadStatus(idempotencyKey: string): Promise<InitialUploadResult> {
+  return requestJson(
+    `/subjects/initial-upload/${encodeURIComponent(idempotencyKey)}`,
+    isInitialUploadResult,
+    "The API returned an invalid upload status response. Please try again.",
+  );
+}
+
+// PENDING, UPLOADING, AWAITING_RETRY, and CLEANUP_PENDING are non-terminal:
+// recovery may still move them to UPLOADED.
+export function isInitialUploadTerminal(result: InitialUploadResult): boolean {
+  return result.uploadStatus === "UPLOADED";
 }
