@@ -46,4 +46,13 @@ export interface Subject {
   /** Browser-local state only until a backend processing API is connected. */
   processingStatus?: "unavailable" | "processing" | "failed" | "ready";
   processingError?: string;
+  backendSubjectId?: string;
+  documentId?: string | null;
+  idempotencyKey?: string;
+  uploadName?: string;
+  uploadStatus?: "PENDING" | "UPLOADING" | "AWAITING_RETRY" | "CLEANUP_PENDING" | "UPLOADED";
+  syncError?: {
+    kind: "name_conflict" | "duplicate_pdf" | "key_conflict" | "network" | "rejected";
+    message: string;
+  };
 }

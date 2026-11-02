@@ -8,6 +8,7 @@ import { ChatConversation } from "@/components/chat/chat-conversation";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import type { Subject } from "@/lib/types";
 import { processingPresentation } from "@/lib/processing-state";
+import { useSubjectsStore } from "@/lib/stores/subjects-store";
 
 interface SubjectDetailProps {
   subject: Subject;
@@ -23,6 +24,7 @@ export function SubjectDetail({
   onBack,
 }: SubjectDetailProps) {
   const isCollapsed = useSidebarStore((state) => state.isCollapsed);
+  const syncSubject = useSubjectsStore((state) => state.syncSubject);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -42,6 +44,7 @@ export function SubjectDetail({
   const commitRename = () => {
     const next = renameValue.trim();
     if (next && next !== subject.name) {
+      // Rename is local-only: uploadName, idempotencyKey, file and filename stay frozen.
       onUpdateSubject(subject.id, { name: next });
     }
     setIsRenaming(false);
@@ -58,6 +61,7 @@ export function SubjectDetail({
   };
 
   const isChat = Boolean(subject.file);
+  const isUploadLocked = Boolean(subject.idempotencyKey);
   const processing = processingPresentation(subject);
 
   const breadcrumb = (
@@ -151,6 +155,9 @@ export function SubjectDetail({
                 <h2>{processing.title}</h2>
                 <p>{processing.detail}</p>
                 <p>Keep the original PDF. Browser storage is local to this browser and can be cleared.</p>
+                {processing.retrySync && subject.idempotencyKey && (
+                  <button type="button" onClick={() => void syncSubject(subject.id)}>Retry sync</button>
+                )}
                 {subject.processingStatus === "failed" && <button type="button" disabled title="Requires the backend PDF processing endpoint">Retry processing</button>}
               </section>
             }
@@ -186,8 +193,10 @@ export function SubjectDetail({
             <h2 className="subject-detail__section-title">Context</h2>
             <PdfDropzone
               file={subject.file}
+              disabled={isUploadLocked}
               onFileSelect={(file) => onUpdateSubject(subject.id, { file, processingStatus: "unavailable", processingError: undefined })}
             />
+            {isUploadLocked && <p>The PDF cannot be changed after upload starts.</p>}
           </div>
         </>
       )}

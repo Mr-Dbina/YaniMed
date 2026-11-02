@@ -66,7 +66,10 @@ export function Sidebar({
 
   const commitRename = (id: string) => {
     const next = renameValue.trim();
-    if (next) onUpdateSubject(id, { name: next });
+    if (next) {
+      // Rename is local-only: uploadName, idempotencyKey, file and filename stay frozen.
+      onUpdateSubject(id, { name: next });
+    }
     setRenamingId(null);
   };
 

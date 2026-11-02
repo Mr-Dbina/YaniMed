@@ -113,7 +113,7 @@ export function CreateSubjectModal({
           <div className="subject-modal__group">
             <span className="subject-modal__label">Attach PDF</span>
             <p className="subject-modal__helper">
-              Save a PDF with this subject in this browser. Server processing is not available yet.
+              Save a PDF with this subject. It uploads to the server after it is saved in this browser.
             </p>
             <PdfDropzone file={file} onFileSelect={setFile} disabled={saving} />
           </div>
@@ -135,7 +135,7 @@ export function CreateSubjectModal({
             className="subject-modal__btn subject-modal__btn--primary"
             disabled={!canCreate}
           >
-            {saving ? "Saving locally…" : "Create subject"}
+            {saving ? "Creating..." : "Create subject"}
           </button>
         </div>
       </form>
