@@ -14,10 +14,11 @@ interface PdfDropzoneProps {
   onFileSelect: (file: File) => void;
   title?: string;
   subtitle?: string;
+  selectedSubtitle?: string;
   disabled?: boolean;
 }
 
-export function PdfDropzone({ file, onFileSelect, title, subtitle, disabled = false }: PdfDropzoneProps) {
+export function PdfDropzone({ file, onFileSelect, title, subtitle, selectedSubtitle, disabled = false }: PdfDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +86,7 @@ export function PdfDropzone({ file, onFileSelect, title, subtitle, disabled = fa
           {file ? file.name : title || "Drag and drop your PDF here"}
         </span>
         <span className="pdf-dropzone__secondary">
-          {file ? "Selected locally, not used for AI answers yet." : subtitle || "or click to browse"}
+          {file ? selectedSubtitle ?? "Selected locally, not used for AI answers yet." : subtitle || "or click to browse"}
         </span>
       </button>
 

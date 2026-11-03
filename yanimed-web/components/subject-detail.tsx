@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { PdfDropzone } from "@/components/pdf-dropzone";
+import { AddPdfModal } from "@/components/add-pdf-modal";
 import { DeleteSubjectModal } from "@/components/delete-subject-modal";
 import { ChatConversation } from "@/components/chat/chat-conversation";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
@@ -26,6 +27,7 @@ export function SubjectDetail({
   const isCollapsed = useSidebarStore((state) => state.isCollapsed);
   const syncSubject = useSubjectsStore((state) => state.syncSubject);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [isAddPdfOpen, setIsAddPdfOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(subject.name);
@@ -55,6 +57,11 @@ export function SubjectDetail({
     setIsDeleteOpen(true);
   };
 
+  const handleAddPdf = () => {
+    setIsMenuOpen(false);
+    setIsAddPdfOpen(true);
+  };
+
   const confirmDelete = () => {
     setIsDeleteOpen(false);
     onDeleteSubject(subject.id);
@@ -62,6 +69,7 @@ export function SubjectDetail({
 
   const isChat = Boolean(subject.file);
   const isUploadLocked = Boolean(subject.idempotencyKey);
+  const backendSubjectId = subject.backendSubjectId;
   const processing = processingPresentation(subject);
 
   const breadcrumb = (
@@ -101,6 +109,19 @@ export function SubjectDetail({
             onClick={() => setIsMenuOpen(false)}
           />
           <div className="subject-detail__menu-dropdown" role="menu">
+            {backendSubjectId && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="subject-detail__menu-item"
+                  onClick={handleAddPdf}
+                >
+                  <span className="subject-detail__menu-label">Add PDF</span>
+                </button>
+                <div className="subject-detail__menu-divider" />
+              </>
+            )}
             <button
               type="button"
               role="menuitem"
@@ -199,6 +220,14 @@ export function SubjectDetail({
             {isUploadLocked && <p>The PDF cannot be changed after upload starts.</p>}
           </div>
         </>
+      )}
+
+      {isAddPdfOpen && backendSubjectId && (
+        <AddPdfModal
+          subjectId={backendSubjectId}
+          subjectName={subject.name}
+          onClose={() => setIsAddPdfOpen(false)}
+        />
       )}
 
       <DeleteSubjectModal
