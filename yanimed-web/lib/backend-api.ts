@@ -122,6 +122,11 @@ export interface BackendDocumentStatus extends BackendDocument {
   failure: BackendDocumentFailure | null;
 }
 
+export interface RetryDocumentResult {
+  documentId: string;
+  status: DocumentProcessingStatus;
+}
+
 function isDocumentProcessingStatus(value: unknown): value is DocumentProcessingStatus {
   return value === "QUEUED" || value === "PROCESSING" || value === "READY" || value === "FAILED";
 }
@@ -186,6 +191,12 @@ function isBackendDocumentStatus(value: unknown): value is BackendDocumentStatus
     (value.failure === null || isBackendDocumentFailure(value.failure));
 }
 
+function isRetryDocumentResult(value: unknown): value is RetryDocumentResult {
+  return isRecord(value) &&
+    typeof value.documentId === "string" &&
+    isDocumentProcessingStatus(value.status);
+}
+
 function isUploadAttemptStatus(value: unknown): value is UploadAttemptStatus {
   return value === "PENDING" ||
     value === "UPLOADING" ||
@@ -245,6 +256,7 @@ async function requestJson<T>(
   path: string,
   isShape: (value: unknown) => value is T,
   invalidMessage: string,
+  init?: RequestInit,
 ): Promise<T> {
   const controller = new AbortController();
   let timedOut = false;
@@ -254,7 +266,7 @@ async function requestJson<T>(
   }, REQUEST_TIMEOUT_MS);
 
   try {
-    const res = await fetch(`${API_BASE_URL}${path}`, { signal: controller.signal });
+    const res = await fetch(`${API_BASE_URL}${path}`, { ...init, signal: controller.signal });
     if (!res.ok) {
       const { message, code } = await errorDetails(res);
       throw new ApiError(message, res.status, code);
@@ -296,6 +308,15 @@ export async function getDocumentStatus(documentId: string): Promise<BackendDocu
     `/documents/${encodeURIComponent(documentId)}/status`,
     isBackendDocumentStatus,
     "The API returned an invalid document status response. Please try again.",
+  );
+}
+
+export async function retryDocument(documentId: string): Promise<RetryDocumentResult> {
+  return requestJson(
+    `/documents/${encodeURIComponent(documentId)}/retry`,
+    isRetryDocumentResult,
+    "The API returned an invalid retry response. Please try again.",
+    { method: "POST" },
   );
 }
 

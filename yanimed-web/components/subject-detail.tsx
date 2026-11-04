@@ -6,6 +6,7 @@ import { PdfDropzone } from "@/components/pdf-dropzone";
 import { AddPdfModal } from "@/components/add-pdf-modal";
 import { DeleteSubjectModal } from "@/components/delete-subject-modal";
 import { ChatConversation } from "@/components/chat/chat-conversation";
+import { SubjectDocuments } from "@/components/subject-documents";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import type { Subject } from "@/lib/types";
 import { processingPresentation } from "@/lib/processing-state";
@@ -31,6 +32,7 @@ export function SubjectDetail({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(subject.name);
+  const [documentsRefreshToken, setDocumentsRefreshToken] = useState(0);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -179,7 +181,12 @@ export function SubjectDetail({
                 {processing.retrySync && subject.idempotencyKey && (
                   <button type="button" onClick={() => void syncSubject(subject.id)}>Retry sync</button>
                 )}
-                {subject.processingStatus === "failed" && <button type="button" disabled title="Requires the backend PDF processing endpoint">Retry processing</button>}
+                {backendSubjectId && subject.documentId && (
+                  <SubjectDocuments
+                    subjectId={backendSubjectId}
+                    refreshToken={documentsRefreshToken}
+                  />
+                )}
               </section>
             }
             onAsked={(prompt) => onUpdateSubject(subject.id, { lastMessage: prompt })}
@@ -227,6 +234,7 @@ export function SubjectDetail({
           subjectId={backendSubjectId}
           subjectName={subject.name}
           onClose={() => setIsAddPdfOpen(false)}
+          onUploaded={() => setDocumentsRefreshToken((token) => token + 1)}
         />
       )}
 

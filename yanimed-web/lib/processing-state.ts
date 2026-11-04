@@ -31,13 +31,18 @@ function uploadPresentation(subject: Subject): ProcessingPresentation {
     case "CLEANUP_PENDING":
       return { title: "Finishing up on the server", detail: "No action needed. The server will finish cleaning up this upload." };
     case "UPLOADED":
-      return { title: "Uploaded - waiting to be processed", detail: "The PDF is on the server. Processing status is not connected yet." };
+      return {
+        title: "Uploaded - waiting to be processed",
+        detail: subject.documentId
+          ? "The PDF is on the server. See the documents below for live processing status."
+          : "The PDF is on the server. Live processing status is not available yet.",
+      };
     default:
       return { title: "Uploading to server...", detail: "Your subject is saved in this browser." };
   }
 }
 
-/** No status is authoritative until a real backend document/status API exists. */
+/** Local saved status is not authoritative; backend documents use the live status view. */
 export function processingPresentation(subject: Subject): ProcessingPresentation {
   if (subject.idempotencyKey) return uploadPresentation(subject);
 

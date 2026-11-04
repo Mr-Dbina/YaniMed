@@ -13,11 +13,12 @@ interface AddPdfModalProps {
   subjectId: string;
   subjectName: string;
   onClose: () => void;
+  onUploaded?: () => void;
 }
 
 type SuccessState = "created" | "existing";
 
-export function AddPdfModal({ subjectId, subjectName, onClose }: AddPdfModalProps) {
+export function AddPdfModal({ subjectId, subjectName, onClose, onUploaded }: AddPdfModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +70,7 @@ export function AddPdfModal({ subjectId, subjectName, onClose }: AddPdfModalProp
       });
       setDuplicate(null);
       setSuccess(result.created ? "created" : "existing");
+      if (result.created) onUploaded?.();
     } catch (err) {
       if (err instanceof InitialUploadDuplicateError) {
         setDuplicate(err);
