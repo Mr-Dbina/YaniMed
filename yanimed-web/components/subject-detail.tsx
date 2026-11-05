@@ -181,16 +181,17 @@ export function SubjectDetail({
                 {processing.retrySync && subject.idempotencyKey && (
                   <button type="button" onClick={() => void syncSubject(subject.id)}>Retry sync</button>
                 )}
-                {backendSubjectId && subject.documentId && (
-                  <SubjectDocuments
-                    subjectId={backendSubjectId}
-                    refreshToken={documentsRefreshToken}
-                  />
-                )}
               </section>
             }
             onAsked={(prompt) => onUpdateSubject(subject.id, { lastMessage: prompt })}
           />
+
+          {backendSubjectId && (
+            <SubjectDocuments
+              subjectId={backendSubjectId}
+              refreshToken={documentsRefreshToken}
+            />
+          )}
         </>
       ) : (
         <>

@@ -1,4 +1,4 @@
-import { API_BASE_URL, ApiError, errorDetails, isRecord } from "@/lib/api";
+import { API_BASE_URL, ApiError, isRecord } from "@/lib/api";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const UPLOAD_TIMEOUT_MS = 60_000;
@@ -30,7 +30,8 @@ export interface InitialUploadDuplicateBody {
   existingDocumentId: string;
   existingSubjectId: string;
   existingFilename: string;
-  allowedActions: DuplicateAction[];
+  allowedActions: string[];
+  message?: string;
 }
 
 export class InitialUploadDuplicateError extends ApiError {
@@ -38,10 +39,10 @@ export class InitialUploadDuplicateError extends ApiError {
   readonly existingDocumentId: string;
   readonly existingSubjectId: string;
   readonly existingFilename: string;
-  readonly allowedActions: DuplicateAction[];
+  readonly allowedActions: string[];
 
   constructor(body: InitialUploadDuplicateBody) {
-    super("Duplicate PDF", 409, "DUPLICATE_PDF");
+    super(body.message || "Duplicate PDF", 409, "DUPLICATE_PDF");
     this.name = "InitialUploadDuplicateError";
     this.scope = body.scope;
     this.existingDocumentId = body.existingDocumentId;
@@ -217,7 +218,8 @@ function isInitialUploadDuplicateBody(value: unknown): value is InitialUploadDup
     typeof value.existingSubjectId === "string" &&
     typeof value.existingFilename === "string" &&
     Array.isArray(value.allowedActions) &&
-    value.allowedActions.every(isDuplicateAction);
+    value.allowedActions.every((action) => typeof action === "string") &&
+    (value.message === undefined || typeof value.message === "string");
 }
 
 function isInitialUploadResult(value: unknown): value is InitialUploadResult {
@@ -246,8 +248,15 @@ function errorDetailsFromBody(status: number, body: unknown): { message: string;
     : isRecord(body) && isRecord(body.message) && typeof body.message.code === "string"
       ? body.message.code
       : undefined;
+  const reason = isRecord(body) && typeof body.reason === "string" && body.reason
+    ? body.reason
+    : undefined;
+  let finalMessage = message ?? `Request failed with status ${status}`;
+  if (code === "RETRY_NOT_ALLOWED") {
+    finalMessage = reason ? `Retry not allowed: ${reason}.` : "Retry not allowed. Please try again.";
+  }
   return {
-    message: message ?? `Request failed with status ${status}`,
+    message: finalMessage,
     ...(code !== undefined ? { code } : {}),
   };
 }
@@ -268,7 +277,13 @@ async function requestJson<T>(
   try {
     const res = await fetch(`${API_BASE_URL}${path}`, { ...init, signal: controller.signal });
     if (!res.ok) {
-      const { message, code } = await errorDetails(res);
+      let body: unknown;
+      try {
+        body = await res.json();
+      } catch {
+        throw new ApiError(`Request failed with status ${res.status}`, res.status);
+      }
+      const { message, code } = errorDetailsFromBody(res.status, body);
       throw new ApiError(message, res.status, code);
     }
 

@@ -111,7 +111,14 @@ function DocumentRow({ item }: { item: BackendDocument }) {
       const result = await retryDocument(item.documentId);
       didInitialFetch.current = false;
       setStatus(result.status);
-      setDetails(null);
+      setDetails({
+        ...item,
+        status: result.status,
+        readyForRetrieval: false,
+        retryAllowed: false,
+        retryUnavailableReason: "RETRY_IN_PROGRESS",
+        failure: null,
+      });
       setPollError(null);
     } catch (err) {
       setRetryError(err instanceof Error ? err.message : "Could not retry processing. Please try again.");
@@ -167,7 +174,7 @@ export function SubjectDocuments({ subjectId, refreshToken }: SubjectDocumentsPr
   }, [subjectId, refreshToken]);
 
   return (
-    <section aria-label="Documents">
+    <section className="subject-processing" aria-label="Documents">
       <h2>Documents</h2>
       {loading && documents.length === 0 && <p>Loading documents...</p>}
       {error && <p role="alert">{error}</p>}

@@ -77,6 +77,10 @@ export function AddPdfModal({ subjectId, subjectName, onClose, onUploaded }: Add
         if (!err.allowedActions.includes("keep_existing")) setError(err.message);
         return;
       }
+      if (duplicateAction === "keep_existing") {
+        setError(err instanceof Error ? err.message : "Could not add the PDF. Please try again.");
+        return;
+      }
       setDuplicate(null);
       setError(err instanceof Error ? err.message : "Could not add the PDF. Please try again.");
     } finally {
