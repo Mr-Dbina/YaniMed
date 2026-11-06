@@ -122,7 +122,7 @@ export class PdfExtractionService {
     const pages: ExtractedPdfPage[] = [];
     for (let i = 0; i < count; i++) {
       const pageText = (Array.isArray(text) ? text[i] : '') ?? '';
-      const normalized = String(pageText);
+      const normalized = stripNullCharacters(String(pageText));
       const trimmedLength = normalized.trim().length;
       const needsOcr = trimmedLength < minChars;
       pages.push({
@@ -360,7 +360,7 @@ export class PdfExtractionService {
           }, pageTimeoutMs);
         });
         try {
-          const ocrText = await Promise.race([ocrPromise, timeoutPromise]);
+          const ocrText = stripNullCharacters(await Promise.race([ocrPromise, timeoutPromise]));
           if (ocrText.length > 0) {
             page.text = page.text.trim() ? `${page.text.trim()}\n${ocrText}` : ocrText;
             page.ocrUsed = true;
@@ -628,4 +628,8 @@ export class PdfExtractionService {
 function toUint8Array(buffer: Buffer | Uint8Array | ArrayBuffer): Uint8Array {
   if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer);
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+}
+
+function stripNullCharacters(text: string): string {
+  return text.replace(/\u0000/g, '');
 }

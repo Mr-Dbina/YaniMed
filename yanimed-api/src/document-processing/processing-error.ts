@@ -60,7 +60,10 @@ function isPrismaInitializationError(error: unknown): boolean {
 }
 
 export function sanitizeProcessingMessage(message: string): string {
-  return message.split(/\r?\n/, 1)[0].slice(0, 500);
+  const firstNonEmptyLine = message
+    .split(/\r?\n/)
+    .find(line => line.trim().length > 0);
+  return (firstNonEmptyLine?.trim() ?? '').slice(0, 500);
 }
 
 export function isTransientNetworkError(error: unknown): boolean {

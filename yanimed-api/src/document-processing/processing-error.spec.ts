@@ -171,4 +171,11 @@ describe('classifyProcessingError', () => {
     expect(classifyProcessingError('oops').message).toBe('oops');
     expect(classifyProcessingError(null).message).toBe('null');
   });
+
+  it('skips empty leading lines and returns the first non-empty trimmed line', () => {
+    expect(
+      sanitizeProcessingMessage('\nInvalid `prisma.documentPage.upsert()` invocation:\n  details'),
+    ).toBe('Invalid `prisma.documentPage.upsert()` invocation:');
+    expect(sanitizeProcessingMessage('  \n\t\n  real message  \nnext')).toBe('real message');
+  });
 });
