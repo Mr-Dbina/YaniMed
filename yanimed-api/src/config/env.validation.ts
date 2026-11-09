@@ -67,6 +67,7 @@ export function validateEnv() {
   const pdfOcrMinTextCharsWithImage = parseOptionalInt(process.env.PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE, 50, 'PDF_OCR_MIN_TEXT_CHARS_WITH_IMAGE');
   const pdfOcrMinImagePixels = parseOptionalInt(process.env.PDF_OCR_MIN_IMAGE_PIXELS, 10000, 'PDF_OCR_MIN_IMAGE_PIXELS');
   const pdfOcrImageDetection = parseOptionalBoolean(process.env.PDF_OCR_IMAGE_DETECTION, true, 'PDF_OCR_IMAGE_DETECTION');
+  const mockTestEnabled = parseOptionalBoolean(process.env.MOCK_TEST_ENABLED, false, 'MOCK_TEST_ENABLED');
   const pdfOcrPageTimeoutMs = parseOptionalInt(process.env.PDF_OCR_PAGE_TIMEOUT_MS, 60000, 'PDF_OCR_PAGE_TIMEOUT_MS', 1);
   const pdfOcrDocBudgetMs = parseOptionalInt(process.env.PDF_OCR_DOC_BUDGET_MS, 600000, 'PDF_OCR_DOC_BUDGET_MS', 1);
   const pdfOcrMaxPages = parseOptionalInt(process.env.PDF_OCR_MAX_PAGES, 300, 'PDF_OCR_MAX_PAGES', 1);
@@ -103,6 +104,7 @@ export function validateEnv() {
     pdfOcrPageTimeoutMs,
     pdfOcrDocBudgetMs,
     pdfOcrMaxPages,
+    mockTestEnabled,
     processingLeaseMs,
     processingHeartbeatMs,
     processingJobMaxMs,

@@ -8,6 +8,7 @@ import { OmniRouteModule } from './omniroute/omniroute.module.js';
 import { validateEnv } from './config/env.validation.js';
 import { VoiceModule } from './voice/voice.module.js';
 import { ChatModule } from './chat/chat.module.js';
+import { MockTestModule } from './mock-test/mock-test.module.js';
 import { StorageModule } from './storage/storage.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
 import { PdfExtractionModule } from './pdf-extraction/pdf-extraction.module.js';
@@ -31,6 +32,7 @@ import { SubjectsModule } from './subjects/subjects.module.js';
     OmniRouteModule,
     VoiceModule,
     ChatModule,
+    MockTestModule,
     StorageModule,
     DocumentsModule,
     SubjectsModule,

@@ -51,6 +51,19 @@ describe('validateEnv R2 mappings', () => {
     const cfg = validateEnv();
     expect(cfg.r2BucketName).toBe('');
   });
+
+  it('passes validation when MOCK_TEST_ENABLED is missing and defaults it to false', () => {
+    const previous = process.env.MOCK_TEST_ENABLED;
+    delete process.env.MOCK_TEST_ENABLED;
+
+    try {
+      const cfg = validateEnv();
+      expect(cfg.mockTestEnabled).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.MOCK_TEST_ENABLED;
+      else process.env.MOCK_TEST_ENABLED = previous;
+    }
+  });
 });
 
 describe('validateEnv PDF OCR settings', () => {
