@@ -1,3 +1,14 @@
+import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import {
+  IsInt,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 import { MockTestError } from './exam.errors.js';
 import {
   QUESTIONS_PER_TEST,
@@ -172,6 +183,76 @@ export function toReviewDto(
     perTopic: snapshot?.perTopic ?? [],
     questions,
   };
+}
+
+/**
+ * Validated subject path contract. Routes still use ParseUUIDPipe, which
+ * rejects a malformed id before any service call.
+ */
+export class CreateAttemptParams {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  subjectId!: string;
+}
+
+/** Query-string session version arrives as text and is coerced to an integer. */
+export class SessionVersionQueryDto {
+  @ApiProperty({ minimum: 1 })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' && value.trim() !== '' ? Number(value) : value,
+  )
+  @IsInt()
+  @Min(1)
+  sessionVersion!: number;
+}
+
+export class AnswerBody {
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  sessionVersion!: number;
+
+  @ApiProperty({ minimum: 1, maximum: QUESTIONS_PER_TEST })
+  @IsInt()
+  @Min(1)
+  @Max(QUESTIONS_PER_TEST)
+  position!: number;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  choiceId!: string;
+
+  @ApiProperty({ minLength: 8, maxLength: 64 })
+  @IsString()
+  @MinLength(8)
+  @MaxLength(64)
+  idempotencyKey!: string;
+}
+
+export class SkipBody {
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  sessionVersion!: number;
+
+  @ApiProperty({ minimum: 1, maximum: QUESTIONS_PER_TEST })
+  @IsInt()
+  @Min(1)
+  @Max(QUESTIONS_PER_TEST)
+  position!: number;
+}
+
+export class SubmitBody {
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  sessionVersion!: number;
+
+  @ApiProperty({ minLength: 8, maxLength: 64 })
+  @IsString()
+  @MinLength(8)
+  @MaxLength(64)
+  idempotencyKey!: string;
 }
 
 export { QUESTIONS_PER_TEST };

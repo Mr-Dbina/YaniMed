@@ -76,6 +76,16 @@ export interface DiscardAttemptResponse {
   status: 'ABANDONED';
 }
 
+export interface SubjectOverviewResponse {
+  unfinishedAttempt: {
+    id: string;
+    status: AttemptStatus;
+    createdAt: Date;
+  } | null;
+  eligibleQuestionCount: number;
+  questionsPerTest: 25;
+}
+
 interface LockedAttempt {
   id: string;
   status: AttemptStatus;
@@ -148,6 +158,19 @@ function withStatus(
   status: QuestionStatus,
 ): AttemptQuestionView {
   return { ...row, status };
+}
+
+/**
+ * A question is unusable only when every citation is unavailable (its
+ * Document row is gone, so documentId is NULL). No citations means eligible.
+ */
+function isCitationEligible(question: {
+  citations: { documentId: string | null }[];
+}): boolean {
+  return (
+    question.citations.length === 0 ||
+    question.citations.some((citation) => citation.documentId !== null)
+  );
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -226,13 +249,7 @@ export class ExamService {
 
           // A citation whose Document row is gone has documentId = NULL.
           // A question is unusable only when every citation is unavailable.
-          const eligible = questions.filter(
-            (question) =>
-              question.citations.length === 0 ||
-              question.citations.some(
-                (citation) => citation.documentId !== null,
-              ),
-          );
+          const eligible = questions.filter(isCitationEligible);
 
           if (eligible.length < QUESTIONS_PER_TEST) {
             throw new MockTestError('INSUFFICIENT_CONTENT', {
@@ -289,6 +306,39 @@ export class ExamService {
 
       throw error;
     }
+  }
+
+  /**
+   * Read-only overview for the exam entry screen. At most one unfinished
+   * attempt exists per subject (DB partial unique rule). The eligible count
+   * uses the same citation rule as createAttempt.
+   */
+  async getSubjectOverview(
+    subjectId: string,
+  ): Promise<SubjectOverviewResponse> {
+    const subject = await this.prisma.subject.findUnique({
+      where: { id: subjectId },
+      select: { id: true },
+    });
+    if (!subject) throw new MockTestError('SUBJECT_NOT_FOUND');
+
+    const [unfinishedAttempt, questions] = await Promise.all([
+      this.prisma.mockAttempt.findFirst({
+        where: { subjectId, status: { in: UNFINISHED_STATUSES } },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, status: true, createdAt: true },
+      }),
+      this.prisma.mockQuestion.findMany({
+        where: { subjectId, status: 'ACTIVE' },
+        select: { citations: { select: { documentId: true } } },
+      }),
+    ]);
+
+    return {
+      unfinishedAttempt: unfinishedAttempt ?? null,
+      eligibleQuestionCount: questions.filter(isCitationEligible).length,
+      questionsPerTest: QUESTIONS_PER_TEST,
+    };
   }
 
   /**

@@ -10,7 +10,8 @@ export type MockTestErrorCode =
   | 'SKIP_NOT_ALLOWED'
   | 'ATTEMPT_NOT_FOUND'
   | 'QUESTION_NOT_FOUND'
-  | 'INVALID_CHOICE';
+  | 'INVALID_CHOICE'
+  | 'SUBJECT_NOT_FOUND';
 
 export interface MockTestErrorOptions {
   /** Present for ATTEMPT_EXISTS so a client can resume the existing attempt. */
