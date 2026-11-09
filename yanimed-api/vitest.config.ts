@@ -11,6 +11,6 @@ export default defineConfig({
     include: ['**/*.spec.ts'],
     // M3 database specs need .env.test and its guard, so they run only through
     // the dedicated vitest.config.m3.ts / npm run test:m3.
-    exclude: [...configDefaults.exclude, 'test/m3/**'],
+    exclude: [...configDefaults.exclude, 'test/m3/**', 'test/m4/**'],
   },
 });
