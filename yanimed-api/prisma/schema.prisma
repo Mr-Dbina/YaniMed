@@ -61,6 +61,61 @@ enum AnswerMode {
   NOT_FOUND      // no supporting evidence in the uploaded PDFs
 }
 
+enum GenerationJobState {
+  QUEUED
+  RUNNING
+  STALLED
+  CANCELLING
+  CANCELLED
+  COMPLETED
+  FAILED
+}
+
+enum MockQuestionStatus {
+  ACTIVE
+  QUARANTINED
+  RETIRED
+  SOURCE_UNAVAILABLE
+}
+
+enum MockAttemptStatus {
+  GENERATING
+  READY
+  IN_PROGRESS
+  AWAITING_SUBMISSION
+  COMPLETED
+  FAILED
+  CANCELLED
+  ABANDONED
+}
+
+enum AttemptQuestionStatus {
+  UNSEEN
+  SKIPPED
+  ANSWERED
+}
+
+enum QuestionReportReason {
+  ANSWER_KEY
+  AMBIGUITY
+  CITATION
+  EXPLANATION
+  OTHER
+}
+
+enum QuestionReportStatus {
+  OPEN
+  ACCEPTED
+  DISMISSED
+}
+
+enum AiCallPurpose {
+  PLAN
+  DRAFT
+  VERIFY
+  EMBED
+}
+
 model Subject {
   id           String        @id @default(uuid())
   name         String
@@ -74,6 +129,11 @@ model Subject {
   chats        Chat[]
   initialUpload UploadAttempt?
   deletionJobs DeletionJob[]
+
+  subjectTopics  SubjectTopic[]
+  generationJobs GenerationJob[]
+  mockQuestions  MockQuestion[]
+  mockAttempts   MockAttempt[]
 
   @@unique([name])
 }
@@ -115,6 +175,9 @@ model Document {
   citations      MessageCitation[]
   initialUpload  UploadAttempt?
   processingJobs ProcessingJob[]
+
+  generationJobDocuments GenerationJobDocument[]
+  questionCitations      QuestionCitation[]
 
   @@unique([subjectId, pdfObjectId])
   @@index([subjectId])
@@ -300,4 +363,215 @@ model MessageCitation {
 
   @@index([messageId])
   @@index([documentId, page])
+}
+
+// ---------------------------------------------------------------------------
+// Mock Test v2.1 (single user, scoped by subjectId; no userId)
+// ---------------------------------------------------------------------------
+
+model SubjectTopic {
+  id        String   @id @default(uuid())
+  subjectId String
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  key       String
+  name      String
+  createdAt DateTime @default(now())
+
+  questions MockQuestion[]
+
+  @@unique([subjectId, key])
+  @@index([subjectId])
+}
+
+model GenerationJob {
+  id             String             @id @default(uuid())
+  subjectId      String
+  subject        Subject            @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  state          GenerationJobState
+  requestedCount Int                @default(25)
+  acceptedCount  Int                @default(0)
+  planJson       Json?
+  heartbeatAt    DateTime?
+  recoveryCount  Int                @default(0)
+  aiCallCount    Int                @default(0)
+  failureReason  String?
+  idempotencyKey String             @unique
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime           @default(now())
+
+  documents GenerationJobDocument[]
+  questions MockQuestion[]
+  attempts  MockAttempt[]
+  aiCalls   AiCallLog[]
+
+  @@index([subjectId])
+}
+
+// Snapshot of the READY documents a generation job was planned from.
+model GenerationJobDocument {
+  jobId      String
+  job        GenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  documentId String
+  // NO ACTION is checked at statement end, so a whole-Subject cascade can finish.
+  document   Document      @relation(fields: [documentId], references: [id], onDelete: NoAction)
+  createdAt  DateTime      @default(now())
+
+  @@id([jobId, documentId])
+  @@index([documentId])
+}
+
+model MockQuestion {
+  id                   String             @id @default(uuid())
+  subjectId            String
+  subject              Subject            @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topicId              String
+  topic                SubjectTopic       @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  jobId                String?
+  job                  GenerationJob?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  status               MockQuestionStatus @default(ACTIVE)
+  stem                 String
+  leadIn               String?
+  educationalObjective String
+  draftModel           String
+  verifierModel        String?
+  promptVersion        String
+  validatorVersion     String
+  verifierResult       Json?
+  createdAt            DateTime           @default(now())
+
+  choices          MockChoice[]
+  citations        QuestionCitation[]
+  attemptQuestions AttemptQuestion[]
+  reports          QuestionReport[]
+
+  @@index([subjectId])
+  @@index([topicId])
+  @@index([jobId])
+  @@index([status])
+}
+
+model MockChoice {
+  id          String       @id @default(uuid())
+  questionId  String
+  question    MockQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  position    Int
+  text        String
+  isCorrect   Boolean
+  explanation String
+  createdAt   DateTime     @default(now())
+
+  attemptAnswers AttemptAnswer[]
+
+  @@unique([questionId, position])
+}
+
+model QuestionCitation {
+  id                    String       @id @default(uuid())
+  questionId            String
+  question              MockQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  documentId            String?
+  document              Document?    @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  documentTitleSnapshot String
+  pageNumber            Int
+  printedPage           String?
+  quote                 String
+  createdAt             DateTime     @default(now())
+
+  @@index([questionId])
+  @@index([documentId])
+}
+
+model MockAttempt {
+  id             String            @id @default(uuid())
+  subjectId      String
+  subject        Subject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  status         MockAttemptStatus
+  sessionVersion Int               @default(1)
+  cursorPosition Int               @default(1)
+  lastActivityAt DateTime          @default(now())
+  jobId          String?
+  job            GenerationJob?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  createdAt      DateTime          @default(now())
+
+  attemptQuestions AttemptQuestion[]
+  result           AttemptResult?
+  reports          QuestionReport[]
+
+  @@index([subjectId])
+  @@index([status])
+  @@index([jobId])
+}
+
+model AttemptQuestion {
+  id          String                @id @default(uuid())
+  attemptId   String
+  attempt     MockAttempt           @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId  String
+  question    MockQuestion          @relation(fields: [questionId], references: [id], onDelete: NoAction)
+  position    Int
+  choiceOrder Int[]
+  status      AttemptQuestionStatus @default(UNSEEN)
+  createdAt   DateTime              @default(now())
+
+  answer AttemptAnswer?
+
+  @@unique([attemptId, position])
+  @@unique([attemptId, questionId])
+  @@index([questionId])
+}
+
+model AttemptAnswer {
+  id                String          @id @default(uuid())
+  attemptQuestionId String          @unique
+  attemptQuestion   AttemptQuestion @relation(fields: [attemptQuestionId], references: [id], onDelete: Cascade)
+  choiceId          String
+  choice            MockChoice      @relation(fields: [choiceId], references: [id], onDelete: NoAction)
+  revision          Int             @default(1)
+  idempotencyKey    String
+  createdAt         DateTime        @default(now())
+
+  @@index([choiceId])
+}
+
+model AttemptResult {
+  id        String      @id @default(uuid())
+  attemptId String      @unique
+  attempt   MockAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  score     Int
+  total     Int
+  snapshot  Json
+  createdAt DateTime    @default(now())
+}
+
+model QuestionReport {
+  id             String               @id @default(uuid())
+  attemptId      String
+  attempt        MockAttempt          @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId     String
+  question       MockQuestion         @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  reason         QuestionReportReason
+  details        String?
+  status         QuestionReportStatus @default(OPEN)
+  resolutionNote String?
+  createdAt      DateTime             @default(now())
+
+  @@unique([attemptId, questionId])
+  @@index([questionId])
+}
+
+model AiCallLog {
+  id               String         @id @default(uuid())
+  jobId            String?
+  job              GenerationJob? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  purpose          AiCallPurpose
+  model            String
+  promptTokens     Int?
+  completionTokens Int?
+  latencyMs        Int?
+  outcome          String
+  errorCode        String?
+  createdAt        DateTime       @default(now())
+
+  @@index([jobId])
 }
