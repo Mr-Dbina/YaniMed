@@ -11,5 +11,9 @@ export default defineConfig({
     include: ['test/m3/**/*.spec.ts'],
     setupFiles: ['./src/config/load-test-env.ts'],
     passWithNoTests: true,
+    // One shared test database: run files one at a time.
+    fileParallelism: false,
+    testTimeout: 30000,
+    hookTimeout: 60000,
   },
 });
