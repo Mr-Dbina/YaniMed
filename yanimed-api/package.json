@@ -22,6 +22,7 @@
     "db:status": "prisma migrate status",
     "db:studio": "prisma studio",
     "db:seed-ledger": "tsx scripts/seed-migration-ledger.ts",
+    "seed:fake-mocktest": "tsx scripts/seed-fake-mocktest.ts",
     "db:test:status": "tsx scripts/with-test-env.ts prisma migrate status",
     "db:test:run": "tsx scripts/with-test-env.ts",
     "test": "vitest run",
