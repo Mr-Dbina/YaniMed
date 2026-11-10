@@ -6,7 +6,9 @@ import {
   createInitialSubject,
   InitialUploadDuplicateError,
   isInitialUploadTerminal,
+  listSubjects,
   SubjectNameConflictError,
+  type BackendSubject,
   type DuplicateAction,
   type InitialUploadResult,
 } from "@/lib/backend-api";
@@ -48,6 +50,37 @@ function shouldResumeSync(subject: Subject): boolean {
   return kind !== "name_conflict" && kind !== "key_conflict" && kind !== "duplicate_pdf";
 }
 
+/**
+ * Local rows stay as they are. A backend row without a local row behind it is
+ * added in memory only, linked through backendSubjectId.
+ */
+function mergeSubjects(localSubjects: Subject[], backendSubjects: BackendSubject[]): Subject[] {
+  // A persisted upload status is not proof of a live upload. Rows without a
+  // backend id stay only while this page session is syncing them.
+  const localRows = localSubjects.filter(
+    subject => subject.backendSubjectId || inFlightSyncs.has(subject.id),
+  );
+  const merged = [...localRows];
+  const knownBackendIds = new Set(
+    localRows
+      .map(subject => subject.backendSubjectId)
+      .filter((id): id is string => Boolean(id)),
+  );
+
+  for (const backendSubject of backendSubjects) {
+    if (knownBackendIds.has(backendSubject.id)) continue;
+    knownBackendIds.add(backendSubject.id);
+    merged.push({
+      id: createId(),
+      name: backendSubject.name,
+      file: null,
+      instructions: "",
+      backendSubjectId: backendSubject.id,
+    });
+  }
+  return merged;
+}
+
 function toSyncError(error: unknown): NonNullable<Subject["syncError"]> {
   if (error instanceof InitialUploadDuplicateError) {
     const actions = error.allowedActions.length > 0
@@ -82,12 +115,28 @@ export const useSubjectsStore = create<SubjectsState>((set, get) => ({
   hydrate: () => {
     if (get().hydrated) return Promise.resolve();
     if (hydration) return hydration;
-    hydration = loadLocalSubjects().then(({ subjects, activeSubjectId }) => {
-      set({ subjects, activeSubjectId: subjects.some(s => s.id === activeSubjectId) ? activeSubjectId : subjects[0]?.id ?? null, hydrated: true, storageError: null });
-      for (const subject of subjects) {
+    hydration = Promise.allSettled([loadLocalSubjects(), listSubjects()]).then(([localResult, serverResult]) => {
+      // A browser-storage failure keeps the old retry path: no subjects, not hydrated.
+      if (localResult.status === "rejected") {
+        set({ storageError: localResult.reason instanceof Error ? localResult.reason.message : "Browser storage could not be opened." });
+        return;
+      }
+      const local = localResult.value;
+      const subjects = serverResult.status === "fulfilled"
+        ? mergeSubjects(local.subjects, serverResult.value)
+        : local.subjects;
+      set({
+        subjects,
+        activeSubjectId: subjects.some(s => s.id === local.activeSubjectId) ? local.activeSubjectId : subjects[0]?.id ?? null,
+        hydrated: true,
+        storageError: serverResult.status === "rejected"
+          ? "Could not load subjects from the server. Showing saved subjects."
+          : null,
+      });
+      for (const subject of local.subjects) {
         if (shouldResumeSync(subject)) void get().syncSubject(subject.id);
       }
-    }).catch((error: Error) => { set({ storageError: error.message }); }).finally(() => { hydration = null; });
+    }).finally(() => { hydration = null; });
     return hydration;
   },
   addSubject: ({ name, file }) => enqueue(async () => {
