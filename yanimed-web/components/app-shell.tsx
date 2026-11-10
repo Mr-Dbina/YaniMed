@@ -6,7 +6,7 @@ import { PanelLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { EmptyState } from "@/components/empty-state";
-import { SubjectDetail } from "@/components/subject-detail";
+import { SubjectDetail, isChatSubject } from "@/components/subject-detail";
 import { CreateSubjectModal } from "@/components/create-subject-modal";
 import { useSubjectsStore } from "@/lib/stores/subjects-store";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
@@ -28,7 +28,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
   useEffect(() => {
     void hydrate();
     if (window.matchMedia("(max-width: 767px)").matches) {
-      useSidebarStore.setState({ isCollapsed: true, isPreview: false });
+      useSidebarStore.setState({ isCollapsed: true });
     }
   }, [hydrate]);
 
@@ -41,12 +41,12 @@ export function AppShell({ children }: { children?: ReactNode }) {
     setActiveSubject(id);
     router.push("/subjects");
     if (window.matchMedia("(max-width: 767px)").matches) {
-      useSidebarStore.setState({ isCollapsed: true, isPreview: false });
+      useSidebarStore.setState({ isCollapsed: true });
     }
   };
 
   return (
-    <div className={`app${!children && activeSubject?.file ? " app--chat" : ""}`}>
+    <div className={`app${!children && activeSubject && isChatSubject(activeSubject) ? " app--chat" : ""}`}>
       {collapsed && <button type="button" className="sidebar-open" aria-label="Open sidebar" onClick={toggleSidebar}><PanelLeft size={20} /></button>}
       <Sidebar
         subjects={subjects}

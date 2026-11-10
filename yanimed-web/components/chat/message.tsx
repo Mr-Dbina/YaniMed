@@ -256,7 +256,7 @@ export function Message({
             {message.citations?.map((citation) => (
               <div key={JSON.stringify([citation.sourceId, citation.page, citation.chapter, citation.snippet])} className="mt-2 text-foreground">
                 <p className="font-bold">
-                  {citation.sourceId}: {citation.chapter ? `${citation.chapter}, ` : ""}p.{citation.page}
+                  {citation.sourceId}: {citation.chapter ? `${citation.chapter}, ` : ""}Page {citation.page}
                 </p>
                 {citation.snippet && <blockquote className="mt-1 text-sm text-muted-foreground">{citation.snippet}</blockquote>}
               </div>

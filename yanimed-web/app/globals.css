@@ -231,6 +231,16 @@ html.dark .icon-mono {
   color: var(--sidebar-fg);
 }
 
+/* Button variant: same row as .sidebar__link, without native button chrome. */
+.sidebar__link--button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .sidebar__subjects {
   margin-top: 24px;
 }

@@ -1,16 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { PdfDropzone } from "@/components/pdf-dropzone";
 import { AddPdfModal } from "@/components/add-pdf-modal";
 import { DeleteSubjectModal } from "@/components/delete-subject-modal";
 import { ChatConversation } from "@/components/chat/chat-conversation";
 import { SubjectDocuments } from "@/components/subject-documents";
+import type { SubjectDocumentsSummary } from "@/components/subject-documents";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import type { Subject } from "@/lib/types";
 import { processingPresentation } from "@/lib/processing-state";
 import { useSubjectsStore } from "@/lib/stores/subjects-store";
+
+/** A subject uses the chat layout once it exists on the backend or has a local PDF. */
+export function isChatSubject(subject: Subject): boolean {
+  return Boolean(subject.backendSubjectId) || Boolean(subject.file);
+}
 
 interface SubjectDetailProps {
   subject: Subject;
@@ -33,6 +39,10 @@ export function SubjectDetail({
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(subject.name);
   const [documentsRefreshToken, setDocumentsRefreshToken] = useState(0);
+  const [documentsSummary, setDocumentsSummary] = useState<{
+    subjectId: string;
+    summary: SubjectDocumentsSummary;
+  } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -69,10 +79,25 @@ export function SubjectDetail({
     onDeleteSubject(subject.id);
   };
 
-  const isChat = Boolean(subject.file);
   const isUploadLocked = Boolean(subject.idempotencyKey);
   const backendSubjectId = subject.backendSubjectId;
   const processing = processingPresentation(subject);
+  const handleDocumentsSummary = useCallback((summary: SubjectDocumentsSummary) => {
+    setDocumentsSummary({ subjectId: backendSubjectId ?? "", summary });
+  }, [backendSubjectId]);
+  const summary = backendSubjectId && documentsSummary?.subjectId === backendSubjectId
+    ? documentsSummary.summary
+    : null;
+  const hasReadyDocument = Boolean(summary?.hasReady);
+  const showDropzone = Boolean(backendSubjectId) && summary !== null && !summary.loading &&
+    !summary.error && summary.documentCount === 0;
+  const isChat = isChatSubject(subject);
+  // "Loading documents..." stays in SubjectDocuments only; the composer just stays disabled.
+  const backendChatDisabledReason = hasReadyDocument
+    ? undefined
+    : summary && summary.documentCount === 0
+      ? "Upload a PDF to start chatting."
+      : "Chat available when the PDF is READY";
 
   const breadcrumb = (
     <nav className="subject-detail__breadcrumb">
@@ -168,10 +193,25 @@ export function SubjectDetail({
             {menu}
           </div>
 
+          {showDropzone && (
+            <div className="subject-detail__card">
+              <h2 className="subject-detail__section-title">Context</h2>
+              <PdfDropzone
+                file={subject.file}
+                disabled={isUploadLocked}
+                onFileSelect={(file) => onUpdateSubject(subject.id, { file, processingStatus: "unavailable", processingError: undefined })}
+              />
+              {isUploadLocked && <p>The PDF cannot be changed after upload starts.</p>}
+            </div>
+          )}
+
           <ChatConversation
-            key={subject.id}
-            disabledReason="Chat unavailable until this PDF is processed and its index is verified."
-            emptyState={
+            key={`chat-${subject.id}`}
+            subjectId={backendSubjectId}
+            disabledReason={backendSubjectId
+              ? backendChatDisabledReason
+              : "Chat unavailable until this PDF is processed and its index is verified."}
+            emptyState={backendSubjectId && hasReadyDocument ? undefined : (
               <section className="subject-processing" aria-label="PDF processing status">
                 <h1>{subject.name}</h1>
                 <p>{subject.file?.name}</p>
@@ -182,14 +222,16 @@ export function SubjectDetail({
                   <button type="button" onClick={() => void syncSubject(subject.id)}>Retry sync</button>
                 )}
               </section>
-            }
+            )}
             onAsked={(prompt) => onUpdateSubject(subject.id, { lastMessage: prompt })}
           />
 
           {backendSubjectId && (
             <SubjectDocuments
+              key={`documents-${backendSubjectId}`}
               subjectId={backendSubjectId}
               refreshToken={documentsRefreshToken}
+              onSummary={handleDocumentsSummary}
             />
           )}
         </>
@@ -227,6 +269,15 @@ export function SubjectDetail({
             />
             {isUploadLocked && <p>The PDF cannot be changed after upload starts.</p>}
           </div>
+
+          {backendSubjectId && (
+            <SubjectDocuments
+              key={`documents-${backendSubjectId}`}
+              subjectId={backendSubjectId}
+              refreshToken={documentsRefreshToken}
+              onSummary={handleDocumentsSummary}
+            />
+          )}
         </>
       )}
 

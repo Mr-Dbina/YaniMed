@@ -1,6 +1,7 @@
 import { API_BASE_URL, ApiError, isRecord } from "@/lib/api";
 
 const REQUEST_TIMEOUT_MS = 15_000;
+const CHAT_REQUEST_TIMEOUT_MS = 70_000;
 const UPLOAD_TIMEOUT_MS = 60_000;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const SUBJECT_NAME_CONFLICT_MESSAGE = "A subject with this name already exists.";
@@ -128,6 +129,30 @@ export interface RetryDocumentResult {
   status: DocumentProcessingStatus;
 }
 
+export interface SubjectAnswerCitation {
+  sourceId: string;
+  documentId: string;
+  chunkId: string;
+  page: number;
+  chapter: string | null;
+  snippet: string;
+}
+
+export interface SubjectAnswerResponse {
+  chatId: string;
+  answer: string;
+  citations: SubjectAnswerCitation[];
+  grounding: "grounded" | "insufficient_evidence";
+  metadata: {
+    gateway: "omniroute";
+    requestedModel: string;
+    servedModel: string | null;
+    provider: string | null;
+    durationMs: number;
+    retrievedChunks: number;
+  };
+}
+
 function isDocumentProcessingStatus(value: unknown): value is DocumentProcessingStatus {
   return value === "QUEUED" || value === "PROCESSING" || value === "READY" || value === "FAILED";
 }
@@ -198,6 +223,34 @@ function isRetryDocumentResult(value: unknown): value is RetryDocumentResult {
     isDocumentProcessingStatus(value.status);
 }
 
+function isSubjectAnswerCitation(value: unknown): value is SubjectAnswerCitation {
+  return isRecord(value) &&
+    typeof value.sourceId === "string" &&
+    typeof value.documentId === "string" &&
+    typeof value.chunkId === "string" &&
+    typeof value.page === "number" && Number.isInteger(value.page) && value.page > 0 &&
+    (value.chapter === null || typeof value.chapter === "string") &&
+    typeof value.snippet === "string";
+}
+
+function isSubjectAnswerResponse(value: unknown): value is SubjectAnswerResponse {
+  if (!isRecord(value) ||
+      typeof value.chatId !== "string" || !value.chatId.trim() ||
+      typeof value.answer !== "string" || !value.answer.trim() ||
+      !Array.isArray(value.citations) || !value.citations.every(isSubjectAnswerCitation) ||
+      (value.grounding !== "grounded" && value.grounding !== "insufficient_evidence") ||
+      !isRecord(value.metadata)) return false;
+  const metadata = value.metadata;
+  return metadata.gateway === "omniroute" &&
+    typeof metadata.requestedModel === "string" && metadata.requestedModel.trim().length > 0 &&
+    (metadata.servedModel === null || typeof metadata.servedModel === "string") &&
+    (metadata.provider === null || typeof metadata.provider === "string") &&
+    typeof metadata.durationMs === "number" && Number.isFinite(metadata.durationMs) &&
+    metadata.durationMs >= 0 &&
+    typeof metadata.retrievedChunks === "number" && Number.isInteger(metadata.retrievedChunks) &&
+    metadata.retrievedChunks >= 0;
+}
+
 function isUploadAttemptStatus(value: unknown): value is UploadAttemptStatus {
   return value === "PENDING" ||
     value === "UPLOADING" ||
@@ -266,13 +319,18 @@ async function requestJson<T>(
   isShape: (value: unknown) => value is T,
   invalidMessage: string,
   init?: RequestInit,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   const controller = new AbortController();
+  const externalSignal = init?.signal;
+  const abort = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", abort, { once: true });
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, REQUEST_TIMEOUT_MS);
+  }, timeoutMs);
 
   try {
     const res = await fetch(`${API_BASE_URL}${path}`, { ...init, signal: controller.signal });
@@ -291,7 +349,10 @@ async function requestJson<T>(
     if (!isShape(body)) throw new ApiError(invalidMessage);
     return body;
   } catch (err) {
-    if (timedOut) throw new ApiError("The request timed out after 15 seconds. Please try again.");
+    if (externalSignal?.aborted) throw new DOMException("Request cancelled", "AbortError");
+    if (timedOut) {
+      throw new ApiError(`The request timed out after ${timeoutMs / 1000} seconds. Please try again.`);
+    }
     if (err instanceof ApiError) throw err;
     if (err instanceof SyntaxError) throw new ApiError("The API returned an invalid JSON response.");
     throw new ApiError(
@@ -299,6 +360,7 @@ async function requestJson<T>(
     );
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", abort);
   }
 }
 
@@ -323,6 +385,30 @@ export async function getDocumentStatus(documentId: string): Promise<BackendDocu
     `/documents/${encodeURIComponent(documentId)}/status`,
     isBackendDocumentStatus,
     "The API returned an invalid document status response. Please try again.",
+  );
+}
+
+export async function requestSubjectAnswer(
+  input: { subjectId: string; prompt: string; chatId?: string },
+  signal?: AbortSignal,
+): Promise<SubjectAnswerResponse> {
+  const body: { subjectId: string; prompt: string; chatId?: string } = {
+    subjectId: input.subjectId,
+    prompt: input.prompt.trim(),
+  };
+  if (input.chatId) body.chatId = input.chatId;
+
+  return requestJson(
+    "/chat/subject-answer",
+    isSubjectAnswerResponse,
+    "The API returned an invalid chat response. Please try again.",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    },
+    CHAT_REQUEST_TIMEOUT_MS,
   );
 }
 

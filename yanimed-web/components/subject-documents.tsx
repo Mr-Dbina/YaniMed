@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getDocumentStatus,
   getSubjectDocuments,
@@ -19,16 +19,30 @@ const STATUS_LABELS: Record<DocumentProcessingStatus, string> = {
   FAILED: "Failed",
 };
 
+export interface SubjectDocumentsSummary {
+  loading: boolean;
+  error: boolean;
+  documentCount: number;
+  hasReady: boolean;
+}
+
 interface SubjectDocumentsProps {
   subjectId: string;
   refreshToken: number;
+  onSummary?: (summary: SubjectDocumentsSummary) => void;
 }
 
 function isTerminalStatus(status: DocumentProcessingStatus): boolean {
   return status === "READY" || status === "FAILED";
 }
 
-function DocumentRow({ item }: { item: BackendDocument }) {
+function DocumentRow({
+  item,
+  onStatus,
+}: {
+  item: BackendDocument;
+  onStatus: (documentId: string, status: DocumentProcessingStatus) => void;
+}) {
   const [status, setStatus] = useState<DocumentProcessingStatus>(item.status);
   const [details, setDetails] = useState<BackendDocumentStatus | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -50,6 +64,7 @@ function DocumentRow({ item }: { item: BackendDocument }) {
         const next = await getDocumentStatus(documentId);
         if (cancelled) return;
         setStatus(next.status);
+        onStatus(documentId, next.status);
         setDetails(next);
         setPollError(null);
       } catch (err) {
@@ -99,7 +114,7 @@ function DocumentRow({ item }: { item: BackendDocument }) {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", runVisiblePoll);
     };
-  }, [item.documentId, status]);
+  }, [item.documentId, status, onStatus]);
 
   const retry = async () => {
     if (retryingRef.current) return;
@@ -111,6 +126,7 @@ function DocumentRow({ item }: { item: BackendDocument }) {
       const result = await retryDocument(item.documentId);
       didInitialFetch.current = false;
       setStatus(result.status);
+      onStatus(item.documentId, result.status);
       setDetails({
         ...item,
         status: result.status,
@@ -144,10 +160,27 @@ function DocumentRow({ item }: { item: BackendDocument }) {
   );
 }
 
-export function SubjectDocuments({ subjectId, refreshToken }: SubjectDocumentsProps) {
+export function SubjectDocuments({ subjectId, refreshToken, onSummary }: SubjectDocumentsProps) {
   const [documents, setDocuments] = useState<BackendDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [statuses, setStatuses] = useState<Record<string, DocumentProcessingStatus>>({});
+  const reportStatus = useCallback((documentId: string, status: DocumentProcessingStatus) => {
+    setStatuses((current) =>
+      current[documentId] === status ? current : { ...current, [documentId]: status },
+    );
+  }, []);
+
+  useEffect(() => {
+    onSummary?.({
+      loading,
+      error: Boolean(error),
+      documentCount: documents.length,
+      hasReady: documents.some(
+        (document) => (statuses[document.documentId] ?? document.status) === "READY",
+      ),
+    });
+  }, [documents, statuses, loading, error, onSummary]);
 
   useEffect(() => {
     let cancelled = false;
@@ -182,7 +215,7 @@ export function SubjectDocuments({ subjectId, refreshToken }: SubjectDocumentsPr
       {documents.length > 0 && (
         <ul>
           {documents.map((document) => (
-            <DocumentRow key={document.documentId} item={document} />
+            <DocumentRow key={document.documentId} item={document} onStatus={reportStatus} />
           ))}
         </ul>
       )}

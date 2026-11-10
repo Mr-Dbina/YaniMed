@@ -6,19 +6,32 @@ import { AudioWaveform, Mic, Plus } from "lucide-react";
 import { Message } from "@/components/chat/message";
 import type { ChatMessage } from "@/lib/types";
 import { ApiError, MAX_PROMPT_LENGTH, requestAnswer } from "@/lib/api";
+import { requestSubjectAnswer } from "@/lib/backend-api";
 
 interface ChatConversationProps {
   onAsked?: (prompt: string) => void;
   disabledReason?: string;
   emptyState?: ReactNode;
+  subjectId?: string;
+}
+
+function subjectChatError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 429) return "Too many questions. Wait one minute.";
+    if (err.status === 503) return "AI is unavailable. Try again shortly.";
+    if (err.status === 404) return "Subject or chat not found.";
+    if (err.status === 403) return "Request blocked by the API. Check the allowed frontend origin.";
+  }
+  return "Something went wrong.";
 }
 
 function createMessageId(): string {
   return crypto.randomUUID();
 }
 
-export function ChatConversation({ onAsked, disabledReason, emptyState }: ChatConversationProps) {
+export function ChatConversation({ onAsked, disabledReason, emptyState, subjectId }: ChatConversationProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const chatIdRef = useRef<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +79,14 @@ export function ChatConversation({ onAsked, disabledReason, emptyState }: ChatCo
     abortRef.current = controller;
 
     try {
-      const result = await requestAnswer(prompt, controller.signal);
+      const subjectResult = subjectId
+        ? await requestSubjectAnswer(
+            { subjectId, prompt, chatId: chatIdRef.current },
+            controller.signal,
+          )
+        : null;
+      if (subjectResult) chatIdRef.current = subjectResult.chatId;
+      const result = subjectResult ?? (await requestAnswer(prompt, controller.signal));
       const assistant: ChatMessage = {
           id: createMessageId(), role: "assistant", content: result.answer,
           citations: result.citations, grounding: result.grounding, metadata: result.metadata,
@@ -79,7 +99,9 @@ export function ChatConversation({ onAsked, disabledReason, emptyState }: ChatCo
       if (controller.signal.aborted) return;
       setFailedMessage({ id: userMessageId, prompt, assistantId: retryMessage?.assistantId });
       setError(
-        err instanceof ApiError ? err.message : "Something went wrong while asking.",
+        subjectId
+          ? subjectChatError(err)
+          : err instanceof ApiError ? err.message : "Something went wrong while asking.",
       );
     } finally {
       if (abortRef.current === controller) {
@@ -109,9 +131,11 @@ export function ChatConversation({ onAsked, disabledReason, emptyState }: ChatCo
 
   return (
     <div className={`subject-chat${hasThread ? " subject-chat--thread" : ""}`}>
-      <p className="subject-chat__notice text-sm text-muted-foreground" role="note">
-        {disabledReason ? "PDF not indexed · chat unavailable" : "Development preview · ungrounded · not for studying"}
-      </p>
+      {(!subjectId || disabledReason) && (
+        <p className="subject-chat__notice text-sm text-muted-foreground" role="note">
+          {disabledReason ? "PDF not indexed · chat unavailable" : "Development preview · ungrounded · not for studying"}
+        </p>
+      )}
       <div className="subject-chat__viewport" ref={viewportRef} onScroll={(event) => {
         const element = event.currentTarget;
         followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;

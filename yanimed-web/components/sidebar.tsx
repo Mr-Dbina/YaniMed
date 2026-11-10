@@ -9,7 +9,6 @@ import { SettingsMenu } from "@/components/settings/settings-menu";
 import { DeleteSubjectModal } from "@/components/delete-subject-modal";
 import {
   Archive,
-  Bell,
   ClipboardList,
   GraduationCap,
   Moon,
@@ -48,9 +47,7 @@ export function Sidebar({
   const pathname = usePathname();
   const { resolvedTheme, setTheme } = useTheme();
   const isCollapsed = useSidebarStore((state) => state.isCollapsed);
-  const isPreview = useSidebarStore((state) => state.isPreview);
   const toggle = useSidebarStore((state) => state.toggle);
-  const setPreview = useSidebarStore((state) => state.setPreview);
   const mounted = useSyncExternalStore(subscribeMounted, () => true, () => false);
   const [menuSubjectId, setMenuSubjectId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -98,26 +95,13 @@ export function Sidebar({
   const pendingDelete = subjects.find((s) => s.id === pendingDeleteId) ?? null;
 
   const activeTheme = mounted ? resolvedTheme : "light";
-  const isVisuallyCollapsed = isCollapsed && !isPreview;
 
   return (
-    <aside
-      className={`sidebar${isVisuallyCollapsed ? " sidebar--collapsed" : ""}`}
-      onMouseEnter={() => {
-        if (isCollapsed && window.matchMedia("(hover: hover) and (min-width: 768px)").matches) setPreview(true);
-      }}
-      onMouseLeave={() => setPreview(false)}
-    >
+    <aside className={`sidebar${isCollapsed ? " sidebar--collapsed" : ""}`}>
       <div className="sidebar__inner">
         <div className="sidebar__header">
           <span className="sidebar__brand">YaniMed</span>
           <div className="sidebar__header-actions">
-            <button type="button" aria-label="Search" className="icon-button">
-              <Search size={18} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
-            </button>
-            <button type="button" aria-label="Notifications" className="icon-button">
-              <Bell size={18} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
-            </button>
             <button
               type="button"
               aria-label="Collapse sidebar"
@@ -135,6 +119,10 @@ export function Sidebar({
         </button>
 
         <nav className="sidebar__nav">
+          <button type="button" className="sidebar__link sidebar__link--button">
+            <Search size={18} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
+            Search
+          </button>
           {navItems.map((item) => {
             const active = pathname.startsWith(item.href);
             const Icon = item.icon;
