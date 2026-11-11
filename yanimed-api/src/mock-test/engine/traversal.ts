@@ -83,23 +83,6 @@ export function nextPosition(
   return wrapped ? wrapped.position : null;
 }
 
-/**
- * Skip is allowed only while another UNSEEN question exists. In the revisit
- * pass there is no UNSEEN left, so skipped questions must be answered.
- */
-export function canSkip(
-  questions: readonly EngineQuestion[],
-  currentPosition: number,
-): boolean {
-  assertQuestionSet(questions);
-  assertCurrentPosition(currentPosition);
-
-  return questions.some(
-    (question) =>
-      question.position !== currentPosition && question.status === 'UNSEEN',
-  );
-}
-
 function withStatus(
   questions: readonly EngineQuestion[],
   currentPosition: number,
@@ -136,6 +119,10 @@ export function applyAnswer(
   );
 }
 
+/**
+ * Skip is allowed on any UNSEEN or SKIPPED question, including in the revisit
+ * pass. Only ANSWERED questions are refused.
+ */
 export function applySkip(
   questions: readonly EngineQuestion[],
   currentPosition: number,
@@ -148,9 +135,6 @@ export function applySkip(
   );
   if (current?.status === 'ANSWERED') {
     throw new Error('Answered questions cannot be skipped.');
-  }
-  if (!canSkip(questions, currentPosition)) {
-    throw new Error('Cannot skip: no other unseen question remains.');
   }
 
   return resultFor(

@@ -61,6 +61,7 @@ const QUESTION: ExamQuestionDto = {
     { id: '55555555-5555-4555-8555-555555555555', letter: 'C', text: 'ZZ choice C' },
     { id: '66666666-6666-4666-8666-666666666666', letter: 'D', text: 'ZZ choice D' },
   ],
+  selectedChoiceId: null,
 };
 
 const PROGRESS: QuestionProgressResponse = {
@@ -72,7 +73,16 @@ const PROGRESS: QuestionProgressResponse = {
 const NAVIGATOR: ReviewNavigatorResponse = {
   attemptId: ATTEMPT_ID,
   status: 'AWAITING_SUBMISSION',
-  items: [{ position: 1, answered: true, selectedChoiceId: CHOICE_ID }],
+  items: [
+    {
+      position: 1,
+      answered: true,
+      selectedChoiceId: CHOICE_ID,
+      stem: QUESTION.stem,
+      leadIn: QUESTION.leadIn,
+      choices: QUESTION.choices,
+    },
+  ],
 };
 
 const RESULT: ResultDto = {

@@ -112,7 +112,7 @@ export class ExamController {
     return this.exam.skipQuestion(attemptId, body);
   }
 
-  /** Neutral navigator: answered flag and selected id only, no correctness. */
+  /** Neutral navigator: stem and choices plus the selected id, no correctness. */
   @Get('attempts/:attemptId/review-navigator')
   @ApiOperation({ summary: 'Answer state before submit' })
   navigator(

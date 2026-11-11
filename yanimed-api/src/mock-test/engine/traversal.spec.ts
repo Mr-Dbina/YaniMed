@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   applyAnswer,
   applySkip,
-  canSkip,
   nextPosition,
 } from './traversal.js';
 import {
@@ -93,18 +92,34 @@ describe('skip and revisit pass', () => {
     expect(final.attemptStatus).toBe('AWAITING_SUBMISSION');
   });
 
-  it('allows skip only while another UNSEEN question exists', () => {
-    expect(canSkip(build(), 1)).toBe(true);
-    expect(canSkip(build({ 1: 'UNSEEN' }, 'ANSWERED'), 1)).toBe(false);
-    expect(canSkip(build({ 1: 'SKIPPED' }, 'ANSWERED'), 1)).toBe(false);
+  it('skips in the revisit pass to the next open question', () => {
+    const questions = build({ 1: 'SKIPPED', 2: 'SKIPPED' }, 'ANSWERED');
+
+    const result = applySkip(questions, 1);
+
+    expect(result.questions[0].status).toBe('SKIPPED');
+    expect(result.nextPosition).toBe(2);
+    expect(result.attemptStatus).toBe('IN_PROGRESS');
   });
 
-  it('throws when skip is attempted with no other UNSEEN question', () => {
+  it('skips the last remaining question and returns it again', () => {
     const questions = build({ 1: 'UNSEEN' }, 'ANSWERED');
 
-    expect(() => applySkip(questions, 1)).toThrow(
-      'Cannot skip: no other unseen question remains.',
-    );
+    const result = applySkip(questions, 1);
+
+    expect(result.questions[0].status).toBe('SKIPPED');
+    expect(result.nextPosition).toBe(1);
+    expect(result.attemptStatus).toBe('IN_PROGRESS');
+  });
+
+  it('keeps an already skipped question skipped', () => {
+    const questions = build({ 1: 'SKIPPED' }, 'ANSWERED');
+
+    const result = applySkip(questions, 1);
+
+    expect(result.questions[0].status).toBe('SKIPPED');
+    expect(result.nextPosition).toBe(1);
+    expect(result.attemptStatus).toBe('IN_PROGRESS');
   });
 
   it('throws when an answered question is skipped', () => {

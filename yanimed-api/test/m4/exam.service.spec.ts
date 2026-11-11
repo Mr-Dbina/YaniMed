@@ -19,7 +19,9 @@ const FORBIDDEN_EXAM_KEYS = [
   'isCorrect',
   'explanation',
   'citation',
+  'citations',
   'correctChoiceId',
+  'topic',
 ];
 
 function expectExamSafe(value: unknown): void {
@@ -208,6 +210,101 @@ describe('M4 exam service', () => {
     expect(accepted.answeredCount).toBe(1);
   });
 
+  it('resume IN_PROGRESS returns the next open question, not position 1', async () => {
+    const { attemptId } = await createReadyAttempt();
+    const started = await service.startAttempt(attemptId);
+    const rows = await getAttemptQuestions(attemptId);
+
+    await service.answerQuestion(attemptId, {
+      sessionVersion: started.sessionVersion,
+      position: 1,
+      choiceId: correctChoiceId(rows[0]),
+      idempotencyKey: examKey(),
+    });
+
+    const resumed = await service.startAttempt(attemptId);
+    expect(resumed.sessionVersion).toBe(started.sessionVersion + 1);
+    expect(resumed.question.position).toBe(2);
+    expect(resumed.question.status).toBe('UNSEEN');
+    expect(resumed.question.selectedChoiceId).toBeNull();
+
+    await service.skipQuestion(attemptId, {
+      sessionVersion: resumed.sessionVersion,
+      position: 2,
+    });
+
+    const afterSkip = await service.startAttempt(attemptId);
+    expect(afterSkip.sessionVersion).toBe(resumed.sessionVersion + 1);
+    expect(afterSkip.question.position).toBe(3);
+
+    const attempt = await prisma.mockAttempt.findUniqueOrThrow({
+      where: { id: attemptId },
+    });
+    expect(attempt.status).toBe('IN_PROGRESS');
+    expect(attempt.cursorPosition).toBe(3);
+  });
+
+  it('selectedChoiceId is set only when that question already has an answer', async () => {
+    const { subject } = await createSubjectWithQuestions();
+    const seeded = await seedAttemptAtAwaitingSubmission(
+      subject.id,
+      (question) =>
+        question.position === 1 ? question.correctChoiceId : null,
+    );
+
+    const resumed = await service.startAttempt(seeded.attemptId);
+    expect(resumed.question.position).toBe(1);
+    expect(resumed.question.selectedChoiceId).toBe(
+      seeded.questions[0].correctChoiceId,
+    );
+
+    const navigator = await service.getReviewNavigator(
+      seeded.attemptId,
+      resumed.sessionVersion,
+    );
+    expect(navigator.items[0].answered).toBe(true);
+    expect(navigator.items[0].selectedChoiceId).toBe(
+      seeded.questions[0].correctChoiceId,
+    );
+    expect(navigator.items[1].answered).toBe(false);
+    expect(navigator.items[1].selectedChoiceId).toBeNull();
+  });
+
+  it('review-navigator items carry stem, leadIn and choices in persisted order', async () => {
+    const { subject } = await createSubjectWithQuestions();
+    const seeded = await seedAttemptAtAwaitingSubmission(subject.id);
+    const navigator = await service.getReviewNavigator(
+      seeded.attemptId,
+      seeded.sessionVersion,
+    );
+    const rows = await getAttemptQuestions(seeded.attemptId);
+
+    expect(navigator.items).toHaveLength(25);
+    navigator.items.forEach((item, index) => {
+      const row = rows[index];
+      expect(item.position).toBe(row.position);
+      expect(item.stem).toBe(row.question.stem);
+      expect(item.leadIn).toBe(row.question.leadIn);
+      expect(item.choices).toHaveLength(4);
+
+      const expected = row.choiceOrder.map((storedPosition, displayIndex) => {
+        const choice = row.question.choices.find(
+          (candidate) => candidate.position === storedPosition,
+        );
+        if (!choice) throw new Error('ZZ-m4 missing choice.');
+        return {
+          id: choice.id,
+          letter: ['A', 'B', 'C', 'D'][displayIndex],
+          text: choice.text,
+        };
+      });
+      expect(item.choices).toEqual(expected);
+      for (const choice of item.choices) {
+        expect(Object.keys(choice).sort()).toEqual(['id', 'letter', 'text']);
+      }
+    });
+  });
+
   it('answers Q1..Q25 in order and reaches AWAITING_SUBMISSION at cursor 26', async () => {
     const { attemptId } = await createReadyAttempt();
     const started = await service.startAttempt(attemptId);
@@ -353,12 +450,21 @@ describe('M4 exam service', () => {
     expect(stored.status).toBe('ANSWERED');
   }, 120000);
 
-  it('refuses a skip when no other UNSEEN question remains', async () => {
+  it('skipping in the revisit pass returns the next open question', async () => {
     const { attemptId } = await createReadyAttempt();
     const started = await service.startAttempt(attemptId);
     const rows = await getAttemptQuestions(attemptId);
 
-    for (const row of rows.filter((candidate) => candidate.position <= 24)) {
+    await service.skipQuestion(attemptId, {
+      sessionVersion: started.sessionVersion,
+      position: 1,
+    });
+    await service.skipQuestion(attemptId, {
+      sessionVersion: started.sessionVersion,
+      position: 2,
+    });
+
+    for (const row of rows.filter((candidate) => candidate.position >= 3)) {
       await service.answerQuestion(attemptId, {
         sessionVersion: started.sessionVersion,
         position: row.position,
@@ -367,14 +473,84 @@ describe('M4 exam service', () => {
       });
     }
 
-    await expect(
-      service.skipQuestion(attemptId, {
-        sessionVersion: started.sessionVersion,
-        position: 25,
-      }),
-    ).rejects.toMatchObject({ code: 'SKIP_NOT_ALLOWED' });
+    const beforeRevisit = await prisma.mockAttempt.findUniqueOrThrow({
+      where: { id: attemptId },
+    });
+    expect(beforeRevisit.status).toBe('IN_PROGRESS');
+    expect(beforeRevisit.cursorPosition).toBe(1);
 
-    // An answered question can never be skipped either.
+    const revisitSkip = await service.skipQuestion(attemptId, {
+      sessionVersion: started.sessionVersion,
+      position: 1,
+    });
+    expect(revisitSkip.status).toBe('IN_PROGRESS');
+    expect(revisitSkip.nextQuestion?.position).toBe(2);
+
+    const stored = await prisma.attemptQuestion.findUniqueOrThrow({
+      where: { id: rows[0].id },
+    });
+    expect(stored.status).toBe('SKIPPED');
+  }, 120000);
+
+  it('skipping the last open question returns it again and stays IN_PROGRESS', async () => {
+    const { attemptId } = await createReadyAttempt();
+    const started = await service.startAttempt(attemptId);
+    const rows = await getAttemptQuestions(attemptId);
+
+    await service.skipQuestion(attemptId, {
+      sessionVersion: started.sessionVersion,
+      position: 1,
+    });
+
+    for (const row of rows.filter((candidate) => candidate.position >= 2)) {
+      await service.answerQuestion(attemptId, {
+        sessionVersion: started.sessionVersion,
+        position: row.position,
+        choiceId: correctChoiceId(row),
+        idempotencyKey: examKey(),
+      });
+    }
+
+    const result = await service.skipQuestion(attemptId, {
+      sessionVersion: started.sessionVersion,
+      position: 1,
+    });
+    expect(result.status).toBe('IN_PROGRESS');
+    expect(result.nextQuestion?.position).toBe(1);
+    expect(result.answeredCount).toBe(24);
+
+    const attempt = await prisma.mockAttempt.findUniqueOrThrow({
+      where: { id: attemptId },
+    });
+    expect(attempt.status).toBe('IN_PROGRESS');
+    expect(attempt.cursorPosition).toBe(1);
+  }, 120000);
+
+  it('submit still refuses NOT_ALL_ANSWERED while a question is unanswered', async () => {
+    const { subject } = await createSubjectWithQuestions();
+    const seeded = await seedAttemptAtAwaitingSubmission(
+      subject.id,
+      (question) =>
+        question.position <= 24 ? question.correctChoiceId : null,
+    );
+
+    await expect(
+      service.submitAttempt(seeded.attemptId, seeded.sessionVersion, examKey()),
+    ).rejects.toMatchObject({ code: 'NOT_ALL_ANSWERED' });
+  });
+
+  it('still rejects skipping an ANSWERED question', async () => {
+    const { attemptId } = await createReadyAttempt();
+    const started = await service.startAttempt(attemptId);
+    const rows = await getAttemptQuestions(attemptId);
+
+    await service.answerQuestion(attemptId, {
+      sessionVersion: started.sessionVersion,
+      position: 1,
+      choiceId: correctChoiceId(rows[0]),
+      idempotencyKey: examKey(),
+    });
+
     await expect(
       service.skipQuestion(attemptId, {
         sessionVersion: started.sessionVersion,
@@ -687,9 +863,14 @@ describe('M4 exam service', () => {
     for (const item of navigator.items) {
       expect(Object.keys(item).sort()).toEqual([
         'answered',
+        'choices',
+        'leadIn',
         'position',
         'selectedChoiceId',
+        'stem',
       ]);
+      expectChoiceShape(item.choices);
+      expect(item.selectedChoiceId).not.toBeNull();
     }
   }, 120000);
 });

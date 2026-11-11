@@ -40,12 +40,15 @@ export interface ExamQuestionDto {
   stem: string;
   leadIn: string | null;
   choices: ExamChoiceDto[];
+  /** Chosen id for an already answered question; never a correctness hint. */
+  selectedChoiceId: string | null;
 }
 
 export interface ExamQuestionSource {
   position: number;
   status: QuestionStatus;
   choiceOrder: number[];
+  selectedChoiceId?: string | null;
   question: {
     stem: string;
     leadIn: string | null;
@@ -80,6 +83,7 @@ export function toExamQuestionDto(
     stem: source.question.stem,
     leadIn: source.question.leadIn,
     choices,
+    selectedChoiceId: source.selectedChoiceId ?? null,
   };
 }
 

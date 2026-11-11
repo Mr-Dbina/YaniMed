@@ -5,7 +5,6 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import {
   QUESTIONS_PER_TEST,
   buildAttemptChoiceOrders,
-  canSkip,
   canTransition,
   createRng,
   decideAnswer,
@@ -21,6 +20,7 @@ import {
   toExamQuestionDto,
   toResultDto,
   toReviewDto,
+  type ExamChoiceDto,
   type ExamQuestionDto,
   type ResultDto,
   type ResultSnapshot,
@@ -63,6 +63,9 @@ export interface NavigatorItem {
   position: number;
   answered: boolean;
   selectedChoiceId: string | null;
+  stem: string;
+  leadIn: string | null;
+  choices: ExamChoiceDto[];
 }
 
 export interface ReviewNavigatorResponse {
@@ -145,6 +148,7 @@ function toExamQuestion(
     position: row.position,
     status: row.status,
     choiceOrder: row.choiceOrder,
+    selectedChoiceId: row.existingChoiceId,
     question: {
       stem: row.stem,
       leadIn: row.leadIn,
@@ -360,18 +364,37 @@ export class ExamService {
           throw new MockTestError('NOT_IN_PROGRESS');
         }
 
+        const rows = await this.readAttemptQuestions(tx, attemptId);
+
+        // A resume of IN_PROGRESS keeps the persisted cursor, so an already
+        // answered question is never shown again. If that cursor no longer
+        // points at an open question, the engine picks the next one.
+        // READY and AWAITING_SUBMISSION keep the existing restart at 1.
+        let cursorPosition = 1;
+        if (attempt.status === 'IN_PROGRESS') {
+          const atCursor = rows.find(
+            (row) => row.position === attempt.cursorPosition,
+          );
+          cursorPosition =
+            atCursor && atCursor.status !== 'ANSWERED'
+              ? attempt.cursorPosition
+              : (nextPosition(
+                  toEngineQuestions(rows),
+                  Math.min(attempt.cursorPosition, QUESTIONS_PER_TEST),
+                ) ?? attempt.cursorPosition);
+        }
+
         const updated = await tx.mockAttempt.update({
           where: { id: attemptId },
           data: {
             status: isResume ? attempt.status : 'IN_PROGRESS',
             sessionVersion: { increment: 1 },
-            cursorPosition: 1,
+            cursorPosition,
             lastActivityAt: new Date(),
           },
         });
 
-        const rows = await this.readAttemptQuestions(tx, attemptId);
-        const first = rows.find((row) => row.position === 1);
+        const first = rows.find((row) => row.position === cursorPosition);
         if (!first) throw new MockTestError('QUESTION_NOT_FOUND');
 
         return {
@@ -528,7 +551,8 @@ export class ExamService {
   }
 
   /**
-   * Skip is allowed only while another UNSEEN question remains (engine rule).
+   * Skip is allowed on any UNSEEN or SKIPPED question, including in the
+   * revisit pass. An ANSWERED question is refused.
    * Statements: (1) lock attempt, (2) read all rows with choices, (3) one
    * write statement for the vetoed question and the attempt cursor.
    */
@@ -550,10 +574,6 @@ export class ExamService {
         );
         if (!row) throw new MockTestError('QUESTION_NOT_FOUND');
         if (row.status === 'ANSWERED') {
-          throw new MockTestError('SKIP_NOT_ALLOWED');
-        }
-
-        if (!canSkip(toEngineQuestions(rows), input.position)) {
           throw new MockTestError('SKIP_NOT_ALLOWED');
         }
 
@@ -599,7 +619,7 @@ export class ExamService {
     );
   }
 
-  /** Neutral navigator: answered flag and selected id only, no correctness. */
+  /** Neutral navigator: stem and choices plus the selected id, no correctness. */
   async getReviewNavigator(
     attemptId: string,
     sessionVersion: number,
@@ -619,17 +639,41 @@ export class ExamService {
     const rows = await this.prisma.attemptQuestion.findMany({
       where: { attemptId },
       orderBy: { position: 'asc' },
-      include: { answer: { select: { choiceId: true } } },
+      include: {
+        answer: { select: { choiceId: true } },
+        question: {
+          select: {
+            stem: true,
+            leadIn: true,
+            choices: {
+              orderBy: { position: 'asc' },
+              select: { id: true, position: true, text: true },
+            },
+          },
+        },
+      },
     });
 
     return {
       attemptId,
       status: 'AWAITING_SUBMISSION',
-      items: rows.map((row) => ({
-        position: row.position,
-        answered: row.status === 'ANSWERED',
-        selectedChoiceId: row.answer?.choiceId ?? null,
-      })),
+      items: rows.map((row) => {
+        const question = toExamQuestionDto(attemptId, {
+          position: row.position,
+          status: row.status,
+          choiceOrder: row.choiceOrder,
+          selectedChoiceId: row.answer?.choiceId ?? null,
+          question: row.question,
+        });
+        return {
+          position: question.position,
+          answered: row.status === 'ANSWERED',
+          selectedChoiceId: question.selectedChoiceId,
+          stem: question.stem,
+          leadIn: question.leadIn,
+          choices: question.choices,
+        };
+      }),
     };
   }
 
