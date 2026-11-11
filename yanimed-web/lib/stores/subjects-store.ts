@@ -14,7 +14,33 @@ import {
 } from "@/lib/backend-api";
 
 const KEY_REUSE_MESSAGE = "Idempotency key is already used for different request content.";
+const ACTIVE_SUBJECT_KEY = "yanimed:active-subject";
 const inFlightSyncs = new Set<string>();
+
+/** Stable key: backend id when linked, otherwise the local id. */
+function activeSubjectKey(subject: Subject | null | undefined): string | null {
+  if (!subject) return null;
+  return subject.backendSubjectId ?? subject.id;
+}
+
+function readActiveSubjectKey(): string | null {
+  try {
+    return window.localStorage.getItem(ACTIVE_SUBJECT_KEY);
+  } catch {
+    // localStorage can be blocked (private mode, denied storage).
+    return null;
+  }
+}
+
+function writeActiveSubjectKey(subject: Subject | null | undefined): void {
+  try {
+    const key = activeSubjectKey(subject);
+    if (key) window.localStorage.setItem(ACTIVE_SUBJECT_KEY, key);
+    else window.localStorage.removeItem(ACTIVE_SUBJECT_KEY);
+  } catch {
+    // Persisting the selection is best-effort; the in-memory choice still works.
+  }
+}
 
 function createId() {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -125,14 +151,23 @@ export const useSubjectsStore = create<SubjectsState>((set, get) => ({
       const subjects = serverResult.status === "fulfilled"
         ? mergeSubjects(local.subjects, serverResult.value)
         : local.subjects;
+      // Backend-only rows get a fresh local id on each merge, so match the
+      // saved key against backendSubjectId first and fall back to the local id.
+      const storedKey = readActiveSubjectKey();
+      const restored = storedKey
+        ? subjects.find(s => s.backendSubjectId === storedKey || s.id === storedKey)
+        : undefined;
+      const activeSubjectId = restored?.id
+        ?? (subjects.some(s => s.id === local.activeSubjectId) ? local.activeSubjectId : subjects[0]?.id ?? null);
       set({
         subjects,
-        activeSubjectId: subjects.some(s => s.id === local.activeSubjectId) ? local.activeSubjectId : subjects[0]?.id ?? null,
+        activeSubjectId,
         hydrated: true,
         storageError: serverResult.status === "rejected"
           ? "Could not load subjects from the server. Showing saved subjects."
           : null,
       });
+      writeActiveSubjectKey(subjects.find(s => s.id === activeSubjectId));
       for (const subject of local.subjects) {
         if (shouldResumeSync(subject)) void get().syncSubject(subject.id);
       }
@@ -155,6 +190,7 @@ export const useSubjectsStore = create<SubjectsState>((set, get) => ({
     };
     await writeLocalSubject(subject, subject.id);
     set(state => ({ subjects: [...state.subjects, subject], activeSubjectId: subject.id, storageError: null }));
+    writeActiveSubjectKey(subject);
     void get().syncSubject(subject.id);
   }),
   updateSubject: (id, patch) => {
@@ -206,10 +242,12 @@ export const useSubjectsStore = create<SubjectsState>((set, get) => ({
       const activeSubjectId = get().activeSubjectId === id ? subjects[0]?.id ?? null : get().activeSubjectId;
       await writeLocalSubject(null, activeSubjectId, id);
       set({ subjects, activeSubjectId, storageError: null });
+      writeActiveSubjectKey(subjects.find(s => s.id === activeSubjectId));
     }).catch((error: Error) => set({ storageError: error.message }));
   },
   setActiveSubject: (id) => {
     set({ activeSubjectId: id });
+    writeActiveSubjectKey(id ? get().subjects.find(s => s.id === id) : null);
     void enqueue(() => writeLocalSubject(null, get().activeSubjectId))
       .catch((error: Error) => set({ storageError: error.message }));
   },
