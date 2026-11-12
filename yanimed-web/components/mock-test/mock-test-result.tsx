@@ -2,7 +2,6 @@
 
 import { Trophy } from "lucide-react";
 import type { ExamResult } from "@/lib/mock-test-api";
-import { StudyAidNotice } from "@/components/mock-test/study-aid-notice";
 
 interface MockTestResultProps {
   result: ExamResult;
@@ -54,53 +53,23 @@ export function MockTestResult({
         </p>
       </div>
 
-      <StudyAidNotice />
-
       <div className="mock-test__result-stats">
         <div className="mock-test__metric">
           <span className="mock-test__metric-value">{result.percentage}%</span>
           <span className="mock-test__metric-label">Score</span>
         </div>
         <div className="mock-test__metric">
-          <span className="mock-test__metric-value">{result.correctCount}</span>
+          <span className="mock-test__metric-value mock-test__metric-value--correct">
+            {result.correctCount}
+          </span>
           <span className="mock-test__metric-label">Correct</span>
         </div>
         <div className="mock-test__metric">
-          <span className="mock-test__metric-value">{result.incorrectCount}</span>
+          <span className="mock-test__metric-value mock-test__metric-value--incorrect">
+            {result.incorrectCount}
+          </span>
           <span className="mock-test__metric-label">Incorrect</span>
         </div>
-      </div>
-
-      <div className="mock-test__card">
-        <h2 className="mock-test__heading">Topic performance</h2>
-        {result.perTopic.length === 0 ? (
-          <p className="mock-test__muted">No topic breakdown available.</p>
-        ) : (
-          <div className="mock-test__topic-list">
-            {result.perTopic.map((topic) => {
-              const percent = topicPercentage(topic.correct, topic.total);
-              return (
-                <div className="mock-test__topic" key={topic.topicKey}>
-                  <div className="mock-test__topic-head">
-                    <span>{humanizeTopic(topic.topicKey)}</span>
-                    <span className="mock-test__topic-meta">
-                      {percent}%{" "}
-                      <span>
-                        ({topic.correct}/{topic.total})
-                      </span>
-                    </span>
-                  </div>
-                  <div className="mock-test__topic-bar">
-                    <div
-                      className="mock-test__topic-fill"
-                      style={{ width: `${percent}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       {error && (
@@ -112,7 +81,7 @@ export function MockTestResult({
       <div className="mock-test__result-actions">
         <button
           type="button"
-          className="mock-test__btn mock-test__btn--primary"
+          className="mock-test__btn mock-test__btn--ghost"
           disabled={retrying}
           onClick={onRetry}
         >
@@ -128,11 +97,44 @@ export function MockTestResult({
         </button>
         <button
           type="button"
-          className="mock-test__btn mock-test__btn--ghost"
+          className="mock-test__btn mock-test__btn--dark"
           onClick={onDone}
         >
           Done
         </button>
+      </div>
+
+      <div className="mock-test__card mock-test__topic-card">
+        <h2 className="mock-test__heading">Topic Performance</h2>
+        {result.perTopic.length === 0 ? (
+          <p className="mock-test__muted">No topic breakdown available.</p>
+        ) : (
+          <div className="mock-test__topic-list">
+            {result.perTopic.map((topic) => {
+              const percent = topicPercentage(topic.correct, topic.total);
+              const level = percent >= 80 ? "high" : "mid";
+              return (
+                <div className="mock-test__topic" key={topic.topicKey}>
+                  <div className="mock-test__topic-head">
+                    <span>{humanizeTopic(topic.topicKey)}</span>
+                    <span className="mock-test__topic-meta">
+                      {percent}%{" "}
+                      <span>
+                        ({topic.correct}/{topic.total})
+                      </span>
+                    </span>
+                  </div>
+                  <div className="mock-test__topic-bar">
+                    <div
+                      className={`mock-test__topic-fill mock-test__topic-fill--${level}`}
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </section>
   );

@@ -30,23 +30,23 @@ export interface AppTheme {
 
 /** Raw HSL triplets, matching globals.css. Converted for display only. */
 const LIGHT_TOKENS = {
-  accent: "328 89% 52%",
-  background: "40 33% 97%",
-  foreground: "24 12% 12%",
-  border: "334 28% 90%",
+  accent: "328 100% 45%",
+  background: "0 0% 98%",
+  foreground: "221 39% 11%",
+  border: "220 13% 91%",
   surface: "0 0% 100%",
-  muted: "334 62% 96%",
-  mutedForeground: "330 12% 42%",
+  muted: "220 14% 96%",
+  mutedForeground: "220 9% 46%",
 } as const;
 
 const DARK_TOKENS = {
-  accent: "328 80% 46%",
-  background: "330 14% 8%",
-  foreground: "330 15% 95%",
-  border: "330 10% 24%",
-  surface: "330 12% 12%",
-  muted: "330 12% 20%",
-  mutedForeground: "330 8% 68%",
+  accent: "328 100% 45%",
+  background: "222 28% 8%",
+  foreground: "210 20% 96%",
+  border: "220 15% 24%",
+  surface: "221 25% 12%",
+  muted: "220 15% 18%",
+  mutedForeground: "220 9% 65%",
 } as const;
 
 function toVariant(tokens: Record<keyof typeof LIGHT_TOKENS, string>): ThemeVariant {

@@ -52,30 +52,29 @@ export function MockTestQuestion({
           onClick={onExit}
           aria-label="Exit test and return to the test overview"
         >
-          <ArrowLeft size={20} aria-hidden="true" />
+          <ArrowLeft size={18} aria-hidden="true" />
+          <span>{subjectName || "Mock Test"}</span>
         </button>
-        <div className="mock-test__exam-heading">
-          <p className="mock-test__subject-label">{subjectName || "Mock Test"}</p>
-          <p className="mock-test__step" id="mock-test-question-heading">
-            Question {question.position} of {question.total}
-          </p>
-          {answeredCount !== null && (
-            <div
-              className="mock-test__progress"
-              role="progressbar"
-              aria-label="Questions answered"
-              aria-valuemin={0}
-              aria-valuemax={question.total}
-              aria-valuenow={answeredCount}
-            >
-              <div
-                className="mock-test__progress-bar"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-          )}
-        </div>
+        <p className="mock-test__step" id="mock-test-question-heading">
+          Question {question.position} of {question.total}
+        </p>
       </header>
+
+      {answeredCount !== null && (
+        <div
+          className="mock-test__progress"
+          role="progressbar"
+          aria-label="Questions answered"
+          aria-valuemin={0}
+          aria-valuemax={question.total}
+          aria-valuenow={answeredCount}
+        >
+          <div
+            className="mock-test__progress-bar"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+      )}
 
       <div className="mock-test__card">
         {returnedToSkipped && (
@@ -117,10 +116,13 @@ export function MockTestQuestion({
                       onChange={() => setSelectedChoiceId(choice.id)}
                       aria-label={`Option ${choice.letter}: ${choice.text}`}
                     />
-                    <span className="mock-test__choice-letter" aria-hidden="true">
-                      {choice.letter}
+                    <span className="mock-test__radio" aria-hidden="true" />
+                    <span className="mock-test__choice-text">
+                      <span className="mock-test__choice-label">
+                        {choice.letter}.
+                      </span>{" "}
+                      {choice.text}
                     </span>
-                    <span className="mock-test__choice-text">{choice.text}</span>
                   </label>
                 );
               })}

@@ -9,6 +9,7 @@ type PanelTab = "explanation" | "citation";
 
 interface MockTestAnswersProps {
   review: ExamReview;
+  subjectName: string;
   onBack: () => void;
 }
 
@@ -29,7 +30,11 @@ function questionMatches(
   return true;
 }
 
-export function MockTestAnswers({ review, onBack }: MockTestAnswersProps) {
+export function MockTestAnswers({
+  review,
+  subjectName,
+  onBack,
+}: MockTestAnswersProps) {
   const [outcome, setOutcome] = useState<OutcomeFilter>("all");
   const [topic, setTopic] = useState("all");
   const [activePosition, setActivePosition] = useState<number | null>(null);
@@ -56,71 +61,68 @@ export function MockTestAnswers({ review, onBack }: MockTestAnswersProps) {
   };
 
   const correctChoice = current?.choices.find((choice) => choice.isCorrect) ?? null;
-  const explanations =
-    current?.choices.filter((choice) => choice.explanation) ?? [];
 
   return (
-    <section className="mock-test" aria-labelledby="mock-test-answers-heading">
-      <header className="mock-test__top">
-        <div>
-          <button type="button" className="mock-test__link" onClick={onBack}>
-            <ArrowLeft size={16} aria-hidden="true" /> Back to Results
-          </button>
-          <h1 className="mock-test__title" id="mock-test-answers-heading">
-            Answer review
-          </h1>
-          <p className="mock-test__muted">
-            {review.score} / {review.total} correct. Review only; the stored
-            score does not change.
-          </p>
-        </div>
+    <section
+      className="mock-test mock-test--wide"
+      aria-labelledby="mock-test-answers-heading"
+    >
+      <header className="mock-test__answers-top">
+        <button type="button" className="mock-test__link" onClick={onBack}>
+          <ArrowLeft size={16} aria-hidden="true" /> Back to Results
+        </button>
+        <h1 id="mock-test-answers-heading" className="mock-test__legend">
+          Answer review
+        </h1>
       </header>
 
-      <div className="mock-test__review-layout">
-        <div className="mock-test__card mock-test__review-nav">
-          <div className="mock-test__pills" role="group" aria-label="Filter by result">
-            {(["all", "correct", "incorrect"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                className={`mock-test__pill${
-                  outcome === value ? " mock-test__pill--active" : ""
-                }`}
-                aria-pressed={outcome === value}
-                onClick={() => {
-                  setOutcome(value);
-                  setActivePosition(null);
-                }}
-              >
-                {value === "all"
-                  ? `All (${counts.all})`
-                  : value === "correct"
-                    ? `Correct (${counts.correct})`
-                    : `Incorrect (${counts.incorrect})`}
-              </button>
-            ))}
-          </div>
-
-          <label className="mock-test__field" htmlFor="mock-test-topic-filter">
-            <span className="mock-test__label">Topic</span>
-            <select
-              id="mock-test-topic-filter"
-              className="mock-test__select"
-              value={topic}
-              onChange={(event) => {
-                setTopic(event.target.value);
+      <div className="mock-test__answers-toolbar">
+        <div className="mock-test__pills" role="group" aria-label="Filter by result">
+          {(["all", "correct", "incorrect"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={`mock-test__pill${
+                outcome === value ? " mock-test__pill--active" : ""
+              }`}
+              aria-pressed={outcome === value}
+              onClick={() => {
+                setOutcome(value);
                 setActivePosition(null);
               }}
             >
-              <option value="all">All topics</option>
-              {topics.map((name) => (
-                <option key={name} value={name}>
-                  {humanizeTopic(name)}
-                </option>
-              ))}
-            </select>
-          </label>
+              {value === "all"
+                ? `All (${counts.all})`
+                : value === "correct"
+                  ? `Correct (${counts.correct})`
+                  : `Incorrect (${counts.incorrect})`}
+            </button>
+          ))}
+        </div>
 
+        <label className="mock-test__field" htmlFor="mock-test-topic-filter">
+          <span className="mock-test__legend">Topic</span>
+          <select
+            id="mock-test-topic-filter"
+            className="mock-test__select"
+            value={topic}
+            onChange={(event) => {
+              setTopic(event.target.value);
+              setActivePosition(null);
+            }}
+          >
+            <option value="all">All Topics</option>
+            {topics.map((name) => (
+              <option key={name} value={name}>
+                {humanizeTopic(name)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="mock-test__review-layout">
+        <div className="mock-test__card mock-test__review-nav">
           <div
             className="mock-test__review-grid"
             role="group"
@@ -210,13 +212,11 @@ export function MockTestAnswers({ review, onBack }: MockTestAnswersProps) {
                     .join(" ");
                   return (
                     <li key={choice.id} className={classes}>
-                      <span
-                        className="mock-test__choice-letter"
-                        aria-hidden="true"
-                      >
-                        {choice.letter}
-                      </span>
+                      <span className="mock-test__radio" aria-hidden="true" />
                       <span className="mock-test__choice-text">
+                        <span className="mock-test__choice-label">
+                          {choice.letter}.
+                        </span>{" "}
                         {choice.text}
                       </span>
                       {choice.isCorrect ? (
@@ -238,7 +238,13 @@ export function MockTestAnswers({ review, onBack }: MockTestAnswersProps) {
                   );
                 })}
               </ul>
+            </>
+          )}
+        </div>
 
+        <div className="mock-test__card mock-test__panel">
+          {current && (
+            <>
               <div className="mock-test__question-tabs" role="tablist">
                 <button
                   type="button"
@@ -264,63 +270,64 @@ export function MockTestAnswers({ review, onBack }: MockTestAnswersProps) {
                 </button>
               </div>
 
-              {tab === "explanation" ? (
-                <div role="tabpanel">
-                  <p className="mock-test__muted">
-                    <strong>Correct answer:</strong>{" "}
-                    {correctChoice
-                      ? `${correctChoice.letter}. ${correctChoice.text}`
-                      : "Not available."}
-                  </p>
-                  {explanations.length > 0 ? (
-                    <div className="mock-test__topic-list">
-                      {explanations.map((choice) => (
-                        <p
-                          key={choice.id}
-                          className="mock-test__explanation"
-                        >
-                          <strong>{choice.letter}.</strong> {choice.explanation}
-                        </p>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="mock-test__muted">
-                      No explanation was generated for this question.
+              <div className="mock-test__panel-body">
+                {tab === "explanation" ? (
+                  <div role="tabpanel">
+                    <p className="mock-test__correct-answer">
+                      <strong>Correct Answer:</strong>{" "}
+                      {correctChoice
+                        ? `${correctChoice.letter}. ${correctChoice.text}`
+                        : "Not available."}
                     </p>
-                  )}
-                </div>
-              ) : (
-                <div role="tabpanel">
-                  {current.citations.length > 0 ? (
-                    <div className="mock-test__topic-list">
-                      {current.citations.map((citation, citationIndex) => (
-                        <div
-                          key={`${citation.documentTitleSnapshot}-${citation.pageNumber}-${citationIndex}`}
-                          className="mock-test__citation-card"
-                        >
-                          <p>
-                            <strong>{citation.documentTitleSnapshot}</strong>
+                    <div className="mock-test__rationale-list">
+                      {current.choices.map((choice) => (
+                        <div key={choice.id} className="mock-test__rationale">
+                          <p className="mock-test__rationale-choice">
+                            <strong>{choice.letter}.</strong> {choice.text}
                           </p>
                           <p className="mock-test__muted">
-                            Page {citation.pageNumber}
+                            {choice.explanation || "No rationale provided."}
                           </p>
-                          {citation.quote && (
-                            <blockquote className="mock-test__quote">
-                              {citation.quote}
-                            </blockquote>
-                          )}
                         </div>
                       ))}
                     </div>
-                  ) : (
-                    <p className="mock-test__muted">
-                      No citation was saved for this question.
+                  </div>
+                ) : (
+                  <div role="tabpanel">
+                    <p className="mock-test__panel-subject">
+                      {subjectName || "Mock Test"}
                     </p>
-                  )}
-                </div>
-              )}
+                    {current.citations.length > 0 ? (
+                      <div className="mock-test__topic-list">
+                        {current.citations.map((citation, citationIndex) => (
+                          <div
+                            key={`${citation.documentTitleSnapshot}-${citation.pageNumber}-${citationIndex}`}
+                            className="mock-test__citation-card"
+                          >
+                            <p>
+                              <strong>{citation.documentTitleSnapshot}</strong>
+                            </p>
+                            <p className="mock-test__muted">
+                              Page {citation.pageNumber}
+                            </p>
+                            {citation.quote && (
+                              <blockquote className="mock-test__quote">
+                                {citation.quote}
+                              </blockquote>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mock-test__muted">
+                        No citation was saved for this question.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
 
-              <div className="mock-test__actions">
+              <div className="mock-test__panel-actions">
                 <button
                   type="button"
                   className="mock-test__btn mock-test__btn--ghost"

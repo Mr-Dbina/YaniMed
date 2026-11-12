@@ -50,7 +50,7 @@ export function MockTestReview({
     return (
       <section className="mock-test" aria-labelledby="mock-test-review-heading">
         <h1 className="mock-test__title" id="mock-test-review-heading">
-          Review your answers
+          Review Your Answers
         </h1>
         <p role="status">Loading your answers…</p>
       </section>
@@ -61,7 +61,7 @@ export function MockTestReview({
     return (
       <section className="mock-test" aria-labelledby="mock-test-review-heading">
         <h1 className="mock-test__title" id="mock-test-review-heading">
-          Review your answers
+          Review Your Answers
         </h1>
         <div className="mock-test__error-block">
           <p role="alert" className="mock-test__error">
@@ -83,7 +83,7 @@ export function MockTestReview({
     return (
       <section className="mock-test" aria-labelledby="mock-test-review-heading">
         <h1 className="mock-test__title" id="mock-test-review-heading">
-          Review your answers
+          Review Your Answers
         </h1>
         <p className="mock-test__muted">No questions are available to review.</p>
       </section>
@@ -102,7 +102,7 @@ export function MockTestReview({
       <header className="mock-test__top">
         <div>
           <h1 className="mock-test__title" id="mock-test-review-heading">
-            Review your answers
+            Review Your Answers
           </h1>
           <p className="mock-test__muted">
             {answeredCount} of {ordered.length} answered. Correctness is hidden
@@ -119,140 +119,143 @@ export function MockTestReview({
         </button>
       </header>
 
-      <div className="mock-test__card">
-        <h2 className="mock-test__heading">Questions</h2>
-        <p className="mock-test__muted">
-          Filled numbers have a saved answer. Jump to any question to change it.
-        </p>
-        <div
-          className="mock-test__navigator"
-          role="group"
-          aria-label="Question navigator"
-        >
-          {ordered.map((item) => (
-            <button
-              key={item.position}
-              type="button"
-              className={`mock-test__nav-item${item.answered ? " mock-test__nav-item--selected" : ""}`}
-              aria-current={item.position === activePosition ? "true" : undefined}
-              aria-label={`Question ${item.position}${item.answered ? ", answered" : ", not answered"}`}
-              onClick={() => setCurrentPosition(item.position)}
-            >
-              {item.position}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="mock-test__card">
-        <div className="mock-test__top">
-          <h2 className="mock-test__heading">
-            Question {activePosition}
-            {!current.answered ? " — not answered" : ""}
-          </h2>
-          <div className="mock-test__actions">
-            <button
-              type="button"
-              className="mock-test__btn mock-test__btn--ghost"
-              disabled={index <= 0}
-              onClick={() => setCurrentPosition(ordered[index - 1].position)}
-            >
-              Previous
-            </button>
-            <button
-              type="button"
-              className="mock-test__btn mock-test__btn--ghost"
-              disabled={index < 0 || index >= ordered.length - 1}
-              onClick={() => setCurrentPosition(ordered[index + 1].position)}
-            >
-              Next
-            </button>
+      <div className="mock-test__pre-submit-grid">
+        <div className="mock-test__card mock-test__pre-submit-side">
+          <div
+            className="mock-test__navigator"
+            role="group"
+            aria-label="Question navigator"
+          >
+            {ordered.map((item) => (
+              <button
+                key={item.position}
+                type="button"
+                className={`mock-test__nav-item${
+                  item.answered ? " mock-test__nav-item--answered" : ""
+                }`}
+                aria-current={
+                  item.position === activePosition ? "true" : undefined
+                }
+                aria-label={`Question ${item.position}${
+                  item.answered ? ", answered" : ", not answered"
+                }`}
+                onClick={() => setCurrentPosition(item.position)}
+              >
+                {item.position}
+              </button>
+            ))}
           </div>
-        </div>
 
-        <p className="mock-test__stem">{current.stem}</p>
-        {current.leadIn && (
-          <p className="mock-test__lead-in">{current.leadIn}</p>
-        )}
-        <fieldset
-          className="mock-test__fieldset"
-          disabled={disabled || !current.answered}
-        >
-          <legend className="mock-test__legend">Answer choices</legend>
-          <div className="mock-test__choices">
-            {current.choices.map((choice) => {
-              const selected = current.selectedChoiceId === choice.id;
-              return (
-                <label
-                  key={choice.id}
-                  className={`mock-test__choice${selected ? " mock-test__choice--selected" : ""}`}
-                >
-                  <input
-                    type="radio"
-                    name={`review-question-${activePosition}`}
-                    value={choice.id}
-                    checked={selected}
-                    onChange={() => onEdit(activePosition, choice.id)}
-                    aria-label={`Option ${choice.letter}: ${choice.text}`}
-                  />
-                  <span className="mock-test__choice-letter" aria-hidden="true">
-                    {choice.letter}
-                  </span>
-                  <span className="mock-test__choice-text">{choice.text}</span>
-                </label>
-              );
-            })}
-          </div>
-        </fieldset>
-        {savingPosition === activePosition && (
-          <p role="status" className="mock-test__saving">
-            Saving answer…
-          </p>
-        )}
-        {!current.answered && (
-          <p className="mock-test__muted">
-            This question has no saved answer. Only answered questions can be
-            changed before submitting.
-          </p>
-        )}
-
-        {pendingEdit && pendingEdit.position === activePosition && (
-          <div className="mock-test__error-block">
-            <p role="alert" className="mock-test__error">
-              {error ?? "The answer was not saved."}
+          <button
+            type="button"
+            className="mock-test__btn mock-test__btn--primary mock-test__btn--block"
+            disabled={!allAnswered || disabled}
+            onClick={onRequestSubmit}
+          >
+            Submit Test
+          </button>
+          {!allAnswered && (
+            <p className="mock-test__muted">
+              Every question must be answered before submitting.
             </p>
-            <button
-              type="button"
-              className="mock-test__btn mock-test__btn--ghost"
-              disabled={disabled}
-              onClick={onRetryEdit}
-            >
-              Retry saving
-            </button>
+          )}
+        </div>
+
+        <div className="mock-test__card mock-test__pre-submit-main">
+          <div className="mock-test__question-head">
+            <h2 className="mock-test__heading">
+              Question {activePosition}
+              {!current.answered ? " — not answered" : ""}
+            </h2>
+            <div className="mock-test__actions">
+              <button
+                type="button"
+                className="mock-test__btn mock-test__btn--ghost"
+                disabled={index <= 0}
+                onClick={() => setCurrentPosition(ordered[index - 1].position)}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                className="mock-test__btn mock-test__btn--ghost"
+                disabled={index < 0 || index >= ordered.length - 1}
+                onClick={() => setCurrentPosition(ordered[index + 1].position)}
+              >
+                Next
+              </button>
+            </div>
           </div>
-        )}
 
-        {(!pendingEdit || pendingEdit.position !== activePosition) && error && (
-          <p role="alert" className="mock-test__error">
-            {error}
-          </p>
-        )}
-      </div>
+          <p className="mock-test__stem">{current.stem}</p>
+          {current.leadIn && <p className="mock-test__lead-in">{current.leadIn}</p>}
+          <fieldset
+            className="mock-test__fieldset"
+            disabled={disabled || !current.answered}
+          >
+            <legend className="mock-test__legend">Answer choices</legend>
+            <div className="mock-test__choices">
+              {current.choices.map((choice) => {
+                const selected = current.selectedChoiceId === choice.id;
+                return (
+                  <label
+                    key={choice.id}
+                    className={`mock-test__choice${selected ? " mock-test__choice--selected" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name={`review-question-${activePosition}`}
+                      value={choice.id}
+                      checked={selected}
+                      onChange={() => onEdit(activePosition, choice.id)}
+                      aria-label={`Option ${choice.letter}: ${choice.text}`}
+                    />
+                    <span className="mock-test__radio" aria-hidden="true" />
+                    <span className="mock-test__choice-text">
+                      <span className="mock-test__choice-label">
+                        {choice.letter}.
+                      </span>{" "}
+                      {choice.text}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+          {savingPosition === activePosition && (
+            <p role="status" className="mock-test__saving">
+              Saving answer…
+            </p>
+          )}
+          {!current.answered && (
+            <p className="mock-test__muted">
+              This question has no saved answer. Only answered questions can be
+              changed before submitting.
+            </p>
+          )}
 
-      <div className="mock-test__actions">
-        <button
-          type="button"
-          className="mock-test__btn mock-test__btn--primary"
-          disabled={!allAnswered || disabled}
-          onClick={onRequestSubmit}
-        >
-          Submit test
-        </button>
-        {!allAnswered && (
-          <span className="mock-test__muted">
-            Every question must be answered before submitting.
-          </span>
-        )}
+          {pendingEdit && pendingEdit.position === activePosition && (
+            <div className="mock-test__error-block">
+              <p role="alert" className="mock-test__error">
+                {error ?? "The answer was not saved."}
+              </p>
+              <button
+                type="button"
+                className="mock-test__btn mock-test__btn--ghost"
+                disabled={disabled}
+                onClick={onRetryEdit}
+              >
+                Retry saving
+              </button>
+            </div>
+          )}
+
+          {(!pendingEdit || pendingEdit.position !== activePosition) && error && (
+            <p role="alert" className="mock-test__error">
+              {error}
+            </p>
+          )}
+        </div>
       </div>
     </section>
   );

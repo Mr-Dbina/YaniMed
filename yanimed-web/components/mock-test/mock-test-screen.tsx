@@ -342,7 +342,10 @@ function MockTestSession({
 
         if (!canAutoResume || !unfinished) {
           if (pendingStart) {
-            if (data.eligibleQuestionCount >= data.questionsPerTest) {
+            if (
+              !data.unfinishedAttempt &&
+              data.eligibleQuestionCount >= data.questionsPerTest
+            ) {
               try {
                 const created = await createAttempt(subjectId);
                 if (!applies()) return;
@@ -378,6 +381,7 @@ function MockTestSession({
         try {
           await beginAttempt(unfinished.id, unfinished.status, applies);
           if (!applies()) return;
+          if (pendingStart) onPendingStartConsumed();
           setBooting(false);
         } catch (error) {
           if (!applies()) return;
@@ -782,7 +786,11 @@ function MockTestSession({
     );
   } else if (phase === "answers" && review) {
     body = (
-      <MockTestAnswers review={review} onBack={() => setPhase("result")} />
+      <MockTestAnswers
+        review={review}
+        subjectName={subjectName}
+        onBack={() => setPhase("result")}
+      />
     );
   } else {
     body = (
@@ -797,7 +805,6 @@ function MockTestSession({
         actionError={actionError}
         busy={actionBusy}
         onRetryOverview={refreshOverview}
-        onStart={() => void handleStart()}
         onResume={(id) => void handleResume(id)}
         onRequestDiscard={setDiscardTarget}
       />
