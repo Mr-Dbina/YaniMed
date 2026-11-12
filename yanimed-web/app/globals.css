@@ -8,24 +8,38 @@
  */
 :root {
   --background: 40 33% 97%;
-  --foreground: 24 10% 10%;
-  --card: 40 40% 99%;
-  --card-foreground: 24 10% 10%;
-  --muted: 40 22% 92%;
-  --muted-foreground: 30 8% 42%;
-  --border: 36 16% 87%;
-  --destructive: 0 62% 42%;
+  --foreground: 24 12% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 24 12% 12%;
+  --muted: 334 62% 96%;
+  --muted-foreground: 330 12% 42%;
+  --border: 334 28% 90%;
+  --destructive: 350 75% 45%;
+  --success: 152 45% 36%;
+  --success-soft: 150 55% 94%;
+  --danger-soft: 348 90% 96%;
+  --primary: 328 89% 52%;
+  --primary-foreground: 0 0% 100%;
+  --primary-soft: 334 84% 95%;
+  --ring: 328 89% 52%;
 }
 
 .dark {
-  --background: 24 10% 10%;
-  --foreground: 40 33% 96%;
-  --card: 24 10% 13%;
-  --card-foreground: 40 33% 96%;
-  --muted: 24 8% 18%;
-  --muted-foreground: 35 12% 66%;
-  --border: 24 8% 22%;
-  --destructive: 0 70% 68%;
+  --background: 330 14% 8%;
+  --foreground: 330 15% 95%;
+  --card: 330 12% 12%;
+  --card-foreground: 330 15% 95%;
+  --muted: 330 12% 20%;
+  --muted-foreground: 330 8% 68%;
+  --border: 330 10% 24%;
+  --destructive: 350 70% 65%;
+  --success: 150 45% 60%;
+  --success-soft: 150 30% 18%;
+  --danger-soft: 348 40% 20%;
+  --primary: 328 80% 46%;
+  --primary-foreground: 0 0% 100%;
+  --primary-soft: 328 32% 22%;
+  --ring: 328 80% 60%;
 }
 
 *,
@@ -775,16 +789,12 @@ html.dark .icon-mono {
   padding: 0;
   font-family: inherit;
   font-size: inherit;
-  color: #2563eb;
+  color: hsl(var(--primary));
   cursor: pointer;
 }
 
 .setting-link:hover {
   text-decoration: underline;
-}
-
-.dark .setting-link {
-  color: #7aa2f7;
 }
 
 .setting-chevron {
@@ -887,13 +897,8 @@ html.dark .icon-mono {
 }
 
 .mode-preview--selected {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 2px #2563eb;
-}
-
-.dark .mode-preview--selected {
-  border-color: #7aa2f7;
-  box-shadow: 0 0 0 2px #7aa2f7;
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 2px hsl(var(--primary));
 }
 
 .mode-preview__image {
@@ -905,12 +910,8 @@ html.dark .icon-mono {
 
 /* Keyboard focus only, so a pointer click leaves no ring behind. */
 .mode-preview:focus-visible {
-  outline: 2px solid #2563eb;
+  outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
-}
-
-.dark .mode-preview:focus-visible {
-  outline-color: #7aa2f7;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1785,23 +1786,28 @@ html.dark .empty-state__button img {
   cursor: pointer;
 }
 
+.subject-modal__btn:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
 .subject-modal__btn--ghost {
-  border-color: hsl(var(--border));
+  border-color: hsl(var(--primary) / 0.4);
   background: transparent;
-  color: hsl(var(--foreground));
+  color: hsl(var(--primary));
 }
 
 .subject-modal__btn--ghost:hover {
-  background: hsl(var(--muted));
+  background: hsl(var(--primary-soft));
 }
 
 .subject-modal__btn--primary {
-  background: hsl(var(--foreground));
-  color: hsl(var(--background));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
 
 .subject-modal__btn--primary:hover:not(:disabled) {
-  background: hsl(var(--foreground) / 0.9);
+  background: hsl(var(--primary) / 0.88);
 }
 
 .subject-modal__btn--primary:disabled {
@@ -1810,12 +1816,12 @@ html.dark .empty-state__button img {
 }
 
 .subject-modal__btn--danger {
-  background: #e5484d;
-  color: #ffffff;
+  background: hsl(var(--destructive));
+  color: hsl(var(--primary-foreground));
 }
 
 .subject-modal__btn--danger:hover {
-  background: #d93a3f;
+  background: hsl(var(--destructive) / 0.88);
 }
 
 /* PDF dropzone */
@@ -2292,4 +2298,995 @@ html.dark .empty-state__button img {
 
 .subject-detail__add:hover {
   background: hsl(var(--muted));
+}
+
+/* Mock Test */
+.mock-test-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mock-test {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+  overflow-wrap: anywhere;
+}
+
+.mock-test__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mock-test__title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.mock-test__heading {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.mock-test__subheading {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mock-test__muted {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__notice {
+  margin: 0;
+  border: 1px solid hsl(var(--primary) / 0.18);
+  border-radius: 12px;
+  background: hsl(var(--primary-soft) / 0.55);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 16px;
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  padding: 22px;
+  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.04);
+}
+
+.mock-test__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mock-test__label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mock-test__select {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 42px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  padding: 9px 10px;
+  font-family: inherit;
+  font-size: 15px;
+}
+
+.mock-test__select:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.mock-test__stat {
+  margin: 0;
+  font-size: 15px;
+}
+
+.mock-test__warning {
+  margin: 0;
+  border-left: 3px solid hsl(var(--destructive));
+  padding-left: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: hsl(var(--destructive));
+}
+
+.mock-test__unfinished {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid hsl(var(--border));
+  padding-top: 14px;
+}
+
+.mock-test__unfinished p {
+  margin: 0;
+}
+
+.mock-test__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.mock-test__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  box-sizing: border-box;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  padding: 8px 16px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mock-test__btn:hover:not(:disabled) {
+  background: hsl(var(--muted));
+}
+
+.mock-test__btn:focus-visible,
+.mock-test__link:focus-visible,
+.mock-test__nav-item:focus-visible,
+.mock-test__back:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.mock-test__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mock-test__btn--primary {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.mock-test__btn--primary:hover:not(:disabled) {
+  border-color: hsl(var(--primary) / 0.88);
+  background: hsl(var(--primary) / 0.88);
+}
+
+.mock-test__btn--ghost {
+  border-color: hsl(var(--primary) / 0.4);
+  background: transparent;
+  color: hsl(var(--primary));
+}
+
+.mock-test__btn--ghost:hover:not(:disabled) {
+  background: hsl(var(--primary-soft));
+}
+
+.mock-test__btn--danger {
+  border-color: hsl(var(--destructive) / 0.5);
+  background: transparent;
+  color: hsl(var(--destructive));
+}
+
+.mock-test__btn--danger:hover:not(:disabled) {
+  background: hsl(var(--danger-soft));
+}
+
+.mock-test__btn--active {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary-soft));
+  color: hsl(var(--primary));
+}
+
+.mock-test__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  padding: 4px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.mock-test__error-block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.mock-test__error {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: hsl(var(--destructive));
+}
+
+/* Start: subject picker */
+.mock-test__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.mock-test__search-icon {
+  position: absolute;
+  left: 14px;
+  color: hsl(var(--muted-foreground));
+  pointer-events: none;
+}
+
+.mock-test__search-input {
+  width: 100%;
+  min-height: 46px;
+  box-sizing: border-box;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  padding: 10px 16px 10px 42px;
+  font-family: inherit;
+  font-size: 15px;
+}
+
+.mock-test__search-input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__search-input:focus-visible {
+  border-color: hsl(var(--primary));
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.mock-test__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.mock-test__subject-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid hsl(var(--border));
+  border-radius: 14px;
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  padding: 16px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease-out, background 150ms ease-out,
+    box-shadow 150ms ease-out;
+}
+
+.mock-test__subject-card:hover {
+  border-color: hsl(var(--primary) / 0.5);
+  background: hsl(var(--primary-soft) / 0.45);
+  box-shadow: 0 2px 8px hsl(var(--primary) / 0.1);
+}
+
+.mock-test__subject-card:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.mock-test__subject-card--selected {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary-soft));
+}
+
+.mock-test__subject-name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.mock-test__subject-meta {
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 14px;
+  background: hsl(var(--muted) / 0.45);
+  padding: 22px;
+  text-align: center;
+}
+
+/* Active exam */
+.mock-test__exam-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.mock-test__back {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  box-sizing: border-box;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.mock-test__back:hover {
+  border-color: hsl(var(--primary) / 0.5);
+  background: hsl(var(--primary-soft));
+}
+
+.mock-test__exam-heading {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mock-test__subject-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--primary));
+}
+
+.mock-test__step {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.mock-test__progress {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: hsl(var(--primary-soft));
+  overflow: hidden;
+}
+
+.mock-test__progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: hsl(var(--primary));
+  transition: width 250ms ease-out;
+}
+
+.mock-test__stem {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.mock-test__lead-in {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.mock-test__legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.mock-test__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mock-test__choice {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--background));
+  padding: 12px;
+  cursor: pointer;
+}
+
+.mock-test__choice:hover {
+  border-color: hsl(var(--primary) / 0.4);
+}
+
+.mock-test__fieldset:disabled .mock-test__choice {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.mock-test__choice--selected {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary-soft));
+}
+
+.mock-test__choice--correct {
+  border-color: hsl(var(--success) / 0.5);
+  background: hsl(var(--success-soft) / 0.7);
+}
+
+.mock-test__choice--wrong {
+  border-color: hsl(var(--destructive) / 0.5);
+  background: hsl(var(--danger-soft) / 0.7);
+}
+
+.mock-test__choice input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.mock-test__choice:has(input:focus-visible) {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.mock-test__choice-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.mock-test__choice--selected .mock-test__choice-letter {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.mock-test__choice--wrong .mock-test__choice-letter {
+  border-color: hsl(var(--destructive));
+  background: hsl(var(--destructive));
+  color: hsl(var(--primary-foreground));
+}
+
+.mock-test__choice--correct .mock-test__choice-letter {
+  border-color: hsl(var(--success));
+  background: hsl(var(--success));
+  color: hsl(var(--primary-foreground));
+}
+
+.mock-test__choice-text {
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.mock-test__choice-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  border-radius: 50%;
+}
+
+.mock-test__choice--correct .mock-test__choice-mark {
+  background: hsl(var(--success-soft));
+  color: hsl(var(--success));
+}
+
+.mock-test__choice--wrong .mock-test__choice-mark {
+  background: hsl(var(--danger-soft));
+  color: hsl(var(--destructive));
+}
+
+.mock-test__explanation {
+  display: block;
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__saving {
+  margin: 0;
+  font-size: 14px;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__exam-actions {
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.mock-test__btn--skip {
+  border-color: hsl(var(--primary) / 0.4);
+  background: transparent;
+  color: hsl(var(--primary));
+}
+
+.mock-test__btn--skip:hover:not(:disabled) {
+  background: hsl(var(--primary-soft));
+}
+
+/* Pre-submit review */
+.mock-test__navigator {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mock-test__nav-item {
+  min-height: 44px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mock-test__nav-item:hover {
+  border-color: hsl(var(--primary) / 0.45);
+  background: hsl(var(--primary-soft));
+}
+
+.mock-test__nav-item--selected {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.mock-test__nav-item--selected:hover {
+  background: hsl(var(--primary) / 0.9);
+}
+
+.mock-test__nav-item[aria-current="true"] {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* Results */
+.mock-test__result-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 0 4px;
+  text-align: center;
+}
+
+.mock-test__trophy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: hsl(var(--primary-soft));
+  color: hsl(var(--primary));
+}
+
+.mock-test__result-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.mock-test__result-subject {
+  margin: 0;
+  font-size: 15px;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__scoreline {
+  margin: 8px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__score {
+  font-size: 52px;
+  font-weight: 700;
+  line-height: 1;
+  color: hsl(var(--primary));
+}
+
+.mock-test__result-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mock-test__metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid hsl(var(--primary) / 0.18);
+  border-radius: 16px;
+  background: hsl(var(--primary-soft) / 0.6);
+  padding: 18px 12px;
+  text-align: center;
+}
+
+.mock-test__metric-value {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: hsl(var(--primary));
+}
+
+.mock-test__metric-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__topic-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mock-test__topic {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mock-test__topic-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mock-test__topic-meta {
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__topic-bar {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: hsl(var(--primary-soft));
+  overflow: hidden;
+}
+
+.mock-test__topic-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: hsl(var(--primary));
+}
+
+.mock-test__result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Post-exam review */
+.mock-test__review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.mock-test__review-nav {
+  gap: 16px;
+}
+
+.mock-test__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mock-test__pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  box-sizing: border-box;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mock-test__pill:hover {
+  background: hsl(var(--primary-soft));
+}
+
+.mock-test__pill--active,
+.mock-test__pill--active:hover {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.mock-test__pill:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.mock-test__review-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mock-test__review-item {
+  min-height: 42px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mock-test__review-item--correct {
+  border-color: hsl(var(--success) / 0.4);
+  background: hsl(var(--success-soft));
+  color: hsl(var(--success));
+}
+
+.mock-test__review-item--incorrect {
+  border-color: hsl(var(--destructive) / 0.35);
+  background: hsl(var(--danger-soft));
+  color: hsl(var(--destructive));
+}
+
+.mock-test__review-item--active {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+
+.mock-test__review-item:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.mock-test__question-panel {
+  gap: 16px;
+}
+
+.mock-test__question-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.mock-test__question-head .mock-test__heading {
+  margin-right: auto;
+}
+
+.mock-test__question-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.mock-test__tab {
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mock-test__tab--active {
+  border-bottom-color: hsl(var(--primary));
+  color: hsl(var(--primary));
+}
+
+.mock-test__tab:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.mock-test__citation-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--muted) / 0.4);
+  padding: 14px;
+}
+
+.mock-test__citation-card p {
+  margin: 0;
+}
+
+.mock-test__quote {
+  margin: 4px 0 0;
+  font-style: italic;
+}
+
+/* Answer badges */
+.mock-test__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  background: hsl(var(--muted));
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+
+.mock-test__badge--warning {
+  background: hsl(var(--primary-soft));
+  color: hsl(var(--primary));
+}
+
+.mock-test__badge--correct {
+  background: hsl(var(--success-soft));
+  color: hsl(var(--success));
+}
+
+.mock-test__badge--incorrect {
+  background: hsl(var(--danger-soft));
+  color: hsl(var(--destructive));
+}
+
+.mock-test__superseded {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+  border: 1px solid hsl(var(--destructive) / 0.4);
+  border-radius: 14px;
+  background: hsl(var(--danger-soft));
+  padding: 14px 16px;
+}
+
+.mock-test__superseded p {
+  margin: 4px 0 0;
+}
+
+@media (max-width: 720px) {
+  .mock-test__review-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .mock-test__title {
+    font-size: 24px;
+  }
+
+  .mock-test__card {
+    border-radius: 14px;
+    padding: 16px;
+  }
+
+  .mock-test__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mock-test__actions .mock-test__btn {
+    flex: 1 1 auto;
+  }
+
+  .mock-test__navigator,
+  .mock-test__review-grid {
+    gap: 6px;
+  }
+
+  .mock-test__result-stats {
+    gap: 8px;
+  }
+
+  .mock-test__metric {
+    padding: 14px 6px;
+  }
+
+  .mock-test__metric-value {
+    font-size: 22px;
+  }
+
+  .mock-test__score {
+    font-size: 42px;
+  }
 }

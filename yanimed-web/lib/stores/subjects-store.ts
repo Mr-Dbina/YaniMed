@@ -83,9 +83,17 @@ function shouldResumeSync(subject: Subject): boolean {
 function mergeSubjects(localSubjects: Subject[], backendSubjects: BackendSubject[]): Subject[] {
   // A persisted upload status is not proof of a live upload. Rows without a
   // backend id stay only while this page session is syncing them.
-  const localRows = localSubjects.filter(
-    subject => subject.backendSubjectId || inFlightSyncs.has(subject.id),
+  const documentCounts = new Map(
+    backendSubjects.map(backend => [backend.id, backend.documentCount]),
   );
+  const localRows = localSubjects
+    .filter(subject => subject.backendSubjectId || inFlightSyncs.has(subject.id))
+    .map(subject => {
+      const count = subject.backendSubjectId
+        ? documentCounts.get(subject.backendSubjectId)
+        : undefined;
+      return count === undefined ? subject : { ...subject, documentCount: count };
+    });
   const merged = [...localRows];
   const knownBackendIds = new Set(
     localRows
@@ -102,6 +110,7 @@ function mergeSubjects(localSubjects: Subject[], backendSubjects: BackendSubject
       file: null,
       instructions: "",
       backendSubjectId: backendSubject.id,
+      documentCount: backendSubject.documentCount,
     });
   }
   return merged;

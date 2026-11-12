@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { PanelLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { Sidebar } from "@/components/sidebar";
@@ -13,6 +13,7 @@ import { useSidebarStore } from "@/lib/stores/sidebar-store";
 
 export function AppShell({ children }: { children?: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const subjects = useSubjectsStore((state) => state.subjects);
   const activeSubjectId = useSubjectsStore((state) => state.activeSubjectId);
   const addSubject = useSubjectsStore((state) => state.addSubject);
@@ -39,7 +40,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
 
   const selectSubject = (id: string) => {
     setActiveSubject(id);
-    router.push("/subjects");
+    if (pathname !== "/mock-test") router.push("/subjects");
     if (window.matchMedia("(max-width: 767px)").matches) {
       useSidebarStore.setState({ isCollapsed: true });
     }

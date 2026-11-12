@@ -47,6 +47,8 @@ export interface Subject {
   processingStatus?: "unavailable" | "processing" | "failed" | "ready";
   processingError?: string;
   backendSubjectId?: string;
+  /** PDF count reported by the backend for a synced subject. */
+  documentCount?: number;
   documentId?: string | null;
   idempotencyKey?: string;
   uploadName?: string;
