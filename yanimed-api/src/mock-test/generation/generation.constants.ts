@@ -17,6 +17,9 @@ export const MAX_QUESTIONS_PER_TOPIC = 2;
 export const STEM_MIN_SENTENCES = 1;
 export const STEM_MAX_SENTENCES = 6;
 
+/** Longest choice may not exceed 5x the shortest, ignoring tiny choices. */
+export const CHOICE_LENGTH_RATIO_MAX = 5;
+
 /** Duplicate detection. */
 export const DUPLICATE_COSINE_THRESHOLD = 0.85;
 
