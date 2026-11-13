@@ -195,6 +195,25 @@ describe('GenerationJobRepository (test DB)', () => {
     expect(next.created).toBe(true);
   });
 
+  it('reserves AI calls up to the cap and never above it', async () => {
+    const { job } = await createClaimedJob();
+
+    await expect(repository.reserveAiCall(job.id, 2)).resolves.toBe(1);
+    await expect(repository.reserveAiCall(job.id, 2)).resolves.toBe(2);
+    await expect(repository.reserveAiCall(job.id, 2)).resolves.toBeNull();
+
+    const stored = await prisma.generationJob.findUniqueOrThrow({
+      where: { id: job.id },
+    });
+    expect(stored.aiCallCount).toBe(2);
+
+    await expect(repository.reserveAiCall(job.id, 2)).resolves.toBeNull();
+    const after = await prisma.generationJob.findUniqueOrThrow({
+      where: { id: job.id },
+    });
+    expect(after.aiCallCount).toBe(2);
+  });
+
   it('caps acceptedCount at requestedCount', async () => {
     const { job, claimed } = await createClaimedJob(1, 1);
     const fence = {
