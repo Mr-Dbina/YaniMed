@@ -22,6 +22,10 @@ export const CHOICE_LENGTH_RATIO_MAX = 5;
 
 /** Duplicate detection. */
 export const DUPLICATE_COSINE_THRESHOLD = 0.85;
+export const DUPLICATE_EMBEDDING_DIMENSIONS = 768;
+/** Same-page same-fact heuristic. */
+export const SAME_FACT_QUOTE_DICE = 0.6;
+export const SAME_FACT_KEY_CHOICE_MIN_CHARS = 6;
 
 /** Citation quote matching. OCR pages get a lower floor. */
 export const CITATION_QUOTE_MATCH = 0.9;
