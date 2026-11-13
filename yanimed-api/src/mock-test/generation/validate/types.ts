@@ -70,11 +70,22 @@ export const REASON_CODES = {
   CITATION_QUOTE_NOT_FOUND: 'CITATION_QUOTE_NOT_FOUND',
   CHOICES_ALL_IN_STATED_RANGE: 'CHOICES_ALL_IN_STATED_RANGE',
   MARKUP_DETECTED: 'MARKUP_DETECTED',
+  VERIFIER_KEY_MISMATCH: 'VERIFIER_KEY_MISMATCH',
+  VERIFIER_OUTSIDE_KNOWLEDGE: 'VERIFIER_OUTSIDE_KNOWLEDGE',
+  VERIFIER_AMBIGUOUS: 'VERIFIER_AMBIGUOUS',
+  VERIFIER_QUOTE_UNVERIFIED: 'VERIFIER_QUOTE_UNVERIFIED',
+  VERIFIER_INVALID_OUTPUT: 'VERIFIER_INVALID_OUTPUT',
 } as const;
 
 export type ReasonCode = (typeof REASON_CODES)[keyof typeof REASON_CODES];
 
 export interface CheckAReason {
+  code: ReasonCode;
+  detail?: string;
+}
+
+/** A rejected draft from Check B. */
+export interface CheckBReason {
   code: ReasonCode;
   detail?: string;
 }
