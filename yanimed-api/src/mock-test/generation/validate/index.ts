@@ -6,3 +6,4 @@ export * from './verifier-prompt.js';
 export * from './check-b.js';
 export * from './same-fact.js';
 export * from './check-c.js';
+export * from './check-d.js';
