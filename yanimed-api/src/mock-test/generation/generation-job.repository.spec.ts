@@ -330,6 +330,24 @@ describe('GenerationJobRepository.incrementAccepted', () => {
   });
 });
 
+describe('GenerationJobRepository.reserveAiCall', () => {
+  it('returns the reserved count below the cap', async () => {
+    const fake = makeFake();
+    fake.$queryRaw.mockResolvedValue([{ aiCallCount: 400 }]);
+
+    await expect(repoFor(fake).reserveAiCall('job-1', 400)).resolves.toBe(400);
+  });
+
+  it('returns null at the cap without reserving', async () => {
+    const fake = makeFake();
+    fake.$queryRaw.mockResolvedValue([]);
+
+    await expect(
+      repoFor(fake).reserveAiCall('job-1', 400),
+    ).resolves.toBeNull();
+  });
+});
+
 describe('GenerationJobRepository.markStalled', () => {
   it('returns the number of stalled jobs', async () => {
     const fake = makeFake();

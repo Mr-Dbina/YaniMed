@@ -307,6 +307,23 @@ export class GenerationJobRepository {
   }
 
   /**
+   * Reserves one AI call for a job, refusing at the cap. The update only lands
+   * while aiCallCount is below the cap, so it doubles as the pre-call budget
+   * check. Returns the new count, or null when the job is missing or at cap.
+   */
+  async reserveAiCall(jobId: string, cap: number): Promise<number | null> {
+    const rows = await this.prisma.$queryRaw<{ aiCallCount: number }[]>`
+      UPDATE "GenerationJob"
+      SET "aiCallCount" = "aiCallCount" + 1
+      WHERE "id" = ${jobId}
+        AND "aiCallCount" < ${cap}
+      RETURNING "aiCallCount"
+    `;
+
+    return rows[0]?.aiCallCount ?? null;
+  }
+
+  /**
    * Moves stale RUNNING jobs to STALLED and increments their recovery epoch.
    * A later recovery claim is STALLED -> RUNNING with the new epoch.
    */
