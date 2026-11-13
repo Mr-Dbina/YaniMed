@@ -1,4 +1,4 @@
-import { afterAll, afterEach } from 'vitest';
+import { afterAll, afterEach, beforeAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../src/prisma/prisma.service.js';
 import { GenerationJobRepository } from '../../src/mock-test/generation/generation-job.repository.js';
@@ -14,6 +14,18 @@ export function assertTestDb(): void {
 export const prisma = new PrismaService();
 export const repository = new GenerationJobRepository(prisma);
 
+// claimNext is global: any leftover claimable job on the test DB would be
+// picked up before the fixture's own job. Only these states are claimable.
+const CLAIMABLE_STATES = ['QUEUED', 'RUNNING', 'STALLED', 'CANCELLING'] as const;
+
+export async function deleteClaimableGenerationJobs(): Promise<number> {
+  assertTestDb();
+  const { count } = await prisma.generationJob.deleteMany({
+    where: { state: { in: [...CLAIMABLE_STATES] } },
+  });
+  return count;
+}
+
 const createdSubjectIds: string[] = [];
 
 afterEach(async () => {
@@ -24,7 +36,12 @@ afterEach(async () => {
   createdSubjectIds.length = 0;
 });
 
+beforeAll(async () => {
+  await deleteClaimableGenerationJobs();
+});
+
 afterAll(async () => {
+  await deleteClaimableGenerationJobs();
   await prisma.$disconnect();
 });
 
