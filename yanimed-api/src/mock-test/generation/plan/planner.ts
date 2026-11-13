@@ -19,7 +19,7 @@ import {
   parseTopicNames,
   uniqueTopicKey,
 } from './prompts.js';
-import { allocateSlots, buildSlots, type PlannedSlot } from './slots.js';
+import { allocateSlots, buildSlots, membersByCentroid, type PlannedSlot } from './slots.js';
 
 const FIRST_K_MAX = 15;
 const CHUNKS_PER_CLUSTER = 4;
@@ -52,6 +52,8 @@ export interface PlanStats {
 export interface GenerationPlan {
   topics: PlanTopic[];
   slots: PlannedSlot[];
+  /** Topic key -> cluster chunk ids, nearest the centroid first. */
+  candidates: Record<string, string[]>;
   stats: PlanStats;
 }
 
@@ -170,9 +172,19 @@ export class GenerationPlanner {
       };
     });
 
+    const candidates: Record<string, string[]> = {};
+    for (const topic of topics) {
+      const cluster = clusters.find((item) => item.id === topic.clusterId);
+      if (cluster === undefined) continue;
+      candidates[topic.topicKey] = membersByCentroid(cluster).map(
+        (item) => item.chunk.id,
+      );
+    }
+
     return {
       topics,
       slots: buildSlots(allocations, topicKeyByCluster),
+      candidates,
       stats: {
         eligibleChunks: gate.eligibleChunks,
         distinctPages: gate.eligiblePages,

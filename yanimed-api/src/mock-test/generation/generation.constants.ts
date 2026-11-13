@@ -13,6 +13,11 @@ export {
 export const MIN_DISTINCT_TOPICS = 13;
 export const MAX_QUESTIONS_PER_TOPIC = 2;
 
+/** Runner limits. AI calls are capped separately inside the AI wrapper. */
+export const DRAFT_ATTEMPTS_PER_SLOT = 3;
+export const REPLACEMENT_BUDGET = 5;
+export const VALIDATOR_VERSION = 'validators-v1';
+
 /** Stem length. */
 export const STEM_MIN_SENTENCES = 1;
 export const STEM_MAX_SENTENCES = 6;

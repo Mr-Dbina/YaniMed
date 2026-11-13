@@ -108,6 +108,77 @@ describe('writeQuestion argument validation', () => {
   });
 });
 
+function fakeWriteClient(): {
+  client: PrismaService;
+  createQuestion: ReturnType<typeof vi.fn>;
+} {
+  const createQuestion = vi.fn().mockResolvedValue({ id: 'question-1' });
+  const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ acceptedCount: 1 }]),
+    subjectTopic: {
+      findUnique: vi.fn().mockResolvedValue({ subjectId: 'subject-1' }),
+    },
+    generationJobDocument: {
+      findUnique: vi.fn().mockResolvedValue({ document: { title: 'Doc' } }),
+    },
+    mockQuestion: { create: createQuestion },
+    mockChoice: { createMany: vi.fn().mockResolvedValue({ count: 4 }) },
+    questionCitation: { create: vi.fn().mockResolvedValue({}) },
+  };
+  const client = {
+    $transaction: vi.fn(async (callback: (value: typeof tx) => unknown) =>
+      callback(tx),
+    ),
+  } as unknown as PrismaService;
+  return { client, createQuestion };
+}
+
+describe('writeQuestion provenance', () => {
+  it('stores supplied provenance instead of the placeholder values', async () => {
+    const { client, createQuestion } = fakeWriteClient();
+
+    await writeQuestion(
+      makeArgs({
+        provenance: {
+          draftModel: 'draft-model-1',
+          verifierModel: 'verify-model-1',
+          promptVersion: 'prompt-v2',
+          validatorVersion: 'validators-v1',
+        },
+      }),
+      client,
+    );
+
+    expect(createQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          draftModel: 'draft-model-1',
+          verifierModel: 'verify-model-1',
+          promptVersion: 'prompt-v2',
+          validatorVersion: 'validators-v1',
+        }),
+      }),
+    );
+  });
+
+  it('keeps the placeholder provenance when none is supplied', async () => {
+    const { client, createQuestion } = fakeWriteClient();
+
+    await writeQuestion(makeArgs(), client);
+
+    expect(createQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          draftModel: 'generation-worker',
+          verifierModel: null,
+          promptVersion: 'm5',
+          validatorVersion: 'm5',
+        }),
+      }),
+    );
+  });
+});
+
 describe('ensureSubjectTopics', () => {
   it('deduplicates plan keys and returns key -> id without renaming', async () => {
     const createMany = vi.fn().mockResolvedValue({ count: 2 });

@@ -14,9 +14,17 @@ export const HELD_QUESTION_STATUS = 'QUARANTINED' as const;
  */
 const PROVENANCE = {
   draftModel: 'generation-worker',
+  verifierModel: null,
   promptVersion: 'm5',
   validatorVersion: 'm5',
 } as const;
+
+export interface WriteProvenance {
+  draftModel: string;
+  verifierModel: string | null;
+  promptVersion: string;
+  validatorVersion: string;
+}
 
 export interface WriteQuestionArgs {
   fence: { jobId: string; recoveryCount: number };
@@ -25,6 +33,8 @@ export interface WriteQuestionArgs {
   topicId: string;
   /** No question-position column exists; accepted for API stability. */
   position?: number;
+  /** Overrides the placeholder provenance when the runner supplies real values. */
+  provenance?: WriteProvenance;
 }
 
 export interface WriteQuestionResult {
@@ -93,6 +103,7 @@ export async function writeQuestion(
   const { fence, draft } = args;
 
   return client.$transaction(async (tx) => {
+    const provenance = args.provenance ?? PROVENANCE;
     const rows = await tx.$queryRaw<{ acceptedCount: number }[]>`
       UPDATE "GenerationJob"
       SET "acceptedCount" = "acceptedCount" + 1
@@ -152,10 +163,10 @@ export async function writeQuestion(
         stem: draft.stem,
         leadIn: draft.leadIn,
         educationalObjective: draft.objective,
-        draftModel: PROVENANCE.draftModel,
-        verifierModel: null,
-        promptVersion: PROVENANCE.promptVersion,
-        validatorVersion: PROVENANCE.validatorVersion,
+        draftModel: provenance.draftModel,
+        verifierModel: provenance.verifierModel,
+        promptVersion: provenance.promptVersion,
+        validatorVersion: provenance.validatorVersion,
       },
       select: { id: true },
     });

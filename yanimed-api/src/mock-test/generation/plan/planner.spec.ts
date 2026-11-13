@@ -140,6 +140,16 @@ describe('GenerationPlanner', () => {
       ).toBe(true);
     }
 
+    for (const topic of plan.topics) {
+      const candidates = plan.candidates[topic.topicKey];
+      expect(candidates.length).toBeGreaterThan(0);
+      expect(new Set(candidates).size).toBe(candidates.length);
+      for (const id of candidates) expect(knownIds.has(id)).toBe(true);
+    }
+    expect(Object.keys(plan.candidates).sort()).toEqual(
+      plan.topics.map((topic) => topic.topicKey).sort(),
+    );
+
     expect(complete).toHaveBeenCalledTimes(1);
     expect(complete).toHaveBeenCalledWith(
       expect.objectContaining({ purpose: 'PLAN', jobId: 'job-1' }),
