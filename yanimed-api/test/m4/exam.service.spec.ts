@@ -140,6 +140,9 @@ describe('M4 exam service', () => {
     const excluded = questions[0];
     if (!excluded) throw new Error('ZZ-m4 fixture has no questions.');
 
+    await prisma.questionCitation.deleteMany({
+      where: { questionId: excluded.id },
+    });
     await prisma.questionCitation.create({
       data: {
         questionId: excluded.id,
@@ -155,6 +158,35 @@ describe('M4 exam service', () => {
 
     expect(rows).toHaveLength(25);
     expect(rows.some((row) => row.questionId === excluded.id)).toBe(false);
+  });
+
+  it('createAttempt: skips a question with no citation and keeps one live citation', async () => {
+    const { subject } = await createSubjectWithQuestions(26);
+    const questions = await prisma.mockQuestion.findMany({
+      where: { subjectId: subject.id },
+      orderBy: { id: 'asc' },
+    });
+    const uncited = questions[0];
+    if (!uncited) throw new Error('ZZ-m4 fixture has no questions.');
+
+    await prisma.questionCitation.deleteMany({
+      where: { questionId: uncited.id },
+    });
+    await prisma.questionCitation.create({
+      data: {
+        questionId: questions[1].id,
+        documentId: null,
+        documentTitleSnapshot: 'ZZ-m4 unavailable',
+        pageNumber: 1,
+        quote: 'ZZ-m4 quote',
+      },
+    });
+
+    const created = await service.createAttempt(subject.id, seededRng());
+    const rows = await getAttemptQuestions(created.attemptId);
+
+    expect(rows).toHaveLength(25);
+    expect(rows.some((row) => row.questionId === uncited.id)).toBe(false);
   });
 
   it('createAttempt: second call -> ATTEMPT_EXISTS with the existing id', async () => {

@@ -41,10 +41,14 @@ afterAll(async () => {
   }
 });
 
+const DOCUMENT_PAGE_COUNT = 60;
+
 /**
  * One subject with `count` ACTIVE questions. Every question has four choices
  * and exactly one correct choice, created in one transaction so the deferred
  * R3 trigger sees the complete set at COMMIT. Topics are spread two per topic.
+ * Every question also cites one READY document of the subject, so the citation
+ * eligibility rule passes; pages are spread across 1..pageCount.
  */
 export async function createSubjectWithQuestions(count = 25) {
   assertTestDb();
@@ -53,6 +57,17 @@ export async function createSubjectWithQuestions(count = 25) {
     data: { name: `ZZ-m4-${randomUUID()}` },
   });
   createdSubjectIds.push(subject.id);
+
+  const document = await prisma.document.create({
+    data: {
+      subjectId: subject.id,
+      title: `ZZ-m4 document ${randomUUID()}`,
+      fileUrl: `ZZ-m4/${randomUUID()}.pdf`,
+      fileSize: 1,
+      pageCount: DOCUMENT_PAGE_COUNT,
+      status: 'READY',
+    },
+  });
 
   const topicCount = Math.max(1, Math.ceil(count / 2));
   const topics: { id: string; name: string }[] = [];
@@ -67,6 +82,14 @@ export async function createSubjectWithQuestions(count = 25) {
       }),
     );
   }
+
+  const citations: {
+    questionId: string;
+    documentId: string;
+    documentTitleSnapshot: string;
+    pageNumber: number;
+    quote: string;
+  }[] = [];
 
   await prisma.$transaction(
     async (tx) => {
@@ -97,12 +120,25 @@ export async function createSubjectWithQuestions(count = 25) {
             explanation: `ZZ-m4 explanation ${position}`,
           })),
         });
+
+        citations.push({
+          questionId: question.id,
+          documentId: document.id,
+          documentTitleSnapshot: document.title,
+          pageNumber:
+            Math.floor((index * DOCUMENT_PAGE_COUNT) / Math.max(count, 1)) + 1,
+          quote: `ZZ-m4 quote ${index + 1}`,
+        });
       }
     },
     { timeout: 30000 },
   );
 
-  return { subject, topics };
+  // Citations are not part of the R3 choice trigger, so one statement outside
+  // the transaction keeps the per-question transaction short.
+  await prisma.questionCitation.createMany({ data: citations });
+
+  return { subject, topics, document };
 }
 
 export function getAttemptQuestions(attemptId: string) {

@@ -177,16 +177,14 @@ function withStatus(
 }
 
 /**
- * A question is unusable only when every citation is unavailable (its
- * Document row is gone, so documentId is NULL). No citations means eligible.
+ * A question is eligible only when at least one citation still has a live
+ * Document row. Document deletion clears documentId to NULL, so a non-null id
+ * is the live check. Zero citations is not eligible.
  */
 function isCitationEligible(question: {
   citations: { documentId: string | null }[];
 }): boolean {
-  return (
-    question.citations.length === 0 ||
-    question.citations.some((citation) => citation.documentId !== null)
-  );
+  return question.citations.some((citation) => citation.documentId !== null);
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -264,7 +262,7 @@ export class ExamService {
           });
 
           // A citation whose Document row is gone has documentId = NULL.
-          // A question is unusable only when every citation is unavailable.
+          // A question is usable only when at least one citation is live.
           const eligible = questions.filter(isCitationEligible);
 
           if (eligible.length < QUESTIONS_PER_TEST) {
