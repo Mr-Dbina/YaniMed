@@ -454,14 +454,14 @@ export function MockTestStart({
             {notEnough && (
               <p className="mock-test__muted" role="status">
                 This subject has {eligible} of {required} eligible questions.
-                Add PDFs or wait for question generation, then refresh.
+                Starting the Mock Test will generate the rest automatically.
               </p>
             )}
 
             <button
               type="button"
               className="mock-test__btn mock-test__btn--primary mock-test__start-btn"
-              disabled={busy || notEnough}
+              disabled={busy}
               onClick={() => setPendingSubject(selected)}
             >
               <Play size={18} aria-hidden="true" />

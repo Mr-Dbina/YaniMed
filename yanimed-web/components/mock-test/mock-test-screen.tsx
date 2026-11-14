@@ -7,7 +7,9 @@ import {
   MockTestApiError,
   answerQuestion,
   createAttempt,
+  createGenerationJob,
   discardAttempt,
+  getActiveGenerationJob,
   getReview,
   getReviewNavigator,
   getSubjectOverview,
@@ -16,12 +18,18 @@ import {
   submitAttempt,
   type ExamResult,
   type ExamReview,
+  type GenerationJobSummary,
   type MockAttemptStatus,
   type MockQuestion,
   type NavigatorItem,
   type SubjectOverview,
 } from "@/lib/mock-test-api";
+import { isActiveGenerationState } from "@/lib/mock-test-generation";
 import { ConfirmDialog } from "@/components/mock-test/confirm-dialog";
+import {
+  GenerationNotice,
+  GenerationProgress,
+} from "@/components/mock-test/generation-progress";
 import { MockTestAnswers } from "@/components/mock-test/mock-test-answers";
 import { MockTestQuestion } from "@/components/mock-test/mock-test-question";
 import { MockTestResult } from "@/components/mock-test/mock-test-result";
@@ -31,7 +39,14 @@ import {
   type SyncedSubjectOption,
 } from "@/components/mock-test/mock-test-start";
 
-type Phase = "start" | "question" | "review" | "result" | "answers";
+type Phase =
+  | "start"
+  | "question"
+  | "review"
+  | "result"
+  | "answers"
+  | "generation"
+  | "generation-notice";
 
 interface PendingAnswer {
   position: number;
@@ -77,6 +92,14 @@ function messageFor(error: MockTestApiError): string {
       return "This attempt no longer exists.";
     case "SUBJECT_NOT_FOUND":
       return "Subject not found on the server.";
+    case "GENERATION_IN_PROGRESS":
+      return "Questions are already being generated for this subject.";
+    case "GENERATION_NOT_FOUND":
+      return "This generation job no longer exists.";
+    case "GENERATION_NOT_CANCELLABLE":
+      return "This generation can no longer be cancelled.";
+    case "NO_READY_DOCUMENTS":
+      return "This subject has no ready documents yet. Wait for the PDFs to finish processing, then try again.";
     case "INVALID_CHOICE":
       return "The selected choice is not valid for this question.";
     default:
@@ -212,10 +235,18 @@ function MockTestSession({
   const [answersLoading, setAnswersLoading] = useState(false);
   const [answersError, setAnswersError] = useState<string | null>(null);
 
+  const [generationJob, setGenerationJob] =
+    useState<GenerationJobSummary | null>(null);
+  const [generationNonce, setGenerationNonce] = useState(0);
+  const [generationBusy, setGenerationBusy] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [generationNotice, setGenerationNotice] = useState<string | null>(null);
+
   const autoResumedRef = useRef(false);
   const epochRef = useRef(0);
   const bootRequestRef = useRef(0);
   const navigatorRequestRef = useRef(0);
+  const generationJobIdRef = useRef<string | null>(null);
 
   /** Fetches the neutral navigator; stale responses are ignored by request id. */
   const loadNavigator = useCallback(async (id: string, version: number) => {
@@ -319,6 +350,97 @@ function MockTestSession({
     setReloadToken((token) => token + 1);
   }, []);
 
+  const showGeneration = useCallback((job: GenerationJobSummary) => {
+    setGenerationJob(job);
+    // Remount the progress screen only when this is a different job.
+    if (generationJobIdRef.current !== job.jobId) {
+      generationJobIdRef.current = job.jobId;
+      setGenerationNonce((nonce) => nonce + 1);
+    }
+    setGenerationError(null);
+    setPhase("generation");
+  }, []);
+
+  /** Creates a job, or attaches to the one already running for the subject. */
+  const requestGenerationJob = useCallback(async (id: string) => {
+    try {
+      return await createGenerationJob(id, { idempotencyKey: idempotencyKey() });
+    } catch (error) {
+      const api = toApiError(error);
+      if (api.code === "GENERATION_IN_PROGRESS") {
+        const active = await getActiveGenerationJob(id);
+        if (active.job) return active.job;
+        throw new MockTestApiError(
+          "A generation job is already running for this subject. Reload the page to continue.",
+          409,
+          "GENERATION_IN_PROGRESS",
+        );
+      }
+      throw error;
+    }
+  }, []);
+
+  const leaveGeneration = useCallback(() => {
+    generationJobIdRef.current = null;
+    setGenerationJob(null);
+    setGenerationError(null);
+    setGenerationNotice(null);
+    setPhase("start");
+    refreshOverview();
+  }, [refreshOverview]);
+
+  const handleGenerationCompleted = useCallback(async () => {
+    if (!subjectId) return;
+    setGenerationBusy(true);
+    setGenerationError(null);
+    try {
+      const created = await createAttempt(subjectId);
+      await beginAttempt(created.attemptId, "READY");
+    } catch (error) {
+      const api = toApiError(error);
+      if (api.code === "ATTEMPT_EXISTS" && api.body?.attemptId) {
+        try {
+          await beginAttempt(api.body.attemptId);
+        } catch (inner) {
+          const innerApi = toApiError(inner);
+          setGenerationNotice(messageFor(innerApi));
+          setPhase("generation-notice");
+        }
+      } else if (api.code === "SESSION_SUPERSEDED") {
+        setGenerationNotice(messageFor(api));
+        setPhase("generation-notice");
+      } else if (
+        api.code === "INSUFFICIENT_CONTENT" ||
+        api.code === "NO_READY_DOCUMENTS"
+      ) {
+        // Do not loop: the user decides when to come back.
+        setGenerationNotice(messageFor(api));
+        setPhase("generation-notice");
+      } else {
+        setGenerationNotice(
+          `Your questions are ready, but the test could not be started. ${messageFor(api)}`,
+        );
+        setPhase("generation-notice");
+      }
+    } finally {
+      setGenerationBusy(false);
+    }
+  }, [subjectId, beginAttempt]);
+
+  const handleGenerationRetry = useCallback(async () => {
+    if (!subjectId) return;
+    setGenerationBusy(true);
+    setGenerationError(null);
+    try {
+      const job = await requestGenerationJob(subjectId);
+      showGeneration(job);
+    } catch (error) {
+      setGenerationError(messageFor(toApiError(error)));
+    } finally {
+      setGenerationBusy(false);
+    }
+  }, [subjectId, requestGenerationJob, showGeneration]);
+
   useEffect(() => {
     if (!subjectId) return undefined;
     const requestId = ++bootRequestRef.current;
@@ -341,6 +463,16 @@ function MockTestSession({
             unfinished.status === "AWAITING_SUBMISSION");
 
         if (!canAutoResume || !unfinished) {
+          // Reload safety: a job already running on the server wins.
+          if (
+            data.generationJob &&
+            isActiveGenerationState(data.generationJob.state)
+          ) {
+            showGeneration(data.generationJob);
+            if (pendingStart) onPendingStartConsumed();
+            if (applies()) setBooting(false);
+            return;
+          }
           if (pendingStart) {
             if (
               !data.unfinishedAttempt &&
@@ -364,6 +496,24 @@ function MockTestSession({
                   }
                 } else if (api.code === "SESSION_SUPERSEDED") {
                   setSuperseded(true);
+                } else {
+                  setActionError(messageFor(api));
+                }
+              }
+            } else if (!data.unfinishedAttempt) {
+              try {
+                const job = await requestGenerationJob(subjectId);
+                if (!applies()) return;
+                showGeneration(job);
+              } catch (error) {
+                if (!applies()) return;
+                const api = toApiError(error);
+                if (
+                  api.code === "NO_READY_DOCUMENTS" ||
+                  api.code === "INSUFFICIENT_CONTENT"
+                ) {
+                  setGenerationNotice(messageFor(api));
+                  setPhase("generation-notice");
                 } else {
                   setActionError(messageFor(api));
                 }
@@ -403,7 +553,15 @@ function MockTestSession({
     return () => {
       cancelled = true;
     };
-  }, [subjectId, reloadToken, beginAttempt, pendingStart, onPendingStartConsumed]);
+  }, [
+    subjectId,
+    reloadToken,
+    beginAttempt,
+    pendingStart,
+    onPendingStartConsumed,
+    requestGenerationJob,
+    showGeneration,
+  ]);
 
   const handleStart = async () => {
     if (!subjectId) return;
@@ -790,6 +948,31 @@ function MockTestSession({
         review={review}
         subjectName={subjectName}
         onBack={() => setPhase("result")}
+      />
+    );
+  } else if (phase === "generation" && generationJob && subjectId) {
+    body = (
+      <GenerationProgress
+        key={`${generationJob.jobId}:${generationNonce}`}
+        subjectName={subjectName}
+        initialJob={generationJob}
+        completing={generationBusy}
+        retryBusy={generationBusy}
+        retryError={generationError}
+        onCompleted={handleGenerationCompleted}
+        onCancelled={leaveGeneration}
+        onBack={leaveGeneration}
+        onRetry={() => void handleGenerationRetry()}
+      />
+    );
+  } else if (phase === "generation-notice") {
+    body = (
+      <GenerationNotice
+        message={
+          generationNotice ??
+          "Question generation could not start. Try again later."
+        }
+        onBack={leaveGeneration}
       />
     );
   } else {

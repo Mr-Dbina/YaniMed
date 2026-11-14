@@ -32,6 +32,54 @@ export interface MockQuestion {
   choices: MockChoice[];
 }
 
+export type GenerationJobState =
+  | "QUEUED"
+  | "RUNNING"
+  | "STALLED"
+  | "CANCELLING"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLED";
+
+export type GenerationPhase =
+  | "PLANNING"
+  | "DRAFTING"
+  | "VALIDATING"
+  | "FINALIZING";
+
+export type GenerationFailureReason =
+  | "INSUFFICIENT_CONTENT"
+  | "PROVIDER_UNAVAILABLE"
+  | "BUDGET_EXHAUSTED"
+  | "VALIDATION_EXHAUSTED"
+  | "SOURCE_CHANGED"
+  | "TIMEOUT"
+  | "INTERNAL";
+
+export interface GenerationJobSummary {
+  jobId: string;
+  state: GenerationJobState;
+  requestedCount: number;
+  acceptedCount: number;
+}
+
+export interface GenerationJobDocument {
+  id: string;
+  title: string;
+}
+
+export interface GenerationJob extends GenerationJobSummary {
+  subjectId: string;
+  aiCallCount: number;
+  recoveryCount: number;
+  failureReason: GenerationFailureReason | null;
+  phase: GenerationPhase | null;
+  startedAt: string;
+  heartbeatAt: string | null;
+  finishedAt: string | null;
+  documents: GenerationJobDocument[];
+}
+
 export interface SubjectOverview {
   unfinishedAttempt: {
     id: string;
@@ -40,6 +88,7 @@ export interface SubjectOverview {
   } | null;
   eligibleQuestionCount: number;
   questionsPerTest: number;
+  generationJob: GenerationJobSummary | null;
 }
 
 export interface CreateAttemptResponse {
@@ -320,4 +369,42 @@ export async function discardAttempt(
   return request<DiscardAttemptResponse>(`${attemptPath(attemptId)}/discard`, {
     method: "POST",
   });
+}
+
+function generationJobPath(jobId: string): string {
+  return `/mock-test/generation-jobs/${encodeURIComponent(jobId)}`;
+}
+
+export async function createGenerationJob(
+  subjectId: string,
+  input?: { idempotencyKey?: string },
+): Promise<GenerationJobSummary> {
+  return request<GenerationJobSummary>(
+    `${subjectPath(subjectId)}/generation-jobs`,
+    {
+      method: "POST",
+      body: JSON.stringify(input ?? {}),
+    },
+  );
+}
+
+export async function getActiveGenerationJob(
+  subjectId: string,
+): Promise<{ job: GenerationJobSummary | null }> {
+  return request<{ job: GenerationJobSummary | null }>(
+    `${subjectPath(subjectId)}/generation-jobs/active`,
+  );
+}
+
+export async function getGenerationJob(jobId: string): Promise<GenerationJob> {
+  return request<GenerationJob>(generationJobPath(jobId));
+}
+
+export async function cancelGenerationJob(
+  jobId: string,
+): Promise<{ jobId: string; state: "CANCELLING" }> {
+  return request<{ jobId: string; state: "CANCELLING" }>(
+    `${generationJobPath(jobId)}/cancel`,
+    { method: "POST" },
+  );
 }
