@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { GenerationJob } from '@prisma/client';
-import type { PrismaService } from '../../prisma/prisma.service.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
 import {
   MAX_RECOVERIES,
   QUESTIONS_PER_TEST,

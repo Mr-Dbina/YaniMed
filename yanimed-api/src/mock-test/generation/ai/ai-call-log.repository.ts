@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { AiCallPurpose } from '@prisma/client';
-import type { PrismaService } from '../../../prisma/prisma.service.js';
+import { PrismaService } from '../../../prisma/prisma.service.js';
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;

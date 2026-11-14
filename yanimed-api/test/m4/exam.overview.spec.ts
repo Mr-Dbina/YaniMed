@@ -23,6 +23,7 @@ describe('M4 subject overview', () => {
       unfinishedAttempt: null,
       eligibleQuestionCount: 25,
       questionsPerTest: 25,
+      generationJob: null,
     });
   });
 

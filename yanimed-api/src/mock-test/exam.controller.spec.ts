@@ -113,6 +113,7 @@ const OVERVIEW: SubjectOverviewResponse = {
   },
   eligibleQuestionCount: 25,
   questionsPerTest: 25,
+  generationJob: null,
 };
 
 const ANSWER_BODY = {

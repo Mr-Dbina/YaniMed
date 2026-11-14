@@ -29,6 +29,10 @@ import {
   type ReviewQuestionDto,
 } from './exam.dto.js';
 import { MockTestError } from './exam.errors.js';
+import {
+  TERMINAL_GENERATION_JOB_STATES,
+  type GenerationJobState,
+} from './generation/generation-job.types.js';
 
 export interface CreateAttemptResponse {
   attemptId: string;
@@ -79,6 +83,13 @@ export interface DiscardAttemptResponse {
   status: 'ABANDONED';
 }
 
+export interface GenerationJobOverview {
+  jobId: string;
+  state: GenerationJobState;
+  acceptedCount: number;
+  requestedCount: number;
+}
+
 export interface SubjectOverviewResponse {
   unfinishedAttempt: {
     id: string;
@@ -87,6 +98,7 @@ export interface SubjectOverviewResponse {
   } | null;
   eligibleQuestionCount: number;
   questionsPerTest: 25;
+  generationJob: GenerationJobOverview | null;
 }
 
 interface LockedAttempt {
@@ -326,7 +338,7 @@ export class ExamService {
     });
     if (!subject) throw new MockTestError('SUBJECT_NOT_FOUND');
 
-    const [unfinishedAttempt, questions] = await Promise.all([
+    const [unfinishedAttempt, questions, generationJob] = await Promise.all([
       this.prisma.mockAttempt.findFirst({
         where: { subjectId, status: { in: UNFINISHED_STATUSES } },
         orderBy: { createdAt: 'desc' },
@@ -336,12 +348,34 @@ export class ExamService {
         where: { subjectId, status: 'ACTIVE' },
         select: { citations: { select: { documentId: true } } },
       }),
+      this.prisma.generationJob.findFirst({
+        where: {
+          subjectId,
+          state: { notIn: [...TERMINAL_GENERATION_JOB_STATES] },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          state: true,
+          acceptedCount: true,
+          requestedCount: true,
+        },
+      }),
     ]);
 
     return {
       unfinishedAttempt: unfinishedAttempt ?? null,
       eligibleQuestionCount: questions.filter(isCitationEligible).length,
       questionsPerTest: QUESTIONS_PER_TEST,
+      generationJob:
+        generationJob === null
+          ? null
+          : {
+              jobId: generationJob.id,
+              state: generationJob.state as GenerationJobState,
+              acceptedCount: generationJob.acceptedCount,
+              requestedCount: generationJob.requestedCount,
+            },
     };
   }
 
