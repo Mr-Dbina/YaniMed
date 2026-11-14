@@ -69,6 +69,15 @@ export interface ClaimedGenerationJob {
 }
 
 /**
+ * A STALLED row offered for recovery. recoveryCount is still the stalled
+ * epoch; the recovery claim advances it before the job runs again.
+ */
+export interface StalledGenerationJob {
+  jobId: string;
+  recoveryCount: number;
+}
+
+/**
  * Every write after claim includes state and recoveryCount. recoveryCount is
  * the epoch: a recovered worker keeps the old value and can no longer write.
  */

@@ -30,6 +30,7 @@ function makeFake() {
     generationJob: {
       findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
+      findMany: vi.fn(),
       create: vi.fn(),
       updateMany: vi.fn(),
     },
@@ -349,13 +350,38 @@ describe('GenerationJobRepository.reserveAiCall', () => {
 });
 
 describe('GenerationJobRepository.markStalled', () => {
-  it('returns the number of stalled jobs', async () => {
+  it('returns the stalled job ids and epochs', async () => {
     const fake = makeFake();
-    fake.$queryRaw.mockResolvedValue([{ id: 'a' }, { id: 'b' }]);
+    fake.$queryRaw.mockResolvedValue([
+      { jobId: 'a', recoveryCount: 0 },
+      { jobId: 'b', recoveryCount: 2 },
+    ]);
 
     await expect(
       repoFor(fake).markStalled(new Date('2026-01-01T00:02:00.000Z')),
-    ).resolves.toBe(2);
+    ).resolves.toEqual([
+      { jobId: 'a', recoveryCount: 0 },
+      { jobId: 'b', recoveryCount: 2 },
+    ]);
+  });
+});
+
+describe('GenerationJobRepository.listStalled', () => {
+  it('returns STALLED rows with their epochs', async () => {
+    const fake = makeFake();
+    fake.generationJob.findMany.mockResolvedValue([
+      { id: 'a', recoveryCount: 3 },
+    ]);
+
+    await expect(repoFor(fake).listStalled(5)).resolves.toEqual([
+      { jobId: 'a', recoveryCount: 3 },
+    ]);
+    expect(fake.generationJob.findMany).toHaveBeenCalledWith({
+      where: { state: 'STALLED' },
+      orderBy: [{ recoveryCount: 'desc' }, { createdAt: 'asc' }],
+      take: 5,
+      select: { id: true, recoveryCount: true },
+    });
   });
 });
 

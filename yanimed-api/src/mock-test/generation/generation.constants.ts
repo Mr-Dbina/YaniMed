@@ -62,6 +62,8 @@ export const BANK_EMBED_CAP = 60;
 export const JOB_TIMEOUT_MS = 45 * 60_000;
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 export const STALL_AFTER_MS = 120_000;
+/** A job is failed after this many recovery claims. */
+export const MAX_RECOVERIES = 3;
 
 /**
  * Text heuristics. These are not product rules, but they must be stable so a

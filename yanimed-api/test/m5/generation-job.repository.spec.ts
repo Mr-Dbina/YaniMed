@@ -99,31 +99,22 @@ describe('GenerationJobRepository (test DB)', () => {
     ).rejects.toMatchObject({ code: 'GENERATION_STALE_WORKER' });
   });
 
-  it('marks a stale job STALLED and recovers it with a new epoch', async () => {
+  it('marks a stale job STALLED and recovers it through claimNext with a new epoch', async () => {
     const { job, claimed } = await createClaimedJob();
     await prisma.generationJob.update({
       where: { id: job.id },
       data: { heartbeatAt: new Date(Date.now() - 180_000) },
     });
 
-    const stalledCount = await repository.markStalled();
-    expect(stalledCount).toBeGreaterThanOrEqual(1);
+    const stalledRows = await repository.markStalled();
+    expect(stalledRows.map((row) => row.jobId)).toContain(job.id);
 
     const stalled = await prisma.generationJob.findUniqueOrThrow({
       where: { id: job.id },
     });
     expect(stalled.state).toBe('STALLED');
-    expect(stalled.recoveryCount).toBe(claimed.recoveryCount + 1);
-
-    const recovered = await repository.transition(
-      {
-        jobId: job.id,
-        state: 'STALLED',
-        recoveryCount: stalled.recoveryCount,
-      },
-      'RUNNING',
-    );
-    expect(recovered.state).toBe('RUNNING');
+    // The epoch moves at the recovery claim, not when the job stalls.
+    expect(stalled.recoveryCount).toBe(claimed.recoveryCount);
 
     await expect(
       repository.heartbeat({
@@ -133,11 +124,15 @@ describe('GenerationJobRepository (test DB)', () => {
       }),
     ).rejects.toMatchObject({ code: 'GENERATION_STALE_WORKER' });
 
+    const recovered = await repository.claimNext();
+    expect(recovered?.jobId).toBe(job.id);
+    expect(recovered?.recoveryCount).toBe(claimed.recoveryCount + 1);
+
     await expect(
       repository.heartbeat({
         jobId: job.id,
         state: 'RUNNING',
-        recoveryCount: stalled.recoveryCount,
+        recoveryCount: recovered?.recoveryCount ?? -1,
       }),
     ).resolves.toBeUndefined();
   });

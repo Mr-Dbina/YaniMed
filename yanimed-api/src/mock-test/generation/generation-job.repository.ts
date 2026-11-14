@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { GenerationJob } from '@prisma/client';
 import type { PrismaService } from '../../prisma/prisma.service.js';
 import {
+  MAX_RECOVERIES,
   QUESTIONS_PER_TEST,
   STALL_AFTER_MS,
 } from './generation.constants.js';
@@ -13,9 +14,11 @@ import {
   type GenerationJobFence,
   type GenerationJobSnapshot,
   type GenerationJobState,
+  type StalledGenerationJob,
 } from './generation-job.types.js';
 
 const TX_OPTIONS = { maxWait: 30_000, timeout: 30_000 };
+const STALL_BATCH = 20;
 const CANCELLABLE_STATES: GenerationJobState[] = [
   'QUEUED',
   'RUNNING',
@@ -49,6 +52,13 @@ interface ClaimedRow {
   requestedCount: number;
   acceptedCount: number;
   recoveryCount: number;
+}
+
+export interface MarkStalledOptions {
+  /** Defaults to STALL_AFTER_MS. */
+  stalledAfterMs?: number;
+  /** Boot recovery: every RUNNING job belongs to a dead process. */
+  includeFresh?: boolean;
 }
 
 function toSnapshot(job: GenerationJob): GenerationJobSnapshot {
@@ -177,30 +187,47 @@ export class GenerationJobRepository {
     return { job: toSnapshot(job), created: false };
   }
 
+  /**
+   * Single claim path. Claims the oldest QUEUED job, or a STALLED job that
+   * still has recoveries left. A STALLED claim advances recoveryCount, so the
+   * dead worker's fence no longer matches. The candidate is locked until the
+   * update commits, so two claimers cannot take the same row.
+   */
   async claimNext(): Promise<ClaimedGenerationJob | null> {
-    const rows = await this.prisma.$queryRaw<ClaimedRow[]>`
-      UPDATE "GenerationJob" AS j
-      SET "state" = 'RUNNING',
-          "startedAt" = COALESCE(j."startedAt", now()),
-          "heartbeatAt" = now()
-      FROM (
+    return this.prisma.$transaction(async (tx) => {
+      const candidates = await tx.$queryRaw<{ id: string }[]>`
         SELECT "id"
           FROM "GenerationJob"
          WHERE "state" = 'QUEUED'
+            OR ("state" = 'STALLED' AND "recoveryCount" < ${MAX_RECOVERIES})
          ORDER BY "createdAt" ASC
-         FOR UPDATE SKIP LOCKED
          LIMIT 1
-      ) AS candidate
-      WHERE j."id" = candidate."id"
-      RETURNING j."id" AS "jobId",
-                j."subjectId" AS "subjectId",
-                j."requestedCount" AS "requestedCount",
-                j."acceptedCount" AS "acceptedCount",
-                j."recoveryCount" AS "recoveryCount"
-    `;
+         FOR UPDATE SKIP LOCKED
+      `;
+      const candidate = candidates[0];
+      if (!candidate) return null;
 
-    const row = rows[0];
-    return row ?? null;
+      const rows = await tx.$queryRaw<ClaimedRow[]>`
+        UPDATE "GenerationJob" AS j
+        SET "state" = 'RUNNING',
+            "startedAt" = COALESCE(j."startedAt", now()),
+            "heartbeatAt" = now(),
+            "recoveryCount" = CASE
+              WHEN j."state" = 'STALLED' THEN j."recoveryCount" + 1
+              ELSE j."recoveryCount"
+            END
+        WHERE j."id" = ${candidate.id}
+          AND j."state" IN ('QUEUED', 'STALLED')
+          AND (j."state" = 'QUEUED' OR j."recoveryCount" < ${MAX_RECOVERIES})
+        RETURNING j."id" AS "jobId",
+                  j."subjectId" AS "subjectId",
+                  j."requestedCount" AS "requestedCount",
+                  j."acceptedCount" AS "acceptedCount",
+                  j."recoveryCount" AS "recoveryCount"
+      `;
+
+      return rows[0] ?? null;
+    }, TX_OPTIONS);
   }
 
   async heartbeat(fence: GenerationJobFence): Promise<void> {
@@ -324,28 +351,54 @@ export class GenerationJobRepository {
   }
 
   /**
-   * Moves stale RUNNING jobs to STALLED and increments their recovery epoch.
-   * A later recovery claim is STALLED -> RUNNING with the new epoch.
+   * Moves stale RUNNING jobs to STALLED without advancing the epoch. The
+   * recovery claim (claimNext) advances recoveryCount, so the dead worker's
+   * fence stays stale. A heartbeat that lands first makes the row ineligible.
    */
-  async markStalled(now: Date = new Date(), limit = 20): Promise<number> {
-    const staleBefore = new Date(now.getTime() - STALL_AFTER_MS);
-    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+  async markStalled(
+    now: Date = new Date(),
+    limit = STALL_BATCH,
+    options: MarkStalledOptions = {},
+  ): Promise<StalledGenerationJob[]> {
+    const staleBefore = new Date(
+      now.getTime() - (options.stalledAfterMs ?? STALL_AFTER_MS),
+    );
+    return this.prisma.$queryRaw<StalledGenerationJob[]>`
       UPDATE "GenerationJob" AS j
-      SET "state" = 'STALLED',
-          "recoveryCount" = j."recoveryCount" + 1
+      SET "state" = 'STALLED'
       FROM (
         SELECT "id"
           FROM "GenerationJob"
          WHERE "state" = 'RUNNING'
-           AND ("heartbeatAt" IS NULL OR "heartbeatAt" < ${staleBefore})
-         ORDER BY "heartbeatAt" ASC NULLS FIRST
+           AND (${options.includeFresh ?? false}::boolean
+                OR COALESCE("heartbeatAt", "startedAt") < ${staleBefore})
+         ORDER BY COALESCE("heartbeatAt", "startedAt") ASC NULLS FIRST
          LIMIT ${limit}
          FOR UPDATE SKIP LOCKED
       ) AS candidate
       WHERE j."id" = candidate."id"
-      RETURNING j."id"
+        AND j."state" = 'RUNNING'
+        AND (${options.includeFresh ?? false}::boolean
+             OR COALESCE(j."heartbeatAt", j."startedAt") < ${staleBefore})
+      RETURNING j."id" AS "jobId", j."recoveryCount" AS "recoveryCount"
     `;
-    return rows.length;
+  }
+
+  /**
+   * STALLED jobs that still wait for the recovery rule. State-filtered and
+   * bounded; used to fail jobs left behind by a crashed sweep.
+   */
+  async listStalled(limit = STALL_BATCH): Promise<StalledGenerationJob[]> {
+    const rows = await this.prisma.generationJob.findMany({
+      where: { state: 'STALLED' },
+      orderBy: [{ recoveryCount: 'desc' }, { createdAt: 'asc' }],
+      take: limit,
+      select: { id: true, recoveryCount: true },
+    });
+    return rows.map((row) => ({
+      jobId: row.id,
+      recoveryCount: row.recoveryCount,
+    }));
   }
 
   async requestCancel(jobId: string): Promise<GenerationJobSnapshot> {
