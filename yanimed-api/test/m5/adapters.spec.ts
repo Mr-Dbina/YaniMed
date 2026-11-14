@@ -506,6 +506,77 @@ describe('bank source adapter (test DB)', () => {
     expect(returned.has(otherSubject.questionId)).toBe(false);
   });
 
+  it('returns an ACTIVE question from a different non-null job and excludes the current job', async () => {
+    const { subject, documents } = await createReadySubject(1);
+    const document = documents[0];
+
+    const otherCreated = await repository.createJob({
+      subjectId: subject.id,
+      documentIds: [document.id],
+      requestedCount: 25,
+    });
+    const otherClaimed = await repository.claimNext();
+    if (!otherClaimed || otherClaimed.jobId !== otherCreated.job.id) {
+      throw new Error('ZZ-m5 fixture did not claim its own other job.');
+    }
+    const otherFixture: Fixture = {
+      subject,
+      document,
+      job: otherCreated.job,
+      claimed: otherClaimed,
+    };
+    const otherTopicId = await topicIdFor(otherFixture);
+    const otherWrite = await write(
+      otherFixture,
+      otherTopicId,
+      makeDraft(document.id, { stem: 'ZZ-m5 bank other job' }),
+    );
+    await prisma.mockQuestion.update({
+      where: { id: otherWrite.questionId },
+      data: { status: 'ACTIVE' },
+    });
+    await prisma.generationJob.update({
+      where: { id: otherCreated.job.id },
+      data: { state: 'COMPLETED', finishedAt: new Date() },
+    });
+
+    const currentCreated = await repository.createJob({
+      subjectId: subject.id,
+      documentIds: [document.id],
+      requestedCount: 25,
+    });
+    const currentClaimed = await repository.claimNext();
+    if (!currentClaimed || currentClaimed.jobId !== currentCreated.job.id) {
+      throw new Error('ZZ-m5 fixture did not claim its own current job.');
+    }
+    const currentFixture: Fixture = {
+      subject,
+      document,
+      job: currentCreated.job,
+      claimed: currentClaimed,
+    };
+    const currentTopicId = await topicIdFor(currentFixture);
+    const currentWrite = await write(
+      currentFixture,
+      currentTopicId,
+      makeDraft(document.id, { stem: 'ZZ-m5 bank current job' }),
+    );
+    await prisma.mockQuestion.update({
+      where: { id: currentWrite.questionId },
+      data: { status: 'ACTIVE' },
+    });
+
+    const refs = await createBankSource({
+      prisma,
+      subjectId: subject.id,
+      jobId: currentCreated.job.id,
+      embed: vi.fn(async () => vector768(7)),
+    }).loadRefs();
+
+    expect(refs.map((ref) => ref.key)).toContain(otherWrite.questionId);
+    expect(refs.map((ref) => ref.key)).not.toContain(currentWrite.questionId);
+  });
+
   it('returns nothing when the subject has no other questions', async () => {
     const fixture = await claimedJob(5);
     const embed = vi.fn(async () => vector768(7));
