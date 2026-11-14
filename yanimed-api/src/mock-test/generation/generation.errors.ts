@@ -6,6 +6,7 @@ export type GenerationErrorCode =
   | 'GENERATION_STALE_WORKER'
   | 'GENERATION_ACCEPTED_CAP'
   | 'GENERATION_INVALID_TRANSITION'
+  | 'GENERATION_INVALID_PLAN'
   | 'GENERATION_BUDGET_EXHAUSTED'
   | 'GENERATION_VERIFIER_NOT_CONFIGURED'
   | 'GENERATION_PROVIDER_UNAVAILABLE'
@@ -15,6 +16,8 @@ export interface GenerationErrorOptions {
   jobId?: string;
   /** Small numeric facts, never row contents. */
   details?: Record<string, number>;
+  /** Row ids only, never row contents. */
+  missingIds?: string[];
 }
 
 /** Messages contain only the stable code, never row data. */
@@ -22,6 +25,7 @@ export class GenerationError extends Error {
   readonly code: GenerationErrorCode;
   readonly jobId?: string;
   readonly details?: Record<string, number>;
+  readonly missingIds?: string[];
 
   constructor(code: GenerationErrorCode, options: GenerationErrorOptions = {}) {
     super(`Generation error: ${code}`);
@@ -29,5 +33,6 @@ export class GenerationError extends Error {
     this.code = code;
     this.jobId = options.jobId;
     this.details = options.details;
+    this.missingIds = options.missingIds;
   }
 }

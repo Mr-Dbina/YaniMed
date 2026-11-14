@@ -51,6 +51,13 @@ export const AI_RETRY_BACKOFF_MS = [2_000, 4_000, 8_000] as const;
 export const BREAKER_FAILURE_THRESHOLD = 5;
 export const BREAKER_COOLDOWN_MS = 60_000;
 
+/**
+ * The bank stores no embeddings, so at most this many bank questions are
+ * embedded per job. Later refs are still checked for same-page facts and are
+ * counted as skipped by Check C.
+ */
+export const BANK_EMBED_CAP = 60;
+
 /** Job lifecycle. */
 export const JOB_TIMEOUT_MS = 45 * 60_000;
 export const HEARTBEAT_INTERVAL_MS = 30_000;
