@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Injectable } from '@nestjs/common';
 import type { GenerationJob } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import {
@@ -110,6 +111,7 @@ function stale(jobId: string): GenerationError {
  * Durable job state. No lease columns exist, so recoveryCount is the epoch
  * fence: a recovered worker keeps the old epoch and every guarded write fails.
  */
+@Injectable()
 export class GenerationJobRepository {
   constructor(private readonly prisma: PrismaService) {}
 
