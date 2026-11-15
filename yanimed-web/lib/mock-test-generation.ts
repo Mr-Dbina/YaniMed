@@ -25,6 +25,24 @@ export function isTerminalGenerationState(state: GenerationJobState): boolean {
   return state === "COMPLETED" || state === "FAILED" || state === "CANCELLED";
 }
 
+/** Delay between createAttempt tries while the published questions catch up. */
+export const ATTEMPT_RETRY_DELAY_MS = 1_000;
+
+/** Total window a COMPLETED job may still report INSUFFICIENT_CONTENT. */
+export const ATTEMPT_RETRY_WINDOW_MS = 12_000;
+
+/**
+ * The worker commits COMPLETED first, then publishes the held questions in a
+ * separate transaction. For that short window createAttempt still reports
+ * INSUFFICIENT_CONTENT. Retry only that code, and only inside the window.
+ */
+export function shouldRetryCreateAttempt(
+  code: string | undefined,
+  elapsedMs: number,
+): boolean {
+  return code === "INSUFFICIENT_CONTENT" && elapsedMs < ATTEMPT_RETRY_WINDOW_MS;
+}
+
 export type GenerationStepKey = "PLANNING" | "DRAFTING" | "FINALIZING";
 
 export interface GenerationStep {

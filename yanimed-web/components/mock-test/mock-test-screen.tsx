@@ -24,7 +24,11 @@ import {
   type NavigatorItem,
   type SubjectOverview,
 } from "@/lib/mock-test-api";
-import { isActiveGenerationState } from "@/lib/mock-test-generation";
+import {
+  ATTEMPT_RETRY_DELAY_MS,
+  isActiveGenerationState,
+  shouldRetryCreateAttempt,
+} from "@/lib/mock-test-generation";
 import { ConfirmDialog } from "@/components/mock-test/confirm-dialog";
 import {
   GenerationNotice,
@@ -247,6 +251,34 @@ function MockTestSession({
   const bootRequestRef = useRef(0);
   const navigatorRequestRef = useRef(0);
   const generationJobIdRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
+  /** Cancels the pending retry delay, so unmounting leaves no timer behind. */
+  const retryDelayRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      retryDelayRef.current?.();
+    };
+  }, []);
+
+  /** Resolves false when the screen goes away before the delay ends. */
+  const waitForRetry = useCallback(
+    () =>
+      new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => {
+          retryDelayRef.current = null;
+          resolve(true);
+        }, ATTEMPT_RETRY_DELAY_MS);
+        retryDelayRef.current = () => {
+          clearTimeout(timer);
+          retryDelayRef.current = null;
+          resolve(false);
+        };
+      }),
+    [],
+  );
 
   /** Fetches the neutral navigator; stale responses are ignored by request id. */
   const loadNavigator = useCallback(async (id: string, version: number) => {
@@ -393,39 +425,53 @@ function MockTestSession({
     if (!subjectId) return;
     setGenerationBusy(true);
     setGenerationError(null);
+    const startedAt = Date.now();
     try {
-      const created = await createAttempt(subjectId);
-      await beginAttempt(created.attemptId, "READY");
-    } catch (error) {
-      const api = toApiError(error);
-      if (api.code === "ATTEMPT_EXISTS" && api.body?.attemptId) {
+      for (;;) {
         try {
-          await beginAttempt(api.body.attemptId);
-        } catch (inner) {
-          const innerApi = toApiError(inner);
-          setGenerationNotice(messageFor(innerApi));
-          setPhase("generation-notice");
+          const created = await createAttempt(subjectId);
+          if (!mountedRef.current) return;
+          await beginAttempt(created.attemptId, "READY");
+          return;
+        } catch (error) {
+          const api = toApiError(error);
+          if (!mountedRef.current) return;
+          // The questions may still be publishing; retry that code only.
+          if (shouldRetryCreateAttempt(api.code, Date.now() - startedAt)) {
+            if (!(await waitForRetry())) return;
+            continue;
+          }
+          if (api.code === "ATTEMPT_EXISTS" && api.body?.attemptId) {
+            try {
+              await beginAttempt(api.body.attemptId);
+            } catch (inner) {
+              const innerApi = toApiError(inner);
+              setGenerationNotice(messageFor(innerApi));
+              setPhase("generation-notice");
+            }
+          } else if (api.code === "SESSION_SUPERSEDED") {
+            setGenerationNotice(messageFor(api));
+            setPhase("generation-notice");
+          } else if (
+            api.code === "INSUFFICIENT_CONTENT" ||
+            api.code === "NO_READY_DOCUMENTS"
+          ) {
+            // Retries are over: the user decides when to come back.
+            setGenerationNotice(messageFor(api));
+            setPhase("generation-notice");
+          } else {
+            setGenerationNotice(
+              `Your questions are ready, but the test could not be started. ${messageFor(api)}`,
+            );
+            setPhase("generation-notice");
+          }
+          return;
         }
-      } else if (api.code === "SESSION_SUPERSEDED") {
-        setGenerationNotice(messageFor(api));
-        setPhase("generation-notice");
-      } else if (
-        api.code === "INSUFFICIENT_CONTENT" ||
-        api.code === "NO_READY_DOCUMENTS"
-      ) {
-        // Do not loop: the user decides when to come back.
-        setGenerationNotice(messageFor(api));
-        setPhase("generation-notice");
-      } else {
-        setGenerationNotice(
-          `Your questions are ready, but the test could not be started. ${messageFor(api)}`,
-        );
-        setPhase("generation-notice");
       }
     } finally {
-      setGenerationBusy(false);
+      if (mountedRef.current) setGenerationBusy(false);
     }
-  }, [subjectId, beginAttempt]);
+  }, [subjectId, beginAttempt, waitForRetry]);
 
   const handleGenerationRetry = useCallback(async () => {
     if (!subjectId) return;
