@@ -20,11 +20,6 @@ import {
 
 const TX_OPTIONS = { maxWait: 30_000, timeout: 30_000 };
 const STALL_BATCH = 20;
-const CANCELLABLE_STATES: GenerationJobState[] = [
-  'QUEUED',
-  'RUNNING',
-  'STALLED',
-];
 
 export interface CreateGenerationJobInput {
   subjectId: string;
@@ -403,6 +398,46 @@ export class GenerationJobRepository {
     }));
   }
 
+  /**
+   * CANCELLING rows no worker owns: no heartbeat yet, or one older than the
+   * stall window. Bounded and state-filtered; the caller finishes each row
+   * with a fenced transition. A boot passes includeFresh because no worker of
+   * this process has run yet.
+   */
+  async listOrphanedCancels(
+    now: Date = new Date(),
+    limit = STALL_BATCH,
+    options: MarkStalledOptions = {},
+  ): Promise<StalledGenerationJob[]> {
+    const staleBefore = new Date(
+      now.getTime() - (options.stalledAfterMs ?? STALL_AFTER_MS),
+    );
+    const rows = await this.prisma.generationJob.findMany({
+      where: {
+        state: 'CANCELLING',
+        ...(options.includeFresh === true
+          ? {}
+          : {
+              OR: [
+                { heartbeatAt: null },
+                { heartbeatAt: { lt: staleBefore } },
+              ],
+            }),
+      },
+      orderBy: [{ heartbeatAt: 'asc' }, { createdAt: 'asc' }],
+      take: limit,
+      select: { id: true, recoveryCount: true },
+    });
+    return rows.map((row) => ({
+      jobId: row.id,
+      recoveryCount: row.recoveryCount,
+    }));
+  }
+
+  /**
+   * A QUEUED job has no worker, so it finishes in one fenced step. RUNNING and
+   * STALLED jobs need their worker to stop, so they go through CANCELLING.
+   */
   async requestCancel(jobId: string): Promise<GenerationJobSnapshot> {
     const current = await this.prisma.generationJob.findUnique({
       where: { id: jobId },
@@ -420,15 +455,24 @@ export class GenerationJobRepository {
       throw new GenerationError('GENERATION_NOT_CANCELLABLE', { jobId });
     }
 
-    const result = await this.prisma.generationJob.updateMany({
-      where: {
-        id: jobId,
-        state: { in: CANCELLABLE_STATES },
-      },
+    const finished = await this.prisma.generationJob.updateMany({
+      where: { id: jobId, state: 'QUEUED' },
+      data: { state: 'CANCELLED', finishedAt: new Date() },
+    });
+    if (finished.count === 1) {
+      return toSnapshot(
+        await this.prisma.generationJob.findUniqueOrThrow({
+          where: { id: jobId },
+        }),
+      );
+    }
+
+    const cancelling = await this.prisma.generationJob.updateMany({
+      where: { id: jobId, state: { in: ['RUNNING', 'STALLED'] } },
       data: { state: 'CANCELLING' },
     });
 
-    if (result.count === 0) {
+    if (cancelling.count === 0) {
       const latest = await this.prisma.generationJob.findUnique({
         where: { id: jobId },
       });

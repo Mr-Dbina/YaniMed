@@ -55,6 +55,19 @@ async function staleHeartbeat(fixture: Fixture): Promise<void> {
   });
 }
 
+async function cancellingJob(): Promise<Fixture> {
+  const fixture = await claimedJob();
+  await repository.transition(
+    {
+      jobId: fixture.job.id,
+      state: 'RUNNING',
+      recoveryCount: fixture.claimed.recoveryCount,
+    },
+    'CANCELLING',
+  );
+  return fixture;
+}
+
 describe('generation reconciler (test DB)', () => {
   it('stalls a stale RUNNING job so claimNext recovers it with a new epoch', async () => {
     const fixture = await claimedJob();
@@ -198,5 +211,52 @@ describe('generation reconciler (test DB)', () => {
       where: { id: created.job.id },
     });
     expect(row.state).toBe('QUEUED');
+  });
+
+  it('finishes an orphaned CANCELLING job with a stale heartbeat', async () => {
+    const fixture = await cancellingJob();
+    await staleHeartbeat(fixture);
+
+    const summary = await reconciler().sweep();
+
+    expect(summary.cancelled).toContain(fixture.job.id);
+    const row = await readJob(fixture);
+    expect(row.state).toBe('CANCELLED');
+    expect(row.finishedAt).not.toBeNull();
+    expect(row.recoveryCount).toBe(fixture.claimed.recoveryCount);
+  });
+
+  it('finishes an orphaned CANCELLING job that never beat', async () => {
+    const fixture = await cancellingJob();
+    await prisma.generationJob.update({
+      where: { id: fixture.job.id },
+      data: { heartbeatAt: null },
+    });
+
+    const summary = await reconciler().sweep();
+
+    expect(summary.cancelled).toContain(fixture.job.id);
+    const row = await readJob(fixture);
+    expect(row.state).toBe('CANCELLED');
+  });
+
+  it('leaves a CANCELLING job with a fresh heartbeat to its worker', async () => {
+    const fixture = await cancellingJob();
+
+    const summary = await reconciler().sweep();
+
+    expect(summary.cancelled).not.toContain(fixture.job.id);
+    const row = await readJob(fixture);
+    expect(row.state).toBe('CANCELLING');
+  });
+
+  it('finishes every CANCELLING job at boot, fresh heartbeat or not', async () => {
+    const fixture = await cancellingJob();
+
+    const summary = await reconciler().recoverOnBoot();
+
+    expect(summary.cancelled).toContain(fixture.job.id);
+    const row = await readJob(fixture);
+    expect(row.state).toBe('CANCELLED');
   });
 });

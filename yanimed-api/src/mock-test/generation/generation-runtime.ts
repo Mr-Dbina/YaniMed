@@ -44,6 +44,25 @@ export interface GenerationRuntimeOptions {
   enabled: boolean;
   /** The worker never starts inside the test runner. */
   underTest: boolean;
+  logger?: WorkerLogger;
+}
+
+const SILENT_LOGGER: WorkerLogger = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
+
+/**
+ * Only an explicit 'test' NODE_ENV (what Vitest sets) is the test runner. A
+ * dev boot leaves it unset, so it must start the worker. No ConfigService is a
+ * bare test module, never a production boot.
+ */
+export function isUnderTestBoot(
+  config: ConfigService | undefined,
+): boolean {
+  if (config === undefined) return true;
+  return config.get<string>('NODE_ENV') === 'test';
 }
 
 export interface GenerationRuntimeHandle {
@@ -60,11 +79,17 @@ export function createGenerationRuntime(
   options: GenerationRuntimeOptions,
 ): GenerationRuntimeHandle {
   const { components } = options;
+  const logger = options.logger ?? SILENT_LOGGER;
   let started = false;
   let booting: Promise<void> | null = null;
 
   const bootstrap = (): Promise<void> => {
-    if (started || !options.enabled || options.underTest) {
+    if (started) return Promise.resolve();
+    if (!options.enabled || options.underTest) {
+      logger.info('generation.runtime.skipped', {
+        enabled: options.enabled ? 1 : 0,
+        underTest: options.underTest ? 1 : 0,
+      });
       return Promise.resolve();
     }
     if (booting !== null) return booting;
@@ -76,6 +101,7 @@ export function createGenerationRuntime(
         components.reconciler.start();
         components.worker.start();
         started = true;
+        logger.info('generation.runtime.started');
       })
       .finally(() => {
         booting = null;
@@ -193,8 +219,8 @@ export class GenerationRuntime
     this.runtime = createGenerationRuntime({
       components: { worker, reconciler },
       enabled: config?.get<boolean>('mockTestEnabled') === true,
-      // No ConfigService means a bare test module, never a production boot.
-      underTest: (config?.get<string>('NODE_ENV') ?? 'test') === 'test',
+      underTest: isUnderTestBoot(config),
+      logger,
     });
   }
 

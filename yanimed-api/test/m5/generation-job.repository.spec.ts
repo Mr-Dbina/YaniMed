@@ -137,6 +137,32 @@ describe('GenerationJobRepository (test DB)', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('cancels a QUEUED job straight to CANCELLED and frees the subject', async () => {
+    const { subject, documents } = await createReadySubject(1);
+    const created = await repository.createJob({
+      subjectId: subject.id,
+      documentIds: [documents[0].id],
+    });
+
+    const cancelled = await repository.requestCancel(created.job.id);
+    expect(cancelled.state).toBe('CANCELLED');
+
+    const stored = await prisma.generationJob.findUniqueOrThrow({
+      where: { id: created.job.id },
+    });
+    expect(stored.state).toBe('CANCELLED');
+    expect(stored.startedAt).toBeNull();
+    expect(stored.heartbeatAt).toBeNull();
+    expect(stored.finishedAt).not.toBeNull();
+
+    // CANCELLED is terminal, so the one-active-job rule no longer blocks.
+    const next = await repository.createJob({
+      subjectId: subject.id,
+      documentIds: [documents[0].id],
+    });
+    expect(next.created).toBe(true);
+  });
+
   it('cancels a RUNNING job and blocks the old worker', async () => {
     const { job, claimed } = await createClaimedJob();
     const fence = {

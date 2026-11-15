@@ -482,7 +482,7 @@ it(
         reconciler: {
           recoverOnBoot: async () => {
             order.push('recoverOnBoot');
-            return { stalled: [], requeued: [], failed: [] };
+            return { stalled: [], requeued: [], failed: [], cancelled: [] };
           },
           start: () => {
             order.push('reconciler.start');

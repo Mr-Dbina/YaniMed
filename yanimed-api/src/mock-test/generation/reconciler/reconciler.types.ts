@@ -23,7 +23,7 @@ export interface ReconcilerConfig {
 /** Only the repository methods the reconciler owns. */
 export type ReconcilerRepository = Pick<
   GenerationJobRepository,
-  'markStalled' | 'listStalled' | 'transition'
+  'markStalled' | 'listStalled' | 'listOrphanedCancels' | 'transition'
 >;
 
 export type ReconcilerClock = () => number;
@@ -48,6 +48,7 @@ export interface ReconcileSummary {
   stalled: string[];
   requeued: string[];
   failed: string[];
+  cancelled: string[];
 }
 
 export interface ReconcilerDeps {

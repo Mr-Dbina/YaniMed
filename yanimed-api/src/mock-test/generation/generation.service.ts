@@ -127,14 +127,14 @@ export class GenerationService {
   }
 
   /**
-   * Only QUEUED, RUNNING and STALLED jobs may start cancelling. A repeat while
-   * CANCELLING returns the same answer; a finished job is refused.
+   * Only QUEUED, RUNNING and STALLED jobs may start cancelling. A QUEUED job
+   * finishes at once; a running job returns CANCELLING until its worker stops.
    */
   async cancelJob(jobId: string): Promise<CancelGenerationJobResponse> {
     const job = await this.repository.requestCancel(jobId);
-    if (job.state !== 'CANCELLING') {
+    if (job.state !== 'CANCELLING' && job.state !== 'CANCELLED') {
       throw new GenerationError('GENERATION_NOT_CANCELLABLE', { jobId });
     }
-    return { jobId, state: 'CANCELLING' };
+    return { jobId, state: job.state };
   }
 }

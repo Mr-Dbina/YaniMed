@@ -99,10 +99,36 @@ describe('GenerationService (test DB)', () => {
     });
   });
 
-  it('moves a cancellable job to CANCELLING', async () => {
+  it('finishes a QUEUED cancel at once and frees the subject', async () => {
     assertTestDb();
     const { subject } = await createReadySubject(1);
     const created = await service.createJob(subject.id);
+
+    await expect(service.cancelJob(created.jobId)).resolves.toEqual({
+      jobId: created.jobId,
+      state: 'CANCELLED',
+    });
+
+    const stored = await prisma.generationJob.findUniqueOrThrow({
+      where: { id: created.jobId },
+    });
+    expect(stored.state).toBe('CANCELLED');
+    expect(stored.finishedAt).not.toBeNull();
+    expect(stored.startedAt).toBeNull();
+
+    const next = await service.createJob(subject.id);
+    expect(next.state).toBe('QUEUED');
+  });
+
+  it('moves a RUNNING job to CANCELLING', async () => {
+    assertTestDb();
+    const { subject } = await createReadySubject(1);
+    const created = await service.createJob(subject.id);
+
+    const claimed = await repository.claimNext();
+    if (!claimed || claimed.jobId !== created.jobId) {
+      throw new Error('ZZ-m5 fixture did not claim its own job.');
+    }
 
     await expect(service.cancelJob(created.jobId)).resolves.toEqual({
       jobId: created.jobId,

@@ -263,6 +263,7 @@ export function createGenerationWorker(
   const start = (): void => {
     if (started) return;
     started = true;
+    logger.info('generation.worker.started', { idlePollMs: config.idlePollMs });
     stopRequested = false;
     loopHandle = timers.setInterval(() => {
       void tick();

@@ -61,7 +61,8 @@ export interface GenerationProgressDto {
 
 export interface CancelGenerationJobResponse {
   jobId: string;
-  state: 'CANCELLING';
+  /** A QUEUED job is already CANCELLED; a running job stops through CANCELLING. */
+  state: 'CANCELLING' | 'CANCELLED';
 }
 
 export interface GenerationJobProgressSource {

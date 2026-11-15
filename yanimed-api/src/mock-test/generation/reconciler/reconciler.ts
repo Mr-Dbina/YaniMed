@@ -41,7 +41,7 @@ function errorNameOf(error: unknown): string {
 }
 
 function emptySummary(): ReconcileSummary {
-  return { stalled: [], requeued: [], failed: [] };
+  return { stalled: [], requeued: [], failed: [], cancelled: [] };
 }
 
 /**
@@ -134,17 +134,71 @@ export function createReconciler(deps: ReconcilerDeps): Reconciler {
     }
   };
 
+  /** A CANCELLING row with no live owner is finished by a fenced write. */
+  const finishCancel = async (
+    row: StalledGenerationJob,
+    summary: ReconcileSummary,
+  ): Promise<void> => {
+    try {
+      await deps.repository.transition(
+        {
+          jobId: row.jobId,
+          state: 'CANCELLING',
+          recoveryCount: row.recoveryCount,
+        },
+        'CANCELLED',
+      );
+      summary.cancelled.push(row.jobId);
+      logger.info('generation.reconciler.orphan_cancelled', {
+        jobId: row.jobId,
+      });
+    } catch (error) {
+      const code = errorCodeOf(error);
+      if (code === 'GENERATION_STALE_WORKER') return;
+      logger.error('generation.reconciler.cancel_failed', {
+        jobId: row.jobId,
+        name: errorNameOf(error),
+        ...(code === undefined ? {} : { code }),
+      });
+    }
+  };
+
+  const cancelOrphans = async (
+    includeFresh: boolean,
+    summary: ReconcileSummary,
+  ): Promise<void> => {
+    const now = new Date(clock());
+    const seen = new Set<string>();
+
+    for (;;) {
+      const rows = await deps.repository.listOrphanedCancels(
+        now,
+        config.batchSize,
+        { stalledAfterMs: config.stalledAfterMs, includeFresh },
+      );
+      const fresh = rows.filter((row) => !seen.has(row.jobId));
+      if (fresh.length === 0) return;
+      for (const row of fresh) {
+        seen.add(row.jobId);
+        await finishCancel(row, summary);
+      }
+      if (rows.length < config.batchSize) return;
+    }
+  };
+
   const run = async (includeFresh: boolean): Promise<ReconcileSummary> => {
     const summary = emptySummary();
     const recovered = new Set<string>();
 
     await stall(includeFresh, summary, recovered);
     await recoverStalled(summary, recovered);
+    await cancelOrphans(includeFresh, summary);
 
     logger.info('generation.reconciler.swept', {
       stalled: summary.stalled.length,
       requeued: summary.requeued.length,
       failed: summary.failed.length,
+      cancelled: summary.cancelled.length,
     });
     return summary;
   };
@@ -167,6 +221,7 @@ export function createReconciler(deps: ReconcilerDeps): Reconciler {
   const start = (): void => {
     if (started) return;
     started = true;
+    logger.info('generation.reconciler.started', { sweepMs: config.sweepMs });
     handle = timers.setInterval(() => {
       void sweep().catch((error: unknown) => {
         logger.error('generation.reconciler.sweep_failed', {

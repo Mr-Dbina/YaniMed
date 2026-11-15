@@ -423,7 +423,9 @@ describe('GenerationJobRepository.requestCancel', () => {
     fake.generationJob.findUnique.mockResolvedValue(
       makeRow({ state: 'RUNNING' }),
     );
-    fake.generationJob.updateMany.mockResolvedValue({ count: 1 });
+    fake.generationJob.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
     fake.generationJob.findUniqueOrThrow.mockResolvedValue(
       makeRow({ state: 'CANCELLING' }),
     );
@@ -431,12 +433,80 @@ describe('GenerationJobRepository.requestCancel', () => {
     const result = await repoFor(fake).requestCancel('job-1');
 
     expect(result.state).toBe('CANCELLING');
-    expect(fake.generationJob.updateMany).toHaveBeenCalledWith({
+    expect(fake.generationJob.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: 'job-1', state: 'QUEUED' },
+      data: { state: 'CANCELLED', finishedAt: expect.any(Date) },
+    });
+    expect(fake.generationJob.updateMany).toHaveBeenNthCalledWith(2, {
       where: {
         id: 'job-1',
-        state: { in: ['QUEUED', 'RUNNING', 'STALLED'] },
+        state: { in: ['RUNNING', 'STALLED'] },
       },
       data: { state: 'CANCELLING' },
+    });
+  });
+
+  it('finishes a QUEUED job in one fenced step', async () => {
+    const fake = makeFake();
+    fake.generationJob.findUnique.mockResolvedValue(makeRow());
+    fake.generationJob.updateMany.mockResolvedValue({ count: 1 });
+    fake.generationJob.findUniqueOrThrow.mockResolvedValue(
+      makeRow({ state: 'CANCELLED', finishedAt: new Date() }),
+    );
+
+    const result = await repoFor(fake).requestCancel('job-1');
+
+    expect(result.state).toBe('CANCELLED');
+    expect(fake.generationJob.updateMany).toHaveBeenCalledTimes(1);
+    expect(fake.generationJob.updateMany).toHaveBeenCalledWith({
+      where: { id: 'job-1', state: 'QUEUED' },
+      data: { state: 'CANCELLED', finishedAt: expect.any(Date) },
+    });
+  });
+});
+
+describe('GenerationJobRepository.listOrphanedCancels', () => {
+  it('filters CANCELLING rows by heartbeat age and bounds the query', async () => {
+    const fake = makeFake();
+    fake.generationJob.findMany.mockResolvedValue([
+      { id: 'a', recoveryCount: 0 },
+      { id: 'b', recoveryCount: 2 },
+    ]);
+
+    const now = new Date('2026-01-01T00:02:00.000Z');
+    await expect(
+      repoFor(fake).listOrphanedCancels(now, 5, { stalledAfterMs: 120_000 }),
+    ).resolves.toEqual([
+      { jobId: 'a', recoveryCount: 0 },
+      { jobId: 'b', recoveryCount: 2 },
+    ]);
+    expect(fake.generationJob.findMany).toHaveBeenCalledWith({
+      where: {
+        state: 'CANCELLING',
+        OR: [
+          { heartbeatAt: null },
+          { heartbeatAt: { lt: new Date('2026-01-01T00:00:00.000Z') } },
+        ],
+      },
+      orderBy: [{ heartbeatAt: 'asc' }, { createdAt: 'asc' }],
+      take: 5,
+      select: { id: true, recoveryCount: true },
+    });
+  });
+
+  it('takes every CANCELLING row at boot', async () => {
+    const fake = makeFake();
+    fake.generationJob.findMany.mockResolvedValue([]);
+
+    await repoFor(fake).listOrphanedCancels(new Date(), 20, {
+      includeFresh: true,
+    });
+
+    expect(fake.generationJob.findMany).toHaveBeenCalledWith({
+      where: { state: 'CANCELLING' },
+      orderBy: [{ heartbeatAt: 'asc' }, { createdAt: 'asc' }],
+      take: 20,
+      select: { id: true, recoveryCount: true },
     });
   });
 });

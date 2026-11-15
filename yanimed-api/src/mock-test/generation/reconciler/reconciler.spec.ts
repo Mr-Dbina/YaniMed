@@ -6,6 +6,7 @@ import type {
 } from '../generation-job.types.js';
 import { createReconciler } from './reconciler.js';
 import type {
+  ReconcileSummary,
   ReconcilerConfig,
   ReconcilerDeps,
   ReconcilerLogger,
@@ -17,11 +18,16 @@ function snapshot(): GenerationJobSnapshot {
   return {} as GenerationJobSnapshot;
 }
 
+function emptySummary(): ReconcileSummary {
+  return { stalled: [], requeued: [], failed: [], cancelled: [] };
+}
+
 interface Harness {
   reconciler: ReturnType<typeof createReconciler>;
   repository: {
     markStalled: ReturnType<typeof vi.fn>;
     listStalled: ReturnType<typeof vi.fn>;
+    listOrphanedCancels: ReturnType<typeof vi.fn>;
     transition: ReturnType<typeof vi.fn>;
   };
   logger: {
@@ -38,6 +44,7 @@ function makeHarness(
   const repository = {
     markStalled: vi.fn(async () => [] as StalledGenerationJob[]),
     listStalled: vi.fn(async () => [] as StalledGenerationJob[]),
+    listOrphanedCancels: vi.fn(async () => [] as StalledGenerationJob[]),
     transition: vi.fn(async () => snapshot()),
   };
   const logger = {
@@ -80,6 +87,7 @@ describe('generation reconciler', () => {
       stalled: ['job-a', 'job-b'],
       requeued: ['job-a', 'job-b'],
       failed: [],
+      cancelled: [],
     });
     expect(harness.repository.markStalled).toHaveBeenNthCalledWith(
       1,
@@ -93,11 +101,7 @@ describe('generation reconciler', () => {
   it('only stalls stale RUNNING jobs on a sweep', async () => {
     const harness = makeHarness({ maxRecoveries: 3 });
 
-    await expect(harness.reconciler.sweep()).resolves.toEqual({
-      stalled: [],
-      requeued: [],
-      failed: [],
-    });
+    await expect(harness.reconciler.sweep()).resolves.toEqual(emptySummary());
     expect(harness.repository.markStalled).toHaveBeenCalledWith(
       expect.any(Date),
       20,
@@ -135,11 +139,7 @@ describe('generation reconciler', () => {
       new GenerationError('GENERATION_STALE_WORKER'),
     );
 
-    await expect(harness.reconciler.sweep()).resolves.toEqual({
-      stalled: [],
-      requeued: [],
-      failed: [],
-    });
+    await expect(harness.reconciler.sweep()).resolves.toEqual(emptySummary());
     expect(harness.logger.error).not.toHaveBeenCalled();
   });
 
@@ -198,6 +198,82 @@ describe('generation reconciler', () => {
 
     expect(summary.stalled).toEqual(['job-a', 'job-b']);
     expect(harness.repository.markStalled).toHaveBeenCalledTimes(2);
+  });
+
+  it('finishes orphaned CANCELLING rows through a fenced transition', async () => {
+    const harness = makeHarness();
+    harness.repository.listOrphanedCancels.mockResolvedValueOnce([
+      { jobId: 'job-a', recoveryCount: 0 },
+      { jobId: 'job-b', recoveryCount: 2 },
+    ]);
+
+    const summary = await harness.reconciler.sweep();
+
+    expect(summary.cancelled).toEqual(['job-a', 'job-b']);
+    expect(harness.repository.listOrphanedCancels).toHaveBeenCalledWith(
+      expect.any(Date),
+      20,
+      { stalledAfterMs: 120_000, includeFresh: false },
+    );
+    expect(harness.repository.transition).toHaveBeenCalledTimes(2);
+    expect(harness.repository.transition).toHaveBeenCalledWith(
+      { jobId: 'job-a', state: 'CANCELLING', recoveryCount: 0 },
+      'CANCELLED',
+    );
+    expect(harness.logger.info).toHaveBeenCalledWith(
+      'generation.reconciler.orphan_cancelled',
+      { jobId: 'job-a' },
+    );
+  });
+
+  it('treats every CANCELLING row as orphaned at boot', async () => {
+    const harness = makeHarness();
+    harness.repository.listOrphanedCancels.mockResolvedValueOnce([
+      { jobId: 'job-a', recoveryCount: 1 },
+    ]);
+
+    const summary = await harness.reconciler.recoverOnBoot();
+
+    expect(summary.cancelled).toEqual(['job-a']);
+    expect(harness.repository.listOrphanedCancels).toHaveBeenCalledWith(
+      expect.any(Date),
+      20,
+      { stalledAfterMs: 120_000, includeFresh: true },
+    );
+  });
+
+  it('swallows a lost race on an orphan cancel', async () => {
+    const harness = makeHarness();
+    harness.repository.listOrphanedCancels.mockResolvedValueOnce([
+      { jobId: 'job-a', recoveryCount: 0 },
+    ]);
+    harness.repository.transition.mockRejectedValueOnce(
+      new GenerationError('GENERATION_STALE_WORKER'),
+    );
+
+    const summary = await harness.reconciler.sweep();
+
+    expect(summary.cancelled).toEqual([]);
+    expect(harness.logger.error).not.toHaveBeenCalled();
+  });
+
+  it('keeps going when an orphan cancel write throws', async () => {
+    const harness = makeHarness();
+    harness.repository.listOrphanedCancels.mockResolvedValueOnce([
+      { jobId: 'job-a', recoveryCount: 0 },
+      { jobId: 'job-b', recoveryCount: 0 },
+    ]);
+    harness.repository.transition
+      .mockRejectedValueOnce(new Error('ZZ-m5-secret-text'))
+      .mockResolvedValueOnce(snapshot());
+
+    const summary = await harness.reconciler.sweep();
+
+    expect(summary.cancelled).toEqual(['job-b']);
+    expect(harness.logger.error).toHaveBeenCalledWith(
+      'generation.reconciler.cancel_failed',
+      { jobId: 'job-a', name: 'Error' },
+    );
   });
 
   it('starts once, sweeps on the interval and clears the timer on stop', async () => {
