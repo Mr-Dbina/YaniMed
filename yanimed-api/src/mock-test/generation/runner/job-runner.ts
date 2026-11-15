@@ -15,7 +15,7 @@ import type {
   RunOutcome,
   WrittenQuestion,
 } from './ports.js';
-import { runSlot, stopCauseOf, type SlotRunnerDeps } from './slot-runner.js';
+import { runSlot, stopCauseOf, emptyRejectionCounts, type RejectionCounts, type SlotRunnerDeps } from './slot-runner.js';
 
 export interface RunJobArgs {
   job: { id: string; subjectId: string; requestedCount: number };
@@ -142,6 +142,7 @@ function setQuestionsOf(
 async function execute(
   args: RunJobArgs,
   deps: RunnerDeps,
+  counts: RejectionCounts,
 ): Promise<RunOutcome> {
   const { job, fence, signal } = args;
   const { source, planStore, writtenStore } = deps;
@@ -220,6 +221,7 @@ async function execute(
     embed: deps.embed,
     bank: deps.bank,
     models: deps.models,
+    logger: deps.logger,
   };
   let budgetRemaining = REPLACEMENT_BUDGET;
   let acceptedCount = accepted.length;
@@ -242,6 +244,7 @@ async function execute(
       replacementBudgetRemaining: budgetRemaining,
       deps: slotDeps,
       onProgress: deps.onProgress,
+      counts,
     });
 
     if (outcome.kind === 'STOPPED') return outcome;
@@ -311,18 +314,26 @@ export async function runJob(
   args: RunJobArgs,
   deps: RunnerDeps,
 ): Promise<RunOutcome> {
-  if (args.job.requestedCount !== QUESTIONS_PER_TEST) {
-    return {
-      kind: 'FAILED',
-      reason: 'INTERNAL',
-      detail: `requestedCount ${args.job.requestedCount}`,
-    };
-  }
-  if (args.signal.aborted) return stoppedOutcome(args.signal);
-
+  const counts = emptyRejectionCounts();
   try {
-    return await execute(args, deps);
-  } catch (err) {
-    return mapRunnerError(err, args.signal);
+    if (args.job.requestedCount !== QUESTIONS_PER_TEST) {
+      return {
+        kind: 'FAILED',
+        reason: 'INTERNAL',
+        detail: `requestedCount ${args.job.requestedCount}`,
+      };
+    }
+    if (args.signal.aborted) return stoppedOutcome(args.signal);
+
+    try {
+      return await execute(args, deps, counts);
+    } catch (err) {
+      return mapRunnerError(err, args.signal);
+    }
+  } finally {
+    deps.logger?.warn('generation.job.rejections', {
+      jobId: args.job.id,
+      ...counts,
+    });
   }
 }

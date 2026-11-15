@@ -21,6 +21,7 @@ import type {
   StopCause,
   WriteQuestionPort,
 } from './ports.js';
+import type { WorkerLogger } from '../worker/worker.types.js';
 
 const STOP_CAUSES: ReadonlySet<string> = new Set([
   'CANCEL',
@@ -47,6 +48,16 @@ export interface SlotRunnerDeps {
   embed: EmbedPort;
   bank: BankSource;
   models: { verifier: string };
+  logger?: WorkerLogger;
+}
+
+export type RejectionCheck = 'DRAFT' | 'A' | 'B' | 'C';
+
+/** Per-check rejection totals for one job. */
+export type RejectionCounts = Record<RejectionCheck, number>;
+
+export function emptyRejectionCounts(): RejectionCounts {
+  return { DRAFT: 0, A: 0, B: 0, C: 0 };
 }
 
 export interface SlotRunArgs {
@@ -65,6 +76,8 @@ export interface SlotRunArgs {
   replacementBudgetRemaining: number;
   deps: SlotRunnerDeps;
   onProgress?: (progress: Progress) => void;
+  /** Shared with the job runner for the end-of-job summary. */
+  counts: RejectionCounts;
 }
 
 export type SlotOutcome =
@@ -165,9 +178,37 @@ function pageTextOf(draft: DraftQuestion, inputs: JobInputs): string {
  */
 export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
   const { slot, inputs, deps, signal } = args;
+  const logger = deps.logger;
+  const jobId = args.fence.jobId;
+
+  const logReject = (check: RejectionCheck, code: string | undefined): void => {
+    args.counts[check] += 1;
+    logger?.warn('generation.slot.rejected', {
+      jobId,
+      slot: slot.index,
+      check,
+      code,
+    });
+  };
+
+  const exhausted = (attempts: number, replacements: number): SlotOutcome => {
+    logger?.warn('generation.slot.exhausted', {
+      jobId,
+      slot: slot.index,
+      attempts,
+      replacements,
+    });
+    return failedExhausted(
+      slot.index,
+      attempts,
+      replacements,
+      args.replacementBudgetRemaining,
+    );
+  };
+
   const basePrimary = slot.seedChunkIds[0];
   if (basePrimary === undefined) {
-    return failedExhausted(slot.index, 0, 0, args.replacementBudgetRemaining);
+    return exhausted(0, 0);
   }
 
   const chunkIds = new Set(inputs.chunks.map((chunk) => chunk.id));
@@ -210,7 +251,10 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
         avoidStems: [...avoidStems],
         signal,
       });
-      if (!draftResult.ok) continue;
+      if (!draftResult.ok) {
+        logReject('DRAFT', draftResult.reason);
+        continue;
+      }
 
       const draft = draftResult.draft;
       args.onProgress?.({
@@ -220,6 +264,7 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
 
       const checkA = deps.checkA(draft, checkAContext);
       if (!checkA.ok) {
+        logReject('A', checkA.reasons[0]?.code);
         rejected(draft.stem);
         continue;
       }
@@ -229,8 +274,15 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
         jobId: args.fence.jobId,
         subjectId: args.subjectId,
         signal,
+        onVerifierRetry: () => {
+          logger?.warn('generation.slot.verifier_retry', {
+            jobId,
+            slot: slot.index,
+          });
+        },
       });
       if (!checkB.ok) {
+        logReject('B', checkB.reasons[0]?.code);
         rejected(draft.stem);
         continue;
       }
@@ -245,6 +297,7 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
         signal,
       });
       if (!checkC.ok) {
+        logReject('C', checkC.reasons[0]?.code);
         rejected(draft.stem);
         continue;
       }
@@ -283,22 +336,12 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
     }
 
     if (replacements >= args.replacementBudgetRemaining) {
-      return failedExhausted(
-        slot.index,
-        attempts,
-        replacements,
-        args.replacementBudgetRemaining,
-      );
+      return exhausted(attempts, replacements);
     }
 
     const next = alternativeSeed(args.plan, slot.topicKey, used, chunkIds);
     if (next === null) {
-      return failedExhausted(
-        slot.index,
-        attempts,
-        replacements,
-        args.replacementBudgetRemaining,
-      );
+      return exhausted(attempts, replacements);
     }
 
     used.add(next.primary);

@@ -356,6 +356,49 @@ describe('verifyDraft output parsing', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('notifies the caller once when the first output is unparsable', async () => {
+    const { ai } = fakeAi(
+      'not json at all',
+      response([
+        ['SUPPORTED', Q_MET],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+      ]),
+    );
+    let retries = 0;
+
+    await verifyDraft(makeDraft(), PAGE, ai, {
+      jobId: 'job-1',
+      onVerifierRetry: () => {
+        retries += 1;
+      },
+    });
+
+    expect(retries).toBe(1);
+  });
+
+  it('does not notify the caller when the first output parses', async () => {
+    const { ai } = fakeAi(
+      response([
+        ['SUPPORTED', Q_MET],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+      ]),
+    );
+    let retries = 0;
+
+    await verifyDraft(makeDraft(), PAGE, ai, {
+      jobId: 'job-1',
+      onVerifierRetry: () => {
+        retries += 1;
+      },
+    });
+
+    expect(retries).toBe(0);
+  });
+
   it('returns VERIFIER_INVALID_OUTPUT after two invalid answers', async () => {
     const { ai, calls } = fakeAi('not json', '{"verdicts":[]}');
 

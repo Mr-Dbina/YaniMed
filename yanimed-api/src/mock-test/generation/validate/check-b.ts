@@ -33,6 +33,8 @@ export interface VerifyDraftOptions {
   jobId: string;
   subjectId?: string;
   signal?: AbortSignal;
+  /** Called when an unparsable output triggers the single retry. */
+  onVerifierRetry?: () => void;
 }
 
 /**
@@ -102,6 +104,9 @@ export async function verifyDraft(
       parsed = parseVerifierResponse(result.text);
     } catch {
       parsed = null;
+    }
+    if (parsed === null && attempt + 1 < MAX_VERIFIER_CALLS) {
+      opts.onVerifierRetry?.();
     }
   }
 

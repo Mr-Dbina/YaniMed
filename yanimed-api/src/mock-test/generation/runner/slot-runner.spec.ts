@@ -9,7 +9,9 @@ import type { PlannerChunkInput } from '../plan/clustering.js';
 import type { DraftQuestion } from '../validate/types.js';
 import type { AcceptedQuestionRef } from '../validate/check-c.js';
 import type { JobInputs, Progress } from './ports.js';
+import type { WorkerLogger } from '../worker/worker.types.js';
 import {
+  emptyRejectionCounts,
   runSlot,
   stopCauseOf,
   type SlotRunArgs,
@@ -144,7 +146,25 @@ function makeArgs(overrides: Partial<SlotRunArgs> = {}): SlotRunArgs {
     usedPrimaryIds: new Set(),
     replacementBudgetRemaining: 5,
     deps: fakeDeps(),
+    counts: emptyRejectionCounts(),
     ...overrides,
+  };
+}
+
+interface FakeLogger {
+  logger: WorkerLogger;
+  warns: Array<{ event: string; fields?: Record<string, string | number | undefined> }>;
+}
+
+function fakeLogger(): FakeLogger {
+  const warns: FakeLogger['warns'] = [];
+  return {
+    logger: {
+      info: () => {},
+      warn: (event, fields) => warns.push({ event, fields }),
+      error: () => {},
+    },
+    warns,
   };
 }
 
@@ -542,5 +562,174 @@ describe('runSlot', () => {
 
     expect(accepted).toHaveLength(1);
     expect([...used]).toEqual(['chunk-1-0']);
+  });
+});
+
+/** One slot that loses one draft to each check, then is accepted. */
+function oneRejectionPerCheck(logger?: WorkerLogger): SlotRunArgs {
+  const draft = vi
+    .fn<SlotRunnerDeps['draft']>()
+    .mockResolvedValueOnce({
+      ok: false,
+      reason: 'DRAFT_INVALID_JSON',
+      model: null,
+      promptVersion: 'prompt-v1',
+    })
+    .mockResolvedValue(draftOk());
+  const checkA = vi
+    .fn<SlotRunnerDeps['checkA']>()
+    .mockReturnValueOnce({ ok: false, reasons: [{ code: 'STEM_SENTENCE_COUNT' }] })
+    .mockImplementation((value) => ({
+      ok: true,
+      draft: value as DraftQuestion,
+    }));
+  const checkB = vi
+    .fn<SlotRunnerDeps['checkB']>()
+    .mockResolvedValueOnce({
+      ok: false,
+      polarity: 'NORMAL',
+      reasons: [{ code: 'VERIFIER_KEY_MISMATCH' }],
+    })
+    .mockResolvedValue({ ok: true, polarity: 'NORMAL', verdicts: [] });
+  const checkC = vi
+    .fn<SlotRunnerDeps['checkC']>()
+    .mockResolvedValueOnce({
+      ok: false,
+      embedding: null,
+      reasons: [{ code: 'DUPLICATE_IN_JOB' }],
+      skippedBankRefs: 0,
+    })
+    .mockResolvedValue({
+      ok: true,
+      embedding: basis(1),
+      maxSimilarity: 0,
+      skippedBankRefs: 0,
+    });
+
+  return makeArgs({
+    deps: fakeDeps({
+      draft,
+      checkA,
+      checkB,
+      checkC,
+      ...(logger === undefined ? {} : { logger }),
+    }),
+  });
+}
+
+describe('runSlot rejection logging', () => {
+  it('logs one rejection line per check with the first reason code only', async () => {
+    const { logger, warns } = fakeLogger();
+
+    const result = await runSlot(oneRejectionPerCheck(logger));
+
+    expect(result.kind).toBe('ACCEPTED');
+    expect(warns).toEqual([
+      {
+        event: 'generation.slot.rejected',
+        fields: {
+          jobId: 'job-1',
+          slot: 0,
+          check: 'DRAFT',
+          code: 'DRAFT_INVALID_JSON',
+        },
+      },
+      {
+        event: 'generation.slot.rejected',
+        fields: {
+          jobId: 'job-1',
+          slot: 0,
+          check: 'A',
+          code: 'STEM_SENTENCE_COUNT',
+        },
+      },
+      {
+        event: 'generation.slot.rejected',
+        fields: {
+          jobId: 'job-1',
+          slot: 0,
+          check: 'B',
+          code: 'VERIFIER_KEY_MISMATCH',
+        },
+      },
+      {
+        event: 'generation.slot.rejected',
+        fields: {
+          jobId: 'job-1',
+          slot: 0,
+          check: 'C',
+          code: 'DUPLICATE_IN_JOB',
+        },
+      },
+    ]);
+  });
+
+  it('counts each rejection per check', async () => {
+    const args = oneRejectionPerCheck(fakeLogger().logger);
+
+    await runSlot(args);
+
+    expect(args.counts).toEqual({ DRAFT: 1, A: 1, B: 1, C: 1 });
+  });
+
+  it('writes no source, stem, choice or quote text into the logs', async () => {
+    const { logger, warns } = fakeLogger();
+
+    await runSlot(oneRejectionPerCheck(logger));
+
+    const logged = JSON.stringify(warns);
+    expect(logged).not.toContain(SOURCE_SENTINEL);
+    expect(logged).not.toContain('Stem one.');
+    expect(logged).not.toContain('Choice A');
+    expect(logged).not.toContain('Explanation A');
+  });
+
+  it('leaves the outcome unchanged and still counts without a logger', async () => {
+    const args = oneRejectionPerCheck();
+
+    const result = await runSlot(args);
+
+    expect(result.kind).toBe('ACCEPTED');
+    expect(args.counts).toEqual({ DRAFT: 1, A: 1, B: 1, C: 1 });
+  });
+
+  it('logs exhausted with attempts and replacements on slot failure', async () => {
+    const { logger, warns } = fakeLogger();
+    const draft = vi.fn(async (): Promise<DraftResult> => ({
+      ok: false,
+      reason: 'DRAFT_INVALID_JSON',
+      model: null,
+      promptVersion: 'prompt-v1',
+    }));
+
+    const result = await runSlot(
+      makeArgs({
+        replacementBudgetRemaining: 0,
+        deps: fakeDeps({ draft, logger }),
+      }),
+    );
+
+    expect(result.kind).toBe('FAILED');
+    expect(warns).toContainEqual({
+      event: 'generation.slot.exhausted',
+      fields: { jobId: 'job-1', slot: 0, attempts: 3, replacements: 0 },
+    });
+  });
+
+  it('logs a verifier retry when Check B asks for one', async () => {
+    const { logger, warns } = fakeLogger();
+    const checkB = vi.fn<SlotRunnerDeps['checkB']>(
+      async (_draft, _pageText, opts) => {
+        opts.onVerifierRetry?.();
+        return { ok: true, polarity: 'NORMAL', verdicts: [] };
+      },
+    );
+
+    await runSlot(makeArgs({ deps: fakeDeps({ checkB, logger }) }));
+
+    expect(warns).toContainEqual({
+      event: 'generation.slot.verifier_retry',
+      fields: { jobId: 'job-1', slot: 0 },
+    });
   });
 });

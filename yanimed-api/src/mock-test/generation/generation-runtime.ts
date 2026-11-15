@@ -140,6 +140,7 @@ function runnerDeps(
   planner: GenerationPlanner,
   config: ConfigService | undefined,
   job: ClaimedGenerationJob,
+  logger?: WorkerLogger,
 ): RunnerDeps {
   const embed = (input: { jobId: string; text: string }) => ai.embed(input);
 
@@ -166,6 +167,7 @@ function runnerDeps(
     models: {
       verifier: config?.get<string>('OMNIROUTE_VERIFIER_MODEL')?.trim() ?? '',
     },
+    logger,
   };
 }
 
@@ -201,7 +203,7 @@ export class GenerationRuntime
             },
             signal,
           },
-          runnerDeps(prisma, ai, planner, config, job),
+          runnerDeps(prisma, ai, planner, config, job, logger),
         ),
       publishJobQuestions: (jobId) => publishJobQuestions(jobId, prisma),
       readJobState: async (jobId) => {

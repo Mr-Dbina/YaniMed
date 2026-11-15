@@ -23,6 +23,7 @@ import type {
   SetQuestionRef,
 } from '../validate/check-d.js';
 import type { CheckBResult, VerifyDraftOptions } from '../validate/check-b.js';
+import type { WorkerLogger } from '../worker/worker.types.js';
 
 /** Everything the runner needs from outside the job row for this job. */
 export interface JobInputs {
@@ -128,6 +129,8 @@ export interface RunnerDeps {
   bank: BankSource;
   models: { verifier: string };
   onProgress?: (progress: Progress) => void;
+  /** Absent means no rejection logging; behaviour is otherwise unchanged. */
+  logger?: WorkerLogger;
 }
 
 export type StopCause = 'CANCEL' | 'DEADLINE' | 'SHUTDOWN' | 'STALE_WORKER';

@@ -306,6 +306,63 @@ describe('runJob', () => {
     });
   });
 
+  it('logs an end-of-job rejection summary with counts per check', async () => {
+    const warns: Array<{
+      event: string;
+      fields?: Record<string, string | number | undefined>;
+    }> = [];
+    let checkACalls = 0;
+    const harness = makeHarness({
+      deps: {
+        logger: {
+          info: () => {},
+          warn: (event, fields) => warns.push({ event, fields }),
+          error: () => {},
+        },
+        checkA: (value) => {
+          checkACalls += 1;
+          if (checkACalls === 1) {
+            return { ok: false, reasons: [{ code: 'STEM_SENTENCE_COUNT' }] };
+          }
+          return { ok: true, draft: value as DraftQuestion };
+        },
+      },
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toEqual({ kind: 'COMPLETED', acceptedCount: 25 });
+    expect(warns).toContainEqual({
+      event: 'generation.job.rejections',
+      fields: { jobId: 'job-1', DRAFT: 0, A: 1, B: 0, C: 0 },
+    });
+  });
+
+  it('logs a zero summary when every draft is accepted', async () => {
+    const warns: Array<{
+      event: string;
+      fields?: Record<string, string | number | undefined>;
+    }> = [];
+    const harness = makeHarness({
+      deps: {
+        logger: {
+          info: () => {},
+          warn: (event, fields) => warns.push({ event, fields }),
+          error: () => {},
+        },
+      },
+    });
+
+    await runJob(makeArgs(), harness.deps);
+
+    expect(warns).toEqual([
+      {
+        event: 'generation.job.rejections',
+        fields: { jobId: 'job-1', DRAFT: 0, A: 0, B: 0, C: 0 },
+      },
+    ]);
+  });
+
   it('reuses a saved plan and skips planning and saving', async () => {
     const harness = makeHarness({ savedPlan: makePlan() });
 
