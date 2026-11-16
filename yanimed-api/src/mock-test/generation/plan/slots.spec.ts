@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RESERVE_SLOTS } from '../generation.constants.js';
 import type {
   ChunkCluster,
   PlannerChunkInput,
@@ -8,6 +9,7 @@ import {
   allocateSlots,
   buildSlots,
   membersByCentroid,
+  reserveAllocations,
   selectSeedChunkIds,
 } from './slots.js';
 
@@ -130,6 +132,43 @@ describe('allocateSlots', () => {
   });
 });
 
+describe('reserveAllocations', () => {
+  it('takes the six largest zero-slot clusters with two or more members', () => {
+    const clusters = Array.from({ length: 20 }, (_, index) =>
+      cluster(index, 5),
+    );
+    const allocations = allocateSlots(clusters);
+
+    const reserves = reserveAllocations(allocations);
+
+    expect(reserves).toHaveLength(RESERVE_SLOTS);
+    expect(reserves.map((item) => item.cluster.id)).toEqual([13, 14, 15, 16, 17, 18]);
+    expect(reserves.every((item) => item.slotCount === 1)).toBe(true);
+    expect(reserves.every((item) => item.reserve === true)).toBe(true);
+  });
+
+  it('skips single-chunk clusters and stops when no zero-slot cluster is left', () => {
+    const clusters = [
+      ...Array.from({ length: 13 }, (_, index) => cluster(index, 4)),
+      cluster(13, 1),
+      cluster(14, 3),
+    ];
+    const allocations = allocateSlots(clusters);
+
+    const reserves = reserveAllocations(allocations);
+
+    expect(reserves.map((item) => item.cluster.id)).toEqual([14]);
+  });
+
+  it('returns nothing when every cluster already has a primary slot', () => {
+    const clusters = Array.from({ length: 13 }, (_, index) =>
+      cluster(index, 20 - index),
+    );
+
+    expect(reserveAllocations(allocateSlots(clusters))).toEqual([]);
+  });
+});
+
 describe('membersByCentroid', () => {
   it('orders the closest member first', () => {
     const items: VectorChunk[] = [
@@ -240,5 +279,34 @@ describe('buildSlots', () => {
       'beta',
     ]);
     expect(slots[0].seedChunkIds[0]).not.toBe(slots[1].seedChunkIds[0]);
+  });
+
+  it('marks only reserve allocations and numbers them after the primaries', () => {
+    const first = cluster(3, 3);
+    const second = cluster(7, 2);
+    const reserve = cluster(9, 2);
+    const topicKeys = new Map([
+      [3, 'alpha'],
+      [7, 'beta'],
+      [9, 'gamma'],
+    ]);
+
+    const slots = buildSlots(
+      [
+        { cluster: first, slotCount: 2 },
+        { cluster: second, slotCount: 1 },
+        { cluster: reserve, slotCount: 1, reserve: true },
+      ],
+      topicKeys,
+    );
+
+    expect(slots.map((slot) => slot.index)).toEqual([0, 1, 2, 3]);
+    expect(slots.map((slot) => slot.reserve)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      true,
+    ]);
+    expect(slots[3].topicKey).toBe('gamma');
   });
 });

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DRAFT_ATTEMPTS_PER_SLOT,
   QUESTIONS_PER_TEST,
-  REPLACEMENT_BUDGET,
+  REPLACEMENTS_PER_SLOT,
+  RESERVE_SLOTS,
   VALIDATOR_VERSION,
 } from '../generation.constants.js';
 import { GenerationError } from '../generation.errors.js';
@@ -32,7 +34,10 @@ function basis(index: number): number[] {
   return vector;
 }
 
-function makePlan(slotCount = QUESTIONS_PER_TEST): GenerationPlan {
+function makePlan(
+  slotCount = QUESTIONS_PER_TEST,
+  reserveCount = 0,
+): GenerationPlan {
   const topics: GenerationPlan['topics'] = [];
   const slots: GenerationPlan['slots'] = [];
   const candidates: Record<string, string[]> = {};
@@ -59,9 +64,31 @@ function makePlan(slotCount = QUESTIONS_PER_TEST): GenerationPlan {
     }
   }
 
+  const primary = slots.slice(0, slotCount);
+  for (let reserve = 1; reserve <= reserveCount; reserve += 1) {
+    const topicKey = `reserve-topic-${reserve}`;
+    const ids = Array.from(
+      { length: 5 },
+      (_, index) => `chunk-reserve-${reserve}-${index}`,
+    );
+    topics.push({
+      topicKey,
+      name: `Reserve ${reserve}`,
+      clusterId: 100 + reserve,
+      slotCount: 1,
+    });
+    candidates[topicKey] = ids;
+    primary.push({
+      index: primary.length,
+      topicKey,
+      seedChunkIds: [ids[0]],
+      reserve: true,
+    });
+  }
+
   return {
     topics,
-    slots: slots.slice(0, slotCount),
+    slots: primary,
     candidates,
     stats: {
       eligibleChunks: 65,
@@ -85,6 +112,19 @@ function makeInputs(): JobInputs {
         chunkIndex: index,
         needsReview: false,
         embedding: basis(topic * 5 + index),
+      });
+    }
+  }
+  for (let reserve = 1; reserve <= RESERVE_SLOTS; reserve += 1) {
+    for (let index = 0; index < 5; index += 1) {
+      chunks.push({
+        id: `chunk-reserve-${reserve}-${index}`,
+        documentId: 'doc-1',
+        content: `${SOURCE_SENTINEL} reserve ${reserve} ${index}`,
+        page: 1,
+        chunkIndex: index,
+        needsReview: false,
+        embedding: basis(reserve * 5 + index),
       });
     }
   }
@@ -485,6 +525,343 @@ describe('runJob', () => {
     expect(harness.writeCalls).toHaveLength(24);
   });
 
+  it('skips an exhausted primary slot and backfills it from a reserve', async () => {
+    const warns: Array<{
+      event: string;
+      fields?: Record<string, string | number | undefined>;
+    }> = [];
+    const drafts: DraftQuestionArgs[] = [];
+    const harness = makeHarness({
+      savedPlan: makePlan(QUESTIONS_PER_TEST, RESERVE_SLOTS),
+      deps: {
+        logger: {
+          info: () => {},
+          warn: (event, fields) => warns.push({ event, fields }),
+          error: () => {},
+        },
+        draft: async (args) => {
+          drafts.push(args);
+          if (args.topic.topicKey === 'topic-13') {
+            return {
+              ok: false,
+              reason: 'DRAFT_SHAPE_INVALID',
+              model: null,
+              promptVersion: 'prompt-v1',
+            };
+          }
+          return {
+            ok: true,
+            draft: makeDraft(args.topic.topicKey, drafts.length),
+            model: `draft-model-${drafts.length}`,
+            promptVersion: 'prompt-v1',
+          };
+        },
+      },
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toEqual({ kind: 'COMPLETED', acceptedCount: 25 });
+    expect(harness.writeCalls).toHaveLength(25);
+    expect(
+      harness.writeCalls.some(
+        (call) => call.draft.topicKey === 'reserve-topic-1',
+      ),
+    ).toBe(true);
+    expect(warns).toContainEqual({
+      event: 'generation.slot.skipped',
+      fields: { jobId: 'job-1', slot: 24, reserveRemaining: RESERVE_SLOTS },
+    });
+  });
+
+  it('gives every slot its own replacement budget', async () => {
+    const harness = makeHarness({
+      savedPlan: makePlan(QUESTIONS_PER_TEST, RESERVE_SLOTS),
+      deps: {
+        draft: async (args) => {
+          harness.draftCalls.push(args);
+          if (args.topic.topicKey === 'topic-2') {
+            return {
+              ok: false,
+              reason: 'DRAFT_SHAPE_INVALID',
+              model: null,
+              promptVersion: 'prompt-v1',
+            };
+          }
+          return {
+            ok: true,
+            draft: makeDraft(args.topic.topicKey, harness.draftCalls.length + 1),
+            model: 'draft-model-1',
+            promptVersion: 'prompt-v1',
+          };
+        },
+      },
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toEqual({ kind: 'COMPLETED', acceptedCount: 25 });
+    const topicTwo = harness.draftCalls.filter(
+      (call) => call.topic.topicKey === 'topic-2',
+    );
+    expect(topicTwo).toHaveLength(
+      2 * (DRAFT_ATTEMPTS_PER_SLOT * (REPLACEMENTS_PER_SLOT + 1)),
+    );
+    const topicThree = harness.draftCalls.filter(
+      (call) => call.topic.topicKey === 'topic-3',
+    );
+    expect(topicThree.every((call) => call.lastRejectionCode === undefined)).toBe(
+      true,
+    );
+  });
+
+  it('tries the next reserve slot when a reserve slot also exhausts', async () => {
+    const harness = makeHarness({
+      savedPlan: makePlan(QUESTIONS_PER_TEST, RESERVE_SLOTS),
+      deps: {
+        draft: async (args) => {
+          harness.draftCalls.push(args);
+          if (
+            args.topic.topicKey === 'topic-13' ||
+            args.topic.topicKey === 'reserve-topic-1'
+          ) {
+            return {
+              ok: false,
+              reason: 'DRAFT_SHAPE_INVALID',
+              model: null,
+              promptVersion: 'prompt-v1',
+            };
+          }
+          return {
+            ok: true,
+            draft: makeDraft(args.topic.topicKey, harness.draftCalls.length + 1),
+            model: 'draft-model-1',
+            promptVersion: 'prompt-v1',
+          };
+        },
+      },
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toEqual({ kind: 'COMPLETED', acceptedCount: 25 });
+    expect(
+      harness.writeCalls.some(
+        (call) => call.draft.topicKey === 'reserve-topic-2',
+      ),
+    ).toBe(true);
+  });
+
+  it('fails VALIDATION_EXHAUSTED when the skipped slots outnumber the reserves', async () => {
+    const harness = makeHarness({
+      savedPlan: makePlan(QUESTIONS_PER_TEST, RESERVE_SLOTS),
+      deps: {
+        draft: async (args) => {
+          harness.draftCalls.push(args);
+          const skipped = new Set(['topic-1', 'topic-2', 'topic-3', 'topic-13']);
+          if (skipped.has(args.topic.topicKey)) {
+            return {
+              ok: false,
+              reason: 'DRAFT_SHAPE_INVALID',
+              model: null,
+              promptVersion: 'prompt-v1',
+            };
+          }
+          return {
+            ok: true,
+            draft: makeDraft(args.topic.topicKey, harness.draftCalls.length + 1),
+            model: 'draft-model-1',
+            promptVersion: 'prompt-v1',
+          };
+        },
+      },
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toMatchObject({
+      kind: 'FAILED',
+      reason: 'VALIDATION_EXHAUSTED',
+    });
+    expect(
+      harness.draftCalls.filter((call) =>
+        call.topic.topicKey.startsWith('reserve-topic-'),
+      ),
+    ).toHaveLength(RESERVE_SLOTS);
+  });
+
+  it('never accepts more than 25 questions with reserves planned', async () => {
+    const harness = makeHarness({
+      savedPlan: makePlan(QUESTIONS_PER_TEST, RESERVE_SLOTS),
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toEqual({ kind: 'COMPLETED', acceptedCount: 25 });
+    expect(harness.writeCalls).toHaveLength(25);
+    expect(
+      harness.draftCalls.some((call) =>
+        call.topic.topicKey.startsWith('reserve-topic-'),
+      ),
+    ).toBe(false);
+  });
+
+  it('ends the job immediately on a provider failure instead of skipping', async () => {
+    const harness = makeHarness({
+      savedPlan: makePlan(QUESTIONS_PER_TEST, RESERVE_SLOTS),
+      deps: {
+        draft: async (args) => {
+          if (args.topic.topicKey === 'topic-2') {
+            throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
+              jobId: 'job-1',
+            });
+          }
+          return {
+            ok: true,
+            draft: makeDraft(args.topic.topicKey, 1),
+            model: 'draft-model-1',
+            promptVersion: 'prompt-v1',
+          };
+        },
+      },
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toMatchObject({
+      kind: 'FAILED',
+      reason: 'PROVIDER_UNAVAILABLE',
+    });
+    expect(
+      harness.writeCalls.some(
+        (call) => call.draft.topicKey === 'reserve-topic-1',
+      ),
+    ).toBe(false);
+  });
+
+  it('carries a rejection code to the next draft and resets it for the next slot', async () => {
+    let rejected = false;
+    const harness = makeHarness({
+      savedPlan: makePlan(),
+      deps: {
+        checkB: async () => {
+          if (!rejected) {
+            rejected = true;
+            return {
+              ok: false,
+              polarity: 'NORMAL',
+              reasons: [{ code: 'VERIFIER_KEY_MISMATCH' }],
+            };
+          }
+          return { ok: true, polarity: 'NORMAL', verdicts: [] };
+        },
+      },
+    });
+
+    await runJob(makeArgs(), harness.deps);
+
+    expect(harness.draftCalls[0].lastRejectionCode).toBeUndefined();
+    expect(harness.draftCalls[1].lastRejectionCode).toBe(
+      'VERIFIER_KEY_MISMATCH',
+    );
+    expect(harness.draftCalls[2].lastRejectionCode).toBeUndefined();
+  });
+
+  it('stops with CANCEL while a reserve slot runs', async () => {
+    const controller = new AbortController();
+    const harness = makeHarness({
+      savedPlan: makePlan(QUESTIONS_PER_TEST, RESERVE_SLOTS),
+      deps: {
+        draft: async (args) => {
+          if (args.topic.topicKey === 'reserve-topic-1') {
+            controller.abort('CANCEL');
+          }
+          if (args.topic.topicKey === 'topic-13') {
+            return {
+              ok: false,
+              reason: 'DRAFT_SHAPE_INVALID',
+              model: null,
+              promptVersion: 'prompt-v1',
+            };
+          }
+          return {
+            ok: true,
+            draft: makeDraft(args.topic.topicKey, harness.draftCalls.length + 1),
+            model: 'draft-model-1',
+            promptVersion: 'prompt-v1',
+          };
+        },
+      },
+    });
+
+    const result = await runJob(
+      makeArgs({ signal: controller.signal }),
+      harness.deps,
+    );
+
+    expect(result).toEqual({ kind: 'STOPPED', cause: 'CANCEL' });
+  });
+
+  it('resumes a written reserve-slot question without drafting it again', async () => {
+    const written: WrittenQuestion[] = [];
+    let index = 0;
+    for (let topic = 1; topic <= 12; topic += 1) {
+      for (let ordinal = 0; ordinal < 2; ordinal += 1) {
+        index += 1;
+        written.push(writtenQuestion(index, `topic-${topic}`));
+      }
+    }
+    written.push(writtenQuestion(25, 'reserve-topic-1'));
+    const harness = makeHarness({
+      written,
+      savedPlan: makePlan(QUESTIONS_PER_TEST, 2),
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toEqual({ kind: 'COMPLETED', acceptedCount: 25 });
+    expect(harness.embedCalls).toHaveLength(25);
+    expect(harness.draftCalls).toHaveLength(0);
+    expect(harness.writeCalls).toHaveLength(0);
+  });
+
+  it('uses only the reserve slots that exist', async () => {
+    const harness = makeHarness({
+      savedPlan: makePlan(QUESTIONS_PER_TEST, 2),
+      deps: {
+        draft: async (args) => {
+          harness.draftCalls.push(args);
+          if (args.topic.topicKey === 'topic-1' || args.topic.topicKey === 'topic-2') {
+            return {
+              ok: false,
+              reason: 'DRAFT_SHAPE_INVALID',
+              model: null,
+              promptVersion: 'prompt-v1',
+            };
+          }
+          return {
+            ok: true,
+            draft: makeDraft(args.topic.topicKey, harness.draftCalls.length + 1),
+            model: 'draft-model-1',
+            promptVersion: 'prompt-v1',
+          };
+        },
+      },
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toMatchObject({
+      kind: 'FAILED',
+      reason: 'VALIDATION_EXHAUSTED',
+    });
+    expect(
+      harness.draftCalls.filter((call) =>
+        call.topic.topicKey.startsWith('reserve-topic-'),
+      ),
+    ).toHaveLength(2);
+  });
+
   it.each([
     ['GENERATION_PROVIDER_UNAVAILABLE', 'PROVIDER_UNAVAILABLE'],
     ['GENERATION_AI_TIMEOUT', 'PROVIDER_UNAVAILABLE'],
@@ -683,7 +1060,8 @@ describe('runJob', () => {
 
     const completed = await runJob(makeArgs(), makeHarness().deps);
     expect(JSON.stringify(completed)).not.toContain(SOURCE_SENTINEL);
-    expect(REPLACEMENT_BUDGET).toBe(5);
+    expect(REPLACEMENTS_PER_SLOT).toBe(1);
+    expect(RESERVE_SLOTS).toBe(6);
   });
 
   it('maps an unknown thrown value to INTERNAL with only its name', () => {

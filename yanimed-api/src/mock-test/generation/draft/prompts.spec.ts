@@ -143,4 +143,41 @@ describe('buildDraftMessages', () => {
       `[TRUNCATED AT ${PAGE_MATCH_MAX_CHARS} CHARACTERS]`,
     );
   });
+
+  it('adds one fixed hint sentence for a known rejection code', () => {
+    const hint =
+      'The last draft failed verification: the page did not support the marked key, so base the key on a fact the page states plainly.';
+    const { system, user } = messages({
+      lastRejectionCode: 'VERIFIER_KEY_MISMATCH',
+    });
+
+    expect(user).toContain(hint);
+    expect(user.split(hint).length - 1).toBe(1);
+    expect(system).not.toContain(hint);
+  });
+
+  it('adds no hint for VERIFIER_INVALID_OUTPUT or an unknown code', () => {
+    const plain = messages().user;
+
+    expect(
+      messages({ lastRejectionCode: 'VERIFIER_INVALID_OUTPUT' }).user,
+    ).toBe(plain);
+    expect(messages({ lastRejectionCode: 'NO_SUCH_CODE' }).user).toBe(plain);
+  });
+
+  it('keeps hint text fixed and never copies reply or stem text', () => {
+    const sentinel = 'MODEL-REPLY-SENTINEL';
+    const { user } = messages({
+      seedChunks: [{ ...CHUNK, text: sentinel }],
+      lastRejectionCode: 'CITATION_QUOTE_NOT_FOUND',
+    });
+    const hintLine = user
+      .split('\n')
+      .find((line) => line.startsWith('The last draft quote'));
+
+    expect(hintLine).toBe(
+      'The last draft quote was not found on the cited page, so copy the quote verbatim from the chunk text.',
+    );
+    expect(hintLine).not.toContain(sentinel);
+  });
 });

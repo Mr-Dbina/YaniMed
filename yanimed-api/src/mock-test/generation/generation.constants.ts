@@ -15,7 +15,10 @@ export const MAX_QUESTIONS_PER_TOPIC = 2;
 
 /** Runner limits. AI calls are capped separately inside the AI wrapper. */
 export const DRAFT_ATTEMPTS_PER_SLOT = 3;
-export const REPLACEMENT_BUDGET = 5;
+/** One replacement seed set per slot, never shared across slots. */
+export const REPLACEMENTS_PER_SLOT = 1;
+/** Extra slots used to backfill slots that exhausted their attempts. */
+export const RESERVE_SLOTS = 6;
 export const VALIDATOR_VERSION = 'validators-v1';
 
 /** Stem length. */

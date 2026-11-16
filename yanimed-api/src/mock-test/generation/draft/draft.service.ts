@@ -27,6 +27,7 @@ export interface DraftQuestionArgs {
   acceptedObjectives: string[];
   styleHint?: DraftStyleHint;
   avoidStems?: string[];
+  lastRejectionCode?: string;
   signal?: AbortSignal;
 }
 
@@ -193,6 +194,7 @@ export async function draftQuestion(
     acceptedObjectives: args.acceptedObjectives,
     avoidStems: args.avoidStems,
     styleHint: args.styleHint,
+    lastRejectionCode: args.lastRejectionCode,
   });
 
   let model: string | null = null;

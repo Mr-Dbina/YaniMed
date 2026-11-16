@@ -19,6 +19,7 @@ export interface DraftPromptInput {
   acceptedObjectives?: readonly string[];
   avoidStems?: readonly string[];
   styleHint?: DraftStyleHint;
+  lastRejectionCode?: string;
 }
 
 export const ACCEPTED_OBJECTIVES_MAX = 30;
@@ -54,6 +55,29 @@ const COMMON_RULES = [
   'Return only strict JSON, with no prose and no markdown, in this shape:',
   JSON_SHAPE,
 ];
+
+/**
+ * Fixed drafter hints, one per rejection code. Text is canned so no model or
+ * source text can reach the next prompt through this channel.
+ */
+const REJECTION_HINTS: Readonly<Record<string, string>> = {
+  VERIFIER_KEY_MISMATCH:
+    'The last draft failed verification: the page did not support the marked key, so base the key on a fact the page states plainly.',
+  VERIFIER_QUOTE_UNVERIFIED:
+    'The last draft quote did not support the marked key, so cite a quote that states the marked fact directly.',
+  VERIFIER_OUTSIDE_KNOWLEDGE:
+    'The last draft used facts outside the source chunks, so use only facts these chunks state.',
+  DRAFT_SHAPE_INVALID:
+    'The last draft did not match the required JSON shape, so return every field exactly as the shape shows.',
+  CHOICES_ALL_IN_STATED_RANGE:
+    'The last draft had every choice inside the stated range, so include one choice outside it.',
+  CITATION_QUOTE_NOT_FOUND:
+    'The last draft quote was not found on the cited page, so copy the quote verbatim from the chunk text.',
+  DUPLICATE_IN_JOB:
+    'The last draft repeated a question already in this test, so write a different fact about the topic.',
+  SAME_PAGE_SAME_FACT:
+    'The last draft reused a fact already used from the same page, so take a different fact from that page.',
+};
 
 const SHORT_RECALL_RULES = [
   'Write in SHORT_RECALL style, like a basic-science reviewer: a stem of one or two sentences.',
@@ -134,6 +158,12 @@ export function buildDraftMessages(input: DraftPromptInput): AiMessage[] {
   if (avoid.length > 0) {
     user.push('<AVOID_STEMS>', ...avoid, '</AVOID_STEMS>');
   }
+
+  const hint =
+    input.lastRejectionCode === undefined
+      ? undefined
+      : REJECTION_HINTS[input.lastRejectionCode];
+  if (hint !== undefined) user.push(hint);
 
   user.push('<SOURCE_CHUNKS>');
   for (const chunk of input.seedChunks) {

@@ -1,6 +1,6 @@
 import {
   QUESTIONS_PER_TEST,
-  REPLACEMENT_BUDGET,
+  REPLACEMENTS_PER_SLOT,
 } from '../generation.constants.js';
 import { GenerationError } from '../generation.errors.js';
 import type { GenerationPlan } from '../plan/planner.js';
@@ -223,13 +223,12 @@ async function execute(
     models: deps.models,
     logger: deps.logger,
   };
-  let budgetRemaining = REPLACEMENT_BUDGET;
   let acceptedCount = accepted.length;
 
-  for (const slot of remainingSlots) {
+  const runOne = (slot: GenerationPlan['slots'][number]) => {
     const key = slot.topicKey.trim();
     const objectives = objectivesByTopic(accepted).get(key) ?? [];
-    const outcome = await runSlot({
+    return runSlot({
       slot,
       plan,
       inputs,
@@ -241,22 +240,18 @@ async function execute(
       accepted,
       acceptedObjectives: objectives,
       usedPrimaryIds: usedPrimaryIdsByTopic.get(key) ?? new Set(),
-      replacementBudgetRemaining: budgetRemaining,
+      replacementBudgetRemaining: REPLACEMENTS_PER_SLOT,
       deps: slotDeps,
       onProgress: deps.onProgress,
       counts,
     });
+  };
 
-    if (outcome.kind === 'STOPPED') return outcome;
-    if (outcome.kind === 'FAILED') {
-      return {
-        kind: 'FAILED',
-        reason: outcome.reason,
-        detail: outcome.detail,
-      };
-    }
-
-    budgetRemaining -= outcome.replacementBudgetUsed;
+  const accept = (outcome: {
+    ref: AcceptedQuestionRef;
+    primaryChunkId: string;
+  }): void => {
+    const key = outcome.ref.topicKey.trim();
     accepted.push(outcome.ref);
     embeddings.set(outcome.ref.key, outcome.ref.embedding);
 
@@ -266,14 +261,46 @@ async function execute(
 
     acceptedCount += 1;
     deps.onProgress?.({ phase: 'DRAFTING', acceptedCount });
+  };
+
+  const primarySlots = remainingSlots.filter((slot) => slot.reserve !== true);
+  const reserveSlots = remainingSlots.filter((slot) => slot.reserve === true);
+  let skippedPrimaries = 0;
+  let reserveAttempts = 0;
+  let reservesAccepted = 0;
+
+  for (const slot of primarySlots) {
     if (acceptedCount >= QUESTIONS_PER_TEST) break;
+    const outcome = await runOne(slot);
+    if (outcome.kind === 'STOPPED') return outcome;
+    if (outcome.kind === 'EXHAUSTED') {
+      skippedPrimaries += 1;
+      deps.logger?.warn('generation.slot.skipped', {
+        jobId: job.id,
+        slot: slot.index,
+        reserveRemaining: reserveSlots.length - reserveAttempts,
+      });
+      continue;
+    }
+    accept(outcome);
+  }
+
+  for (const slot of reserveSlots) {
+    if (acceptedCount >= QUESTIONS_PER_TEST) break;
+    if (reservesAccepted >= skippedPrimaries) break;
+    reserveAttempts += 1;
+    const outcome = await runOne(slot);
+    if (outcome.kind === 'STOPPED') return outcome;
+    if (outcome.kind === 'EXHAUSTED') continue;
+    accept(outcome);
+    reservesAccepted += 1;
   }
 
   if (acceptedCount !== QUESTIONS_PER_TEST) {
     return {
       kind: 'FAILED',
       reason: 'VALIDATION_EXHAUSTED',
-      detail: `accepted ${acceptedCount}, slots ${remainingSlots.length}`,
+      detail: `accepted ${acceptedCount}, slots ${primarySlots.length + reserveAttempts}`,
     };
   }
 

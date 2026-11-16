@@ -4,6 +4,7 @@ import { GenerationAiService } from '../ai/generation-ai.service.js';
 import {
   MIN_DISTINCT_TOPICS,
   QUESTIONS_PER_TEST,
+  RESERVE_SLOTS,
 } from '../generation.constants.js';
 import { GenerationError } from '../generation.errors.js';
 import { createSeededRng, seedFromString } from '../text/rng.js';
@@ -19,9 +20,15 @@ import {
   parseTopicNames,
   uniqueTopicKey,
 } from './prompts.js';
-import { allocateSlots, buildSlots, membersByCentroid, type PlannedSlot } from './slots.js';
+import {
+  allocateSlots,
+  buildSlots,
+  membersByCentroid,
+  reserveAllocations,
+  type PlannedSlot,
+} from './slots.js';
 
-const FIRST_K_MAX = 15;
+const FIRST_K_MAX = MIN_DISTINCT_TOPICS + RESERVE_SLOTS;
 const CHUNKS_PER_CLUSTER = 4;
 const RETRY_K_STEP = 3;
 const NAMING_ATTEMPTS = 2;
@@ -152,9 +159,14 @@ export class GenerationPlanner {
       });
     }
 
+    // Reserve slots come only from clusters that received no primary slot, so
+    // a topic is never shared by a primary slot and a reserve slot.
+    const reserves = reserveAllocations(allocations);
+    const planned = [...allocated, ...reserves];
+
     const usedKeys = new Set<string>();
     const topicKeyByCluster = new Map<number, string>();
-    const topics: PlanTopic[] = allocated.map((allocation) => {
+    const topics: PlanTopic[] = planned.map((allocation) => {
       const name = names.get(allocation.cluster.id);
       if (!name) {
         throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
@@ -183,7 +195,7 @@ export class GenerationPlanner {
 
     return {
       topics,
-      slots: buildSlots(allocations, topicKeyByCluster),
+      slots: buildSlots(planned, topicKeyByCluster),
       candidates,
       stats: {
         eligibleChunks: gate.eligibleChunks,

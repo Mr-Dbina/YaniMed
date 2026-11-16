@@ -2,6 +2,7 @@ import {
   MAX_QUESTIONS_PER_TOPIC,
   MIN_DISTINCT_TOPICS,
   QUESTIONS_PER_TEST,
+  RESERVE_SLOTS,
 } from '../generation.constants.js';
 import { cosine } from '../text/similarity.js';
 import type { ChunkCluster, VectorChunk } from './clustering.js';
@@ -9,12 +10,16 @@ import type { ChunkCluster, VectorChunk } from './clustering.js';
 export interface SlotAllocation {
   cluster: ChunkCluster;
   slotCount: number;
+  /** Set on a reserve allocation; missing means a primary one. */
+  reserve?: boolean;
 }
 
 export interface PlannedSlot {
   index: number;
   topicKey: string;
   seedChunkIds: string[];
+  /** Set on a reserve slot; missing means a primary one. */
+  reserve?: boolean;
 }
 
 function compareChunks(a: VectorChunk, b: VectorChunk): number {
@@ -55,6 +60,29 @@ export function allocateSlots(
     remaining -= 1;
   }
   return allocations;
+}
+
+/**
+ * One reserve slot for each of the largest clusters that received no primary
+ * slot, capped at RESERVE_SLOTS. A single-chunk cluster can never reserve a
+ * slot because a second attempt would have no alternative seed.
+ */
+export function reserveAllocations(
+  allocations: readonly SlotAllocation[],
+  limit: number = RESERVE_SLOTS,
+): SlotAllocation[] {
+  const reserves: SlotAllocation[] = [];
+  for (const allocation of allocations) {
+    if (reserves.length >= limit) break;
+    if (allocation.slotCount > 0) continue;
+    if (allocation.cluster.members.length < 2) continue;
+    reserves.push({
+      cluster: allocation.cluster,
+      slotCount: 1,
+      reserve: true,
+    });
+  }
+  return reserves;
 }
 
 /** Members nearest the centroid first; chunk order breaks equal scores. */
@@ -120,6 +148,7 @@ export function buildSlots(
         index: slots.length,
         topicKey,
         seedChunkIds,
+        ...(allocation.reserve === true ? { reserve: true } : {}),
       });
     }
   }

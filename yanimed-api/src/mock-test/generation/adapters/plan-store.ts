@@ -33,16 +33,22 @@ function toTopic(value: unknown): PlanTopic | null {
 
 function toSlot(value: unknown): PlannedSlot | null {
   if (!isRecord(value)) return null;
-  const { index, topicKey, seedChunkIds } = value;
+  const { index, topicKey, seedChunkIds, reserve } = value;
   if (
     !isInteger(index) ||
     typeof topicKey !== 'string' ||
     !isStringArray(seedChunkIds) ||
-    seedChunkIds.length === 0
+    seedChunkIds.length === 0 ||
+    (reserve !== undefined && typeof reserve !== 'boolean')
   ) {
     return null;
   }
-  return { index, topicKey, seedChunkIds };
+  return {
+    index,
+    topicKey,
+    seedChunkIds,
+    ...(reserve === true ? { reserve: true } : {}),
+  };
 }
 
 function toCandidates(value: unknown): Record<string, string[]> | null {

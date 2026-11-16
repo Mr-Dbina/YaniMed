@@ -123,4 +123,49 @@ describe('plan shape validation', () => {
     expect(parsed).not.toBeNull();
     expect(parsed).not.toHaveProperty('sourceText');
   });
+
+  it('keeps an optional reserve flag and treats a missing flag as primary', async () => {
+    const plan = await realPlan();
+    const topicKey = 'reserve-topic';
+    const withReserve = {
+      ...plan,
+      topics: [
+        ...plan.topics,
+        { topicKey, name: 'Reserve', clusterId: 999, slotCount: 1 },
+      ],
+      slots: [
+        ...plan.slots,
+        {
+          index: plan.slots.length,
+          topicKey,
+          seedChunkIds: [plan.slots[0].seedChunkIds[0]],
+          reserve: true,
+        },
+      ],
+      candidates: { ...plan.candidates, [topicKey]: [plan.slots[0].seedChunkIds[0]] },
+    };
+
+    expect(parsePlan(withReserve)?.slots.at(-1)).toMatchObject({
+      reserve: true,
+    });
+
+    const stored = JSON.parse(JSON.stringify(withReserve)) as {
+      slots: Array<Record<string, unknown>>;
+    };
+    delete stored.slots[stored.slots.length - 1].reserve;
+    const loaded = parsePlan(stored);
+
+    expect(loaded?.slots.at(-1)?.reserve).toBeUndefined();
+    expect(loaded?.slots.slice(0, 25).every((slot) => slot.reserve === undefined))
+      .toBe(true);
+  });
+
+  it('rejects a non-boolean reserve flag', async () => {
+    const plan = await realPlan();
+    const slots = plan.slots.map((slot, index) =>
+      index === 0 ? { ...slot, reserve: 'yes' } : slot,
+    );
+
+    expect(parsePlan({ ...plan, slots })).toBeNull();
+  });
 });

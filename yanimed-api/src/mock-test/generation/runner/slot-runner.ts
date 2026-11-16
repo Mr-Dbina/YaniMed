@@ -1,5 +1,4 @@
 import { DRAFT_ATTEMPTS_PER_SLOT, VALIDATOR_VERSION } from '../generation.constants.js';
-import type { GenerationFailureReason } from '../generation-job.types.js';
 import type { GenerationPlan } from '../plan/planner.js';
 import type { PlannedSlot } from '../plan/slots.js';
 import type { SeedChunk } from '../draft/prompts.js';
@@ -88,8 +87,7 @@ export type SlotOutcome =
       replacementBudgetUsed: number;
     }
   | {
-      kind: 'FAILED';
-      reason: GenerationFailureReason;
+      kind: 'EXHAUSTED';
       detail: string;
       replacementBudgetUsed: number;
     }
@@ -100,15 +98,14 @@ interface SeedSet {
   ids: string[];
 }
 
-function failedExhausted(
+function exhaustedOutcome(
   slotIndex: number,
   attempts: number,
   replacements: number,
   remaining: number,
 ): SlotOutcome {
   return {
-    kind: 'FAILED',
-    reason: 'VALIDATION_EXHAUSTED',
+    kind: 'EXHAUSTED',
     detail: `slot ${slotIndex}, attempts ${attempts}, replacements ${replacements}, budget ${remaining}`,
     replacementBudgetUsed: replacements,
   };
@@ -181,8 +178,11 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
   const logger = deps.logger;
   const jobId = args.fence.jobId;
 
+  let lastRejectionCode: string | undefined;
+
   const logReject = (check: RejectionCheck, code: string | undefined): void => {
     args.counts[check] += 1;
+    lastRejectionCode = code;
     logger?.warn('generation.slot.rejected', {
       jobId,
       slot: slot.index,
@@ -198,7 +198,7 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
       attempts,
       replacements,
     });
-    return failedExhausted(
+    return exhaustedOutcome(
       slot.index,
       attempts,
       replacements,
@@ -249,6 +249,9 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
         acceptedObjectives: [...args.acceptedObjectives],
         styleHint: inputs.styleHint,
         avoidStems: [...avoidStems],
+        ...(lastRejectionCode === undefined
+          ? {}
+          : { lastRejectionCode }),
         signal,
       });
       if (!draftResult.ok) {

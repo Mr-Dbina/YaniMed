@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   DRAFT_ATTEMPTS_PER_SLOT,
+  REPLACEMENTS_PER_SLOT,
   VALIDATOR_VERSION,
 } from '../generation.constants.js';
 import type { DraftQuestionArgs, DraftResult } from '../draft/draft.service.js';
@@ -144,7 +145,7 @@ function makeArgs(overrides: Partial<SlotRunArgs> = {}): SlotRunArgs {
     accepted: [],
     acceptedObjectives: [],
     usedPrimaryIds: new Set(),
-    replacementBudgetRemaining: 5,
+    replacementBudgetRemaining: REPLACEMENTS_PER_SLOT,
     deps: fakeDeps(),
     counts: emptyRejectionCounts(),
     ...overrides,
@@ -252,6 +253,45 @@ describe('runSlot', () => {
     expect(checkB).toHaveBeenCalledTimes(1);
   });
 
+  it('passes the last rejection code to the next draft', async () => {
+    const draft = vi.fn<SlotRunnerDeps['draft']>(async () => draftOk());
+    const checkA = vi
+      .fn<SlotRunnerDeps['checkA']>()
+      .mockReturnValueOnce({
+        ok: false,
+        reasons: [{ code: 'CHOICES_ALL_IN_STATED_RANGE' }],
+      })
+      .mockImplementation((value) => ({
+        ok: true,
+        draft: value as DraftQuestion,
+      }));
+
+    await runSlot(makeArgs({ deps: fakeDeps({ draft, checkA }) }));
+
+    expect(draft.mock.calls[0][0].lastRejectionCode).toBeUndefined();
+    expect(draft.mock.calls[1][0].lastRejectionCode).toBe(
+      'CHOICES_ALL_IN_STATED_RANGE',
+    );
+  });
+
+  it('passes a draft rejection reason to the next draft', async () => {
+    const draft = vi
+      .fn<SlotRunnerDeps['draft']>()
+      .mockResolvedValueOnce({
+        ok: false,
+        reason: 'DRAFT_SHAPE_INVALID',
+        model: null,
+        promptVersion: 'prompt-v1',
+      })
+      .mockResolvedValue(draftOk());
+
+    await runSlot(makeArgs({ deps: fakeDeps({ draft }) }));
+
+    expect(draft.mock.calls[1][0].lastRejectionCode).toBe(
+      'DRAFT_SHAPE_INVALID',
+    );
+  });
+
   it('does not run later checks after Check A fails', async () => {
     const plan = makePlan(1, 1);
     const checkA = vi.fn<SlotRunnerDeps['checkA']>(() => ({
@@ -270,7 +310,7 @@ describe('runSlot', () => {
       }),
     );
 
-    expect(result.kind).toBe('FAILED');
+    expect(result.kind).toBe('EXHAUSTED');
     expect(checkA).toHaveBeenCalledTimes(3);
     expect(checkB).not.toHaveBeenCalled();
     expect(checkC).not.toHaveBeenCalled();
@@ -410,7 +450,7 @@ describe('runSlot', () => {
     }
   });
 
-  it('fails VALIDATION_EXHAUSTED when the replacement budget is spent', async () => {
+  it('ends EXHAUSTED when the replacement budget is spent', async () => {
     const draft = vi.fn(async (): Promise<DraftResult> => ({
       ok: false,
       reason: 'DRAFT_INVALID_JSON',
@@ -426,11 +466,10 @@ describe('runSlot', () => {
     );
 
     expect(result).toMatchObject({
-      kind: 'FAILED',
-      reason: 'VALIDATION_EXHAUSTED',
+      kind: 'EXHAUSTED',
       replacementBudgetUsed: 0,
     });
-    if (result.kind === 'FAILED') {
+    if (result.kind === 'EXHAUSTED') {
       expect(result.detail).toBe(
         'slot 0, attempts 3, replacements 0, budget 0',
       );
@@ -438,7 +477,24 @@ describe('runSlot', () => {
     expect(draft).toHaveBeenCalledTimes(DRAFT_ATTEMPTS_PER_SLOT);
   });
 
-  it('fails VALIDATION_EXHAUSTED when no candidate primary is left', async () => {
+  it('uses one replacement then ends EXHAUSTED', async () => {
+    const draft = vi.fn(async (): Promise<DraftResult> => ({
+      ok: false,
+      reason: 'DRAFT_INVALID_JSON',
+      model: null,
+      promptVersion: 'prompt-v1',
+    }));
+
+    const result = await runSlot(makeArgs({ deps: fakeDeps({ draft }) }));
+
+    expect(result).toMatchObject({
+      kind: 'EXHAUSTED',
+      replacementBudgetUsed: REPLACEMENTS_PER_SLOT,
+    });
+    expect(draft).toHaveBeenCalledTimes(DRAFT_ATTEMPTS_PER_SLOT * 2);
+  });
+
+  it('ends EXHAUSTED when no candidate primary is left', async () => {
     const plan = makePlan(1, 1);
     const draft = vi.fn(async (): Promise<DraftResult> => ({
       ok: false,
@@ -451,14 +507,11 @@ describe('runSlot', () => {
       makeArgs({ plan, slot: plan.slots[0], deps: fakeDeps({ draft }) }),
     );
 
-    expect(result).toMatchObject({
-      kind: 'FAILED',
-      reason: 'VALIDATION_EXHAUSTED',
-    });
+    expect(result.kind).toBe('EXHAUSTED');
     expect(draft).toHaveBeenCalledTimes(DRAFT_ATTEMPTS_PER_SLOT);
   });
 
-  it('fails immediately when the slot has no seed chunk id', async () => {
+  it('ends EXHAUSTED immediately when the slot has no seed chunk id', async () => {
     const plan = makePlan();
     const slot = { index: 0, topicKey: 'topic-1', seedChunkIds: [] };
     const draft = vi.fn(fakeDeps().draft);
@@ -467,7 +520,7 @@ describe('runSlot', () => {
       makeArgs({ plan, slot, deps: fakeDeps({ draft }) }),
     );
 
-    expect(result.kind).toBe('FAILED');
+    expect(result.kind).toBe('EXHAUSTED');
     expect(draft).not.toHaveBeenCalled();
   });
 
@@ -709,7 +762,7 @@ describe('runSlot rejection logging', () => {
       }),
     );
 
-    expect(result.kind).toBe('FAILED');
+    expect(result.kind).toBe('EXHAUSTED');
     expect(warns).toContainEqual({
       event: 'generation.slot.exhausted',
       fields: { jobId: 'job-1', slot: 0, attempts: 3, replacements: 0 },

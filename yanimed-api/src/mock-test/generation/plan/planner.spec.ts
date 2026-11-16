@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CompleteInput, GenerationAiService } from '../ai/generation-ai.service.js';
+import { RESERVE_SLOTS } from '../generation.constants.js';
 import { GenerationError } from '../generation.errors.js';
 import { createSeededRng } from '../text/rng.js';
 import type { PlannerChunkInput } from './clustering.js';
@@ -117,15 +118,34 @@ describe('GenerationPlanner', () => {
     expect(plan.stats.attempt).toBe(1);
     expect(plan.stats.excludedEmbeddings).toBe(0);
 
-    expect(plan.slots).toHaveLength(25);
-    expect(plan.slots.map((slot) => slot.index)).toEqual(
-      Array.from({ length: 25 }, (_, index) => index),
-    );
+    expect(plan.slots.filter((slot) => slot.reserve !== true)).toHaveLength(25);
+    expect(
+      plan.slots
+        .filter((slot) => slot.reserve !== true)
+        .map((slot) => slot.index),
+    ).toEqual(Array.from({ length: 25 }, (_, index) => index));
     expect(plan.topics.length).toBeGreaterThanOrEqual(13);
-    expect(plan.topics.reduce((sum, topic) => sum + topic.slotCount, 0)).toBe(
-      25,
-    );
-    expect(Math.max(...plan.topics.map((topic) => topic.slotCount))).toBe(2);
+    expect(
+      plan.topics
+        .filter((topic) =>
+          plan.slots.some(
+            (slot) => slot.topicKey === topic.topicKey && slot.reserve !== true,
+          ),
+        )
+        .reduce((sum, topic) => sum + topic.slotCount, 0),
+    ).toBe(25);
+    expect(
+      Math.max(
+        ...plan.topics
+          .filter((topic) =>
+            plan.slots.some(
+              (slot) =>
+                slot.topicKey === topic.topicKey && slot.reserve !== true,
+            ),
+          )
+          .map((topic) => topic.slotCount),
+      ),
+    ).toBe(2);
     expect(new Set(plan.topics.map((topic) => topic.topicKey)).size).toBe(
       plan.topics.length,
     );
@@ -210,7 +230,7 @@ describe('GenerationPlanner', () => {
 
     expect(plan.stats.attempt).toBe(2);
     expect(plan.stats.clusters).toBe(16);
-    expect(plan.slots).toHaveLength(25);
+    expect(plan.slots.filter((slot) => slot.reserve !== true)).toHaveLength(25);
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
@@ -224,7 +244,7 @@ describe('GenerationPlanner', () => {
       chunks: eligibleChunks(),
     });
 
-    expect(plan.slots).toHaveLength(25);
+    expect(plan.slots.filter((slot) => slot.reserve !== true)).toHaveLength(25);
     expect(complete).toHaveBeenCalledTimes(2);
   });
 
@@ -275,6 +295,47 @@ describe('GenerationPlanner', () => {
 
     expect(plan.stats.eligibleChunks).toBe(36);
     expect(plan.stats.excludedEmbeddings).toBe(6);
-    expect(plan.slots).toHaveLength(25);
+    expect(plan.slots.filter((slot) => slot.reserve !== true)).toHaveLength(25);
+  });
+
+  it('adds reserve slots from zero-slot clusters with disjoint topics', async () => {
+    const chunks = Array.from({ length: 80 }, (_, index) =>
+      chunk(index, groupedEmbedding(index, 19)),
+    );
+    const { service } = fakeAi();
+
+    const plan = await plannerFor(service).plan({ ...INPUT, chunks });
+
+    const primary = plan.slots.filter((slot) => slot.reserve !== true);
+    const reserve = plan.slots.filter((slot) => slot.reserve === true);
+    expect(primary).toHaveLength(25);
+    expect(reserve).toHaveLength(RESERVE_SLOTS);
+    expect(reserve.map((slot) => slot.index)).toEqual(
+      Array.from({ length: RESERVE_SLOTS }, (_, index) => 25 + index),
+    );
+
+    const primaryTopics = new Set(primary.map((slot) => slot.topicKey));
+    for (const slot of reserve) {
+      expect(primaryTopics.has(slot.topicKey)).toBe(false);
+    }
+    const reserveTopics = new Set(reserve.map((slot) => slot.topicKey));
+    expect(reserveTopics.size).toBe(reserve.length);
+    for (const slot of reserve) {
+      expect(plan.topics.some((topic) => topic.topicKey === slot.topicKey)).toBe(
+        true,
+      );
+      expect(plan.candidates[slot.topicKey].length).toBeGreaterThan(0);
+    }
+  });
+
+  it('adds no reserve slots when every cluster holds a primary slot', async () => {
+    const chunks = eligibleChunks(30, (index) => groupedEmbedding(index, 13));
+    const { service } = fakeAi();
+
+    const plan = await plannerFor(service).plan({ ...INPUT, chunks });
+
+    expect(plan.stats.clusters).toBe(13);
+    expect(plan.slots.filter((slot) => slot.reserve === true)).toHaveLength(0);
+    expect(plan.slots.filter((slot) => slot.reserve !== true)).toHaveLength(25);
   });
 });
