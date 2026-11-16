@@ -68,6 +68,25 @@ export function validateEnv() {
   const pdfOcrMinImagePixels = parseOptionalInt(process.env.PDF_OCR_MIN_IMAGE_PIXELS, 10000, 'PDF_OCR_MIN_IMAGE_PIXELS');
   const pdfOcrImageDetection = parseOptionalBoolean(process.env.PDF_OCR_IMAGE_DETECTION, true, 'PDF_OCR_IMAGE_DETECTION');
   const mockTestEnabled = parseOptionalBoolean(process.env.MOCK_TEST_ENABLED, false, 'MOCK_TEST_ENABLED');
+  // Voice provider switch. Checked at boot so a typo fails with a clear
+  // message; the providers read these values from process.env directly, the
+  // same way MOCK_TEST_ENABLED is read.
+  const voiceProvider = (
+    process.env.VOICE_PROVIDER?.trim() || 'elevenlabs'
+  ).toLowerCase();
+  if (voiceProvider !== 'elevenlabs' && voiceProvider !== 'local') {
+    throw new Error(
+      `Invalid VOICE_PROVIDER: ${process.env.VOICE_PROVIDER}. Use "elevenlabs" or "local".`,
+    );
+  }
+  parseOptionalInt(process.env.LOCAL_TTS_TIMEOUT_MS, 150000, 'LOCAL_TTS_TIMEOUT_MS', 1);
+  parseOptionalInt(process.env.LOCAL_STT_TIMEOUT_MS, 60000, 'LOCAL_STT_TIMEOUT_MS', 1);
+  const localSttLanguage = process.env.LOCAL_STT_LANGUAGE?.trim();
+  if (localSttLanguage && !/^[a-z]{2,3}$/i.test(localSttLanguage)) {
+    throw new Error(
+      `Invalid LOCAL_STT_LANGUAGE: ${localSttLanguage}. Use an ISO 639-1 code such as "en", or leave it empty.`,
+    );
+  }
   const pdfOcrPageTimeoutMs = parseOptionalInt(process.env.PDF_OCR_PAGE_TIMEOUT_MS, 60000, 'PDF_OCR_PAGE_TIMEOUT_MS', 1);
   const pdfOcrDocBudgetMs = parseOptionalInt(process.env.PDF_OCR_DOC_BUDGET_MS, 600000, 'PDF_OCR_DOC_BUDGET_MS', 1);
   const pdfOcrMaxPages = parseOptionalInt(process.env.PDF_OCR_MAX_PAGES, 300, 'PDF_OCR_MAX_PAGES', 1);
