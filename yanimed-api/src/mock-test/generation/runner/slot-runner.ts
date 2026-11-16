@@ -280,6 +280,7 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
             slot: slot.index,
           });
         },
+        logger,
       });
       if (!checkB.ok) {
         logReject('B', checkB.reasons[0]?.code);

@@ -407,7 +407,7 @@ describe('verifyDraft output parsing', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('rejects a lowercase verdict instead of coercing it', async () => {
+  it('normalizes a lowercase verdict instead of rejecting it', async () => {
     const { ai, calls } = fakeAi(
       JSON.stringify({
         verdicts: [
@@ -421,10 +421,50 @@ describe('verifyDraft output parsing', () => {
       }),
     );
 
-    expect(codes(await verify(makeDraft(), ai))).toEqual([
-      REASON_CODES.VERIFIER_INVALID_OUTPUT,
-    ]);
+    expect(await verify(makeDraft(), ai)).toMatchObject({ ok: true });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('logs the parse bucket without any reply text', async () => {
+    const warns: Array<{
+      event: string;
+      fields?: Record<string, string | number | undefined>;
+    }> = [];
+    const sentinel = 'REPLY-TEXT-MUST-NOT-LEAK';
+    const reply = `\`\`\`json\n${sentinel}\n\`\`\``;
+    const { ai, calls } = fakeAi(
+      reply,
+      response([
+        ['SUPPORTED', Q_MET],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+      ]),
+    );
+
+    const result = await verifyDraft(makeDraft(), PAGE, ai, {
+      jobId: 'job-1',
+      logger: {
+        info: () => {},
+        warn: (event, fields) => warns.push({ event, fields }),
+        error: () => {},
+      },
+    });
+
+    expect(result.ok).toBe(true);
     expect(calls).toHaveLength(2);
+    expect(warns).toEqual([
+      {
+        event: 'generation.verifier.parse_failed',
+        fields: {
+          jobId: 'job-1',
+          bucket: 'NO_OBJECT',
+          replyLength: reply.length,
+          hasFence: 1,
+        },
+      },
+    ]);
+    expect(JSON.stringify(warns)).not.toContain(sentinel);
   });
 
   it('ignores extra fields and tolerates a JSON fence', async () => {

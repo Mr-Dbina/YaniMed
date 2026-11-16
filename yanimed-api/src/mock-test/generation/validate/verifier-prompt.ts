@@ -18,6 +18,31 @@ export interface VerifierResponse {
   ambiguous: boolean;
 }
 
+/** Why a verifier reply could not be parsed. Logged, never shown to a user. */
+export const VERIFIER_PARSE_BUCKETS = [
+  'JSON',
+  'NO_OBJECT',
+  'NOT_OBJECT',
+  'COUNT',
+  'FLAGS',
+  'ENTRY',
+  'INDEX',
+  'ENUM',
+  'QUOTE',
+] as const;
+
+export type VerifierParseBucket = (typeof VERIFIER_PARSE_BUCKETS)[number];
+
+/**
+ * Typed parse failure. The bucket is safe to log; the reply text never is.
+ */
+export class VerifierParseError extends Error {
+  constructor(readonly bucket: VerifierParseBucket) {
+    super(`Verifier output parse failed: ${bucket}.`);
+    this.name = 'VerifierParseError';
+  }
+}
+
 export interface VerifierPromptInput {
   stem: string;
   leadIn: string | null;
@@ -95,36 +120,103 @@ function isVerdict(value: unknown): value is VerifierVerdict {
 }
 
 /**
- * Strict parser for one verifier response. Throws a fixed message on any
- * defect; the caller counts that as an invalid attempt. Source text never
- * appears in the error.
+ * Common formatting slips only: escapes raw newline, carriage return and tab
+ * inside string literals, and drops a trailing comma before a closing brace or
+ * bracket. Nothing else is altered.
+ */
+function repairJson(text: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) {
+        out += char;
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        out += char;
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+        out += char;
+        continue;
+      }
+      if (char === '\n') {
+        out += '\\n';
+        continue;
+      }
+      if (char === '\r') {
+        out += '\\r';
+        continue;
+      }
+      if (char === '\t') {
+        out += '\\t';
+        continue;
+      }
+      out += char;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      out += char;
+      continue;
+    }
+    if (char === ',') {
+      let next = index + 1;
+      while (next < text.length && /\s/.test(text[next])) next += 1;
+      if (text[next] === '}' || text[next] === ']') continue;
+    }
+    out += char;
+  }
+
+  return out;
+}
+
+/**
+ * Strict parser for one verifier response. Throws a typed bucket on any
+ * defect; the caller counts that as an invalid attempt and may log the bucket.
+ * Source text never appears in the error.
  */
 export function parseVerifierResponse(text: string): VerifierResponse {
+  let object: string;
+  try {
+    object = extractJsonObject(text);
+  } catch {
+    throw new VerifierParseError('NO_OBJECT');
+  }
+
   let body: unknown;
   try {
-    body = JSON.parse(extractJsonObject(text));
+    body = JSON.parse(repairJson(object));
   } catch {
-    throw new Error('Verifier output is not valid JSON.');
+    throw new VerifierParseError('JSON');
   }
 
   if (!isRecord(body)) {
-    throw new Error('Verifier output is not a JSON object.');
+    throw new VerifierParseError('NOT_OBJECT');
   }
   if (!Array.isArray(body.verdicts) || body.verdicts.length !== 4) {
-    throw new Error('Verifier output needs exactly four verdicts.');
+    throw new VerifierParseError('COUNT');
   }
   if (
     typeof body.needsOutsideKnowledge !== 'boolean' ||
     typeof body.ambiguous !== 'boolean'
   ) {
-    throw new Error('Verifier flags must be booleans.');
+    throw new VerifierParseError('FLAGS');
   }
 
   const seen = new Set<number>();
   const verdicts: VerifierVerdictEntry[] = [];
   for (const entry of body.verdicts) {
     if (!isRecord(entry)) {
-      throw new Error('Verifier verdict is not an object.');
+      throw new VerifierParseError('ENTRY');
     }
     const index = entry.index;
     if (
@@ -134,16 +226,23 @@ export function parseVerifierResponse(text: string): VerifierResponse {
       index > 3 ||
       seen.has(index)
     ) {
-      throw new Error('Verifier verdict index is invalid or repeated.');
+      throw new VerifierParseError('INDEX');
     }
-    if (!isVerdict(entry.verdict)) {
-      throw new Error('Verifier verdict value is invalid.');
+    const verdict =
+      typeof entry.verdict === 'string'
+        ? entry.verdict.trim().toUpperCase()
+        : entry.verdict;
+    if (!isVerdict(verdict)) {
+      throw new VerifierParseError('ENUM');
     }
-    if (typeof entry.quote !== 'string') {
-      throw new Error('Verifier verdict quote is not a string.');
+    const absent = !Object.hasOwn(entry, 'quote');
+    const quote =
+      absent && verdict === 'NOT_ADDRESSED' ? '' : entry.quote;
+    if (typeof quote !== 'string') {
+      throw new VerifierParseError('QUOTE');
     }
     seen.add(index);
-    verdicts.push({ index, verdict: entry.verdict, quote: entry.quote });
+    verdicts.push({ index, verdict, quote });
   }
 
   verdicts.sort((a, b) => a.index - b.index);

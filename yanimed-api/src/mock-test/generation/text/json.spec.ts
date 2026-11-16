@@ -27,4 +27,14 @@ describe('extractJsonObject', () => {
     expect(() => extractJsonObject('no json here')).toThrow();
     expect(() => extractJsonObject('{unbalanced')).toThrow();
   });
+
+  it('takes the first balanced object when two are present', () => {
+    expect(extractJsonObject('{"a":1} {"b":2}')).toBe('{"a":1}');
+  });
+
+  it('ignores a closing brace inside a string', () => {
+    expect(extractJsonObject('{"a":"}","b":{"c":1}} tail')).toBe(
+      '{"a":"}","b":{"c":1}}',
+    );
+  });
 });

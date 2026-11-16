@@ -3,6 +3,7 @@ import { PAGE_MATCH_MAX_CHARS } from '../generation.constants.js';
 import {
   buildVerifierMessages,
   parseVerifierResponse,
+  VerifierParseError,
 } from './verifier-prompt.js';
 
 const PAGE = 'Metformin is first-line therapy for type 2 diabetes.';
@@ -31,6 +32,15 @@ function userContent(pageText = PAGE): string {
     pageText,
   });
   return messages[1].content;
+}
+
+function bucketOf(text: string): string {
+  try {
+    parseVerifierResponse(text);
+    return 'OK';
+  } catch (error) {
+    return error instanceof VerifierParseError ? error.bucket : 'OTHER';
+  }
 }
 
 describe('buildVerifierMessages', () => {
@@ -179,24 +189,122 @@ describe('parseVerifierResponse', () => {
     }
   });
 
-  it('rejects a lowercase verdict instead of coercing it', () => {
-    expect(() =>
-      parseVerifierResponse(
+  it('normalizes a lowercase verdict instead of rejecting it', () => {
+    const response = parseVerifierResponse(
+      validResponse({
+        verdicts: [
+          { index: 0, verdict: 'supported', quote: PAGE },
+          { index: 1, verdict: 'Not_Addressed', quote: '' },
+          { index: 2, verdict: 'NOT_ADDRESSED', quote: '' },
+          { index: 3, verdict: 'NOT_ADDRESSED', quote: '' },
+        ],
+      }),
+    );
+    expect(response.verdicts.map((entry) => entry.verdict)).toEqual([
+      'SUPPORTED',
+      'NOT_ADDRESSED',
+      'NOT_ADDRESSED',
+      'NOT_ADDRESSED',
+    ]);
+  });
+
+  it('repairs a raw newline inside a quote', () => {
+    const text = validResponse().replace(
+      PAGE,
+      'Metformin is\nfirst-line therapy for type 2 diabetes.',
+    );
+
+    const response = parseVerifierResponse(text);
+
+    expect(response.verdicts[0].quote).toContain('\n');
+  });
+
+  it('repairs a trailing comma before a closing brace or bracket', () => {
+    const text =
+      '{"verdicts":[{"index":0,"verdict":"SUPPORTED","quote":"x"},' +
+      '{"index":1,"verdict":"NOT_ADDRESSED","quote":""},' +
+      '{"index":2,"verdict":"NOT_ADDRESSED","quote":""},' +
+      '{"index":3,"verdict":"NOT_ADDRESSED","quote":""},],' +
+      '"needsOutsideKnowledge":false,"ambiguous":false,}';
+
+    expect(parseVerifierResponse(text).verdicts).toHaveLength(4);
+  });
+
+  it('defaults a missing quote only for NOT_ADDRESSED', () => {
+    const body = JSON.parse(validResponse()) as {
+      verdicts: Array<Record<string, unknown>>;
+    };
+    delete body.verdicts[1].quote;
+
+    const response = parseVerifierResponse(JSON.stringify(body));
+
+    expect(response.verdicts[1].quote).toBe('');
+  });
+
+  it('still rejects a SUPPORTED entry without a quote', () => {
+    const body = JSON.parse(validResponse()) as {
+      verdicts: Array<Record<string, unknown>>;
+    };
+    delete body.verdicts[0].quote;
+
+    expect(bucketOf(JSON.stringify(body))).toBe('QUOTE');
+  });
+
+  it('picks the first balanced object when the reply holds two', () => {
+    const text = `${validResponse()} {"verdicts":[]}`;
+
+    expect(parseVerifierResponse(text).verdicts).toHaveLength(4);
+  });
+
+  it('reports a bucket for every defect', () => {
+    expect(bucketOf('no json here')).toBe('NO_OBJECT');
+    expect(bucketOf('{"a":}')).toBe('JSON');
+    expect(
+      bucketOf(
+        validResponse({
+          verdicts: [{ index: 0, verdict: 'SUPPORTED', quote: PAGE }],
+        }),
+      ),
+    ).toBe('COUNT');
+    expect(bucketOf(validResponse({ ambiguous: 0 }))).toBe('FLAGS');
+    expect(
+      bucketOf(
+        (() => {
+          const body = JSON.parse(validResponse()) as {
+            ambiguous?: unknown;
+          };
+          delete body.ambiguous;
+          return JSON.stringify(body);
+        })(),
+      ),
+    ).toBe('FLAGS');
+    expect(bucketOf(validResponse({ verdicts: [1, 2, 3, 4] }))).toBe('ENTRY');
+    expect(
+      bucketOf(
         validResponse({
           verdicts: [
-            { index: 0, verdict: 'supported', quote: PAGE },
+            { index: 9, verdict: 'NOT_ADDRESSED', quote: '' },
             { index: 1, verdict: 'NOT_ADDRESSED', quote: '' },
             { index: 2, verdict: 'NOT_ADDRESSED', quote: '' },
             { index: 3, verdict: 'NOT_ADDRESSED', quote: '' },
           ],
         }),
       ),
-    ).toThrow();
-  });
-
-  it('rejects a non-string quote', () => {
-    expect(() =>
-      parseVerifierResponse(
+    ).toBe('INDEX');
+    expect(
+      bucketOf(
+        validResponse({
+          verdicts: [
+            { index: 0, verdict: 'MAYBE', quote: PAGE },
+            { index: 1, verdict: 'NOT_ADDRESSED', quote: '' },
+            { index: 2, verdict: 'NOT_ADDRESSED', quote: '' },
+            { index: 3, verdict: 'NOT_ADDRESSED', quote: '' },
+          ],
+        }),
+      ),
+    ).toBe('ENUM');
+    expect(
+      bucketOf(
         validResponse({
           verdicts: [
             { index: 0, verdict: 'SUPPORTED', quote: null },
@@ -206,20 +314,6 @@ describe('parseVerifierResponse', () => {
           ],
         }),
       ),
-    ).toThrow();
-  });
-
-  it('rejects missing or non-boolean flags', () => {
-    expect(() =>
-      parseVerifierResponse(validResponse({ needsOutsideKnowledge: 'no' })),
-    ).toThrow();
-    expect(() =>
-      parseVerifierResponse(validResponse({ ambiguous: 0 })),
-    ).toThrow();
-    expect(() => {
-      const body = JSON.parse(validResponse()) as Record<string, unknown>;
-      delete body.ambiguous;
-      return parseVerifierResponse(JSON.stringify(body));
-    }).toThrow();
+    ).toBe('QUOTE');
   });
 });

@@ -4,6 +4,7 @@ import { detectPolarity, type StemPolarity } from './stem-polarity.js';
 import {
   buildVerifierMessages,
   parseVerifierResponse,
+  VerifierParseError,
   type VerifierResponse,
   type VerifierVerdict,
   type VerifierVerdictEntry,
@@ -13,6 +14,7 @@ import {
   type CheckBReason,
   type DraftQuestion,
 } from './types.js';
+import type { WorkerLogger } from '../worker/worker.types.js';
 
 /** Verdict quotes are always checked at 0.90, even on OCR pages. */
 export const VERIFIER_QUOTE_MATCH = 0.9;
@@ -35,6 +37,7 @@ export interface VerifyDraftOptions {
   signal?: AbortSignal;
   /** Called when an unparsable output triggers the single retry. */
   onVerifierRetry?: () => void;
+  logger?: WorkerLogger;
 }
 
 /**
@@ -102,8 +105,16 @@ export async function verifyDraft(
     });
     try {
       parsed = parseVerifierResponse(result.text);
-    } catch {
+    } catch (error) {
       parsed = null;
+      if (error instanceof VerifierParseError) {
+        opts.logger?.warn('generation.verifier.parse_failed', {
+          jobId: opts.jobId,
+          bucket: error.bucket,
+          replyLength: result.text.length,
+          hasFence: /```/.test(result.text) ? 1 : 0,
+        });
+      }
     }
     if (parsed === null && attempt + 1 < MAX_VERIFIER_CALLS) {
       opts.onVerifierRetry?.();
