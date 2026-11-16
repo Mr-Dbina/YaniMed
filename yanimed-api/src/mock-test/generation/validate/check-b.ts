@@ -114,6 +114,27 @@ export async function verifyDraft(
           replyLength: result.text.length,
           hasFence: /```/.test(result.text) ? 1 : 0,
         });
+        if (error.shape !== undefined) {
+          opts.logger?.warn('generation.verifier.shape', {
+            jobId: opts.jobId,
+            bucket: error.bucket,
+            topType: error.shape.topType,
+            topKeys: JSON.stringify(error.shape.topKeys),
+            itemsKey: error.shape.itemsKey ?? 'null',
+            itemsCount: error.shape.itemsCount ?? -1,
+            expectedCount: error.shape.expectedCount,
+            entryKeySets: JSON.stringify(error.shape.entryKeySets),
+            flagsKeys:
+              error.shape.flagsKeys === null
+                ? 'null'
+                : JSON.stringify(error.shape.flagsKeys),
+            flagsTypes:
+              error.shape.flagsTypes === null
+                ? 'null'
+                : JSON.stringify(error.shape.flagsTypes),
+            verdictValues: JSON.stringify(error.shape.verdictValues),
+          });
+        }
       }
     }
     if (parsed === null && attempt + 1 < MAX_VERIFIER_CALLS) {

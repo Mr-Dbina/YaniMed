@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { PAGE_MATCH_MAX_CHARS } from '../generation.constants.js';
 import {
   buildVerifierMessages,
+  describeVerifierShape,
   parseVerifierResponse,
   VerifierParseError,
+  type VerifierShapeSummary,
 } from './verifier-prompt.js';
 
 const PAGE = 'Metformin is first-line therapy for type 2 diabetes.';
@@ -40,6 +42,15 @@ function bucketOf(text: string): string {
     return 'OK';
   } catch (error) {
     return error instanceof VerifierParseError ? error.bucket : 'OTHER';
+  }
+}
+
+function shapeOf(text: string): VerifierShapeSummary | undefined {
+  try {
+    parseVerifierResponse(text);
+    return undefined;
+  } catch (error) {
+    return error instanceof VerifierParseError ? error.shape : undefined;
   }
 }
 
@@ -315,5 +326,202 @@ describe('parseVerifierResponse', () => {
         }),
       ),
     ).toBe('QUOTE');
+  });
+});
+
+describe('describeVerifierShape', () => {
+  it('summarizes the example reply', () => {
+    const shape = describeVerifierShape({
+      verdicts: [{ index: 1, verdict: 'supported' }],
+      flags: { ambiguous: 'no' },
+    });
+
+    expect(shape).toEqual({
+      topType: 'object',
+      topKeys: ['flags', 'verdicts'],
+      itemsKey: 'verdicts',
+      itemsCount: 1,
+      expectedCount: 4,
+      entryKeySets: [['index', 'verdict']],
+      flagsKeys: ['ambiguous'],
+      flagsTypes: ['string'],
+      verdictValues: ['SUPPORTED'],
+    });
+  });
+
+  it('reports an array or primitive top level', () => {
+    const array = describeVerifierShape([1]);
+    expect(array.topType).toBe('array');
+    expect(array.topKeys).toEqual([]);
+    expect(array.itemsKey).toBeNull();
+    expect(array.itemsCount).toBeNull();
+    expect(array.flagsKeys).toBeNull();
+    expect(array.verdictValues).toEqual([]);
+
+    expect(describeVerifierShape('x').topType).toBe('other');
+    expect(describeVerifierShape(null).topType).toBe('other');
+  });
+
+  it('reports a missing or non-array verdict list', () => {
+    const missing = describeVerifierShape({ needsOutsideKnowledge: false });
+    expect(missing.itemsKey).toBeNull();
+    expect(missing.itemsCount).toBeNull();
+    expect(missing.entryKeySets).toEqual([]);
+    expect(missing.verdictValues).toEqual([]);
+    expect(missing.flagsKeys).toEqual(['needsOutsideKnowledge']);
+    expect(missing.flagsTypes).toEqual(['boolean']);
+
+    const wrongType = describeVerifierShape({ verdicts: 'nope' });
+    expect(wrongType.itemsKey).toBeNull();
+    expect(wrongType.itemsCount).toBeNull();
+  });
+
+  it('reports the typeof of entries that are not objects', () => {
+    const shape = describeVerifierShape({
+      verdicts: [1, 'two', null, []],
+    });
+
+    expect(shape.itemsCount).toBe(4);
+    expect(shape.entryKeySets).toEqual([
+      ['number'],
+      ['string'],
+      ['object'],
+      ['object'],
+    ]);
+    expect(shape.verdictValues).toEqual(['OTHER', 'OTHER', 'OTHER', 'OTHER']);
+  });
+
+  it('reports flags as null when none are present', () => {
+    const shape = describeVerifierShape({ verdicts: [] });
+
+    expect(shape.flagsKeys).toBeNull();
+    expect(shape.flagsTypes).toBeNull();
+  });
+
+  it('reports the typeof of each top-level flag', () => {
+    const shape = describeVerifierShape({
+      needsOutsideKnowledge: 'SECRET-REPLY',
+      ambiguous: 0,
+    });
+
+    expect(shape.flagsKeys).toEqual(['ambiguous', 'needsOutsideKnowledge']);
+    expect(shape.flagsTypes).toEqual(['number', 'string']);
+  });
+
+  it('sanitizes and truncates hostile key names', () => {
+    const shape = describeVerifierShape({
+      'a b': 1,
+      'Ω': 2,
+      ['x'.repeat(50)]: 3,
+    });
+
+    expect(shape.topKeys).toEqual(['_', 'a_b', 'x'.repeat(30)]);
+  });
+
+  it('keeps allowed verdict values and maps everything else to OTHER', () => {
+    const shape = describeVerifierShape({
+      verdicts: [
+        { verdict: ' supported ' },
+        { verdict: 'Contradicted' },
+        { verdict: 'MAYBE' },
+        { verdict: 7 },
+        'NOT_ADDRESSED',
+      ],
+    });
+
+    expect(shape.verdictValues).toEqual([
+      'SUPPORTED',
+      'CONTRADICTED',
+      'OTHER',
+      'OTHER',
+      'OTHER',
+    ]);
+  });
+
+  it('caps long lists', () => {
+    const shape = describeVerifierShape({
+      verdicts: Array.from({ length: 25 }, (_, index) => ({
+        index,
+        verdict: 'NOT_ADDRESSED',
+        quote: '',
+      })),
+    });
+
+    expect(shape.itemsCount).toBe(25);
+    expect(shape.entryKeySets).toHaveLength(6);
+    expect(shape.verdictValues).toHaveLength(20);
+  });
+
+  it('never carries a reply value into the summary', () => {
+    const shape = describeVerifierShape({
+      verdicts: [
+        { index: 'SECRET-REPLY', verdict: 'SECRET-REPLY', quote: 'SECRET-REPLY' },
+      ],
+      needsOutsideKnowledge: 'SECRET-REPLY',
+      'SECRET-REPLY': 'SECRET-REPLY',
+    });
+
+    expect(JSON.stringify(shape)).not.toContain('SECRET-REPLY');
+  });
+});
+
+describe('parseVerifierResponse shape attachment', () => {
+  it('attaches the shape to COUNT, FLAGS, ENTRY, INDEX and ENUM', () => {
+    expect(
+      shapeOf(validResponse({ verdicts: [{ index: 0, verdict: 'SUPPORTED', quote: PAGE }] }))
+        ?.itemsCount,
+    ).toBe(1);
+
+    expect(shapeOf(validResponse({ ambiguous: 0 }))?.flagsTypes).toEqual([
+      'number',
+      'boolean',
+    ]);
+
+    expect(shapeOf(validResponse({ verdicts: [1, 2, 3, 4] }))?.entryKeySets).toEqual(
+      [['number'], ['number'], ['number'], ['number']],
+    );
+
+    expect(
+      shapeOf(
+        validResponse({
+          verdicts: [
+            { index: 9, verdict: 'NOT_ADDRESSED', quote: '' },
+            { index: 1, verdict: 'NOT_ADDRESSED', quote: '' },
+            { index: 2, verdict: 'NOT_ADDRESSED', quote: '' },
+            { index: 3, verdict: 'NOT_ADDRESSED', quote: '' },
+          ],
+        }),
+      )?.itemsCount,
+    ).toBe(4);
+
+    expect(
+      shapeOf(
+        validResponse({
+          verdicts: [
+            { index: 0, verdict: 'MAYBE', quote: PAGE },
+            { index: 1, verdict: 'NOT_ADDRESSED', quote: '' },
+            { index: 2, verdict: 'NOT_ADDRESSED', quote: '' },
+            { index: 3, verdict: 'NOT_ADDRESSED', quote: '' },
+          ],
+        }),
+      )?.verdictValues[0],
+    ).toBe('OTHER');
+  });
+
+  it('attaches no shape to JSON, NO_OBJECT, NOT_OBJECT or QUOTE', () => {
+    expect(shapeOf('no json here')).toBeUndefined();
+    expect(shapeOf('{"a":}')).toBeUndefined();
+    expect(
+      shapeOf(
+        validResponse({
+          verdicts: [
+            { index: 0, verdict: 'SUPPORTED', quote: null },
+            { index: 1, verdict: 'NOT_ADDRESSED', quote: '' },
+            { index: 2, verdict: 'NOT_ADDRESSED', quote: '' },
+            { index: 3, verdict: 'NOT_ADDRESSED', quote: '' },
+          ],
+        }),
+      ),
+    ).toBeUndefined();
   });
 });

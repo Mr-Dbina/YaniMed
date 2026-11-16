@@ -33,11 +33,31 @@ export const VERIFIER_PARSE_BUCKETS = [
 
 export type VerifierParseBucket = (typeof VERIFIER_PARSE_BUCKETS)[number];
 
+/** Structure of the parsed reply: key names, types and lengths only. */
+export interface VerifierShapeSummary {
+  topType: 'object' | 'array' | 'other';
+  topKeys: string[];
+  itemsKey: string | null;
+  itemsCount: number | null;
+  expectedCount: number;
+  entryKeySets: string[][];
+  flagsKeys: string[] | null;
+  flagsTypes: string[] | null;
+  verdictValues: string[];
+}
+
+/** The count `parseVerifierResponse` expects; reported, never enforced here. */
+const VERIFIER_EXPECTED_COUNT = 4;
+
 /**
- * Typed parse failure. The bucket is safe to log; the reply text never is.
+ * Typed parse failure. The bucket and the shape summary are safe to log; the
+ * reply text never is.
  */
 export class VerifierParseError extends Error {
-  constructor(readonly bucket: VerifierParseBucket) {
+  constructor(
+    readonly bucket: VerifierParseBucket,
+    readonly shape?: VerifierShapeSummary,
+  ) {
     super(`Verifier output parse failed: ${bucket}.`);
     this.name = 'VerifierParseError';
   }
@@ -117,6 +137,95 @@ function isVerdict(value: unknown): value is VerifierVerdict {
     typeof value === 'string' &&
     (VERDICTS as readonly string[]).includes(value)
   );
+}
+
+const MAX_KEYS = 20;
+const MAX_ENTRIES = 6;
+const MAX_KEY_CHARS = 30;
+const UNSAFE_KEY_CHARS = /[^A-Za-z0-9_]+/g;
+
+/** Key names only: no spaces, no unicode, no long keys. */
+function safeKey(name: string): string {
+  const cleaned = name.replace(UNSAFE_KEY_CHARS, '_').slice(0, MAX_KEY_CHARS);
+  return cleaned === '' ? '_' : cleaned;
+}
+
+function entryKeys(entry: unknown): string[] {
+  if (!isRecord(entry)) return [typeof entry];
+  return Object.keys(entry).sort().slice(0, MAX_KEYS).map(safeKey);
+}
+
+/** Allowed enum values pass through; everything else is the literal OTHER. */
+function verdictOf(entry: unknown): string {
+  if (!isRecord(entry) || typeof entry.verdict !== 'string') return 'OTHER';
+  const normalized = entry.verdict.trim().toUpperCase();
+  return isVerdict(normalized) ? normalized : 'OTHER';
+}
+
+/**
+ * The parser reads its flags at the top level; a nested `flags` object is also
+ * reported. Anything else counts as no flags.
+ */
+function flagsOf(body: Record<string, unknown>): Record<string, unknown> | null {
+  if (isRecord(body.flags)) return body.flags;
+  const names = ['needsOutsideKnowledge', 'ambiguous'].filter((name) =>
+    Object.hasOwn(body, name),
+  );
+  if (names.length === 0) return null;
+  return Object.fromEntries(names.map((name) => [name, body[name]]));
+}
+
+/**
+ * Pure structure summary of an already-parsed verifier reply. Key names are
+ * sanitized and the only string values that survive are allowed enum values.
+ */
+export function describeVerifierShape(body: unknown): VerifierShapeSummary {
+  const topType: VerifierShapeSummary['topType'] = Array.isArray(body)
+    ? 'array'
+    : isRecord(body)
+      ? 'object'
+      : 'other';
+  const topKeys = isRecord(body)
+    ? Object.keys(body)
+        .map(safeKey)
+        .sort()
+        .slice(0, MAX_KEYS)
+    : [];
+  const items = isRecord(body) && Array.isArray(body.verdicts)
+    ? body.verdicts
+    : null;
+  const flags = isRecord(body) ? flagsOf(body) : null;
+  const flagPairs =
+    flags === null
+      ? null
+      : Object.entries(flags)
+          .map(([name, value]): [string, string] => [safeKey(name), typeof value])
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .slice(0, MAX_KEYS);
+
+  return {
+    topType,
+    topKeys,
+    itemsKey: items === null ? null : 'verdicts',
+    itemsCount: items === null ? null : items.length,
+    expectedCount: VERIFIER_EXPECTED_COUNT,
+    entryKeySets:
+      items === null ? [] : items.slice(0, MAX_ENTRIES).map(entryKeys),
+    flagsKeys:
+      flagPairs === null ? null : flagPairs.map(([name]) => name),
+    flagsTypes:
+      flagPairs === null ? null : flagPairs.map(([, type]) => type),
+    verdictValues:
+      items === null ? [] : items.slice(0, MAX_KEYS).map(verdictOf),
+  };
+}
+
+/** Attaches the shape summary to the bucket the parser found. */
+function shapeError(
+  bucket: VerifierParseBucket,
+  body: unknown,
+): VerifierParseError {
+  return new VerifierParseError(bucket, describeVerifierShape(body));
 }
 
 /**
@@ -203,20 +312,20 @@ export function parseVerifierResponse(text: string): VerifierResponse {
     throw new VerifierParseError('NOT_OBJECT');
   }
   if (!Array.isArray(body.verdicts) || body.verdicts.length !== 4) {
-    throw new VerifierParseError('COUNT');
+    throw shapeError('COUNT', body);
   }
   if (
     typeof body.needsOutsideKnowledge !== 'boolean' ||
     typeof body.ambiguous !== 'boolean'
   ) {
-    throw new VerifierParseError('FLAGS');
+    throw shapeError('FLAGS', body);
   }
 
   const seen = new Set<number>();
   const verdicts: VerifierVerdictEntry[] = [];
   for (const entry of body.verdicts) {
     if (!isRecord(entry)) {
-      throw new VerifierParseError('ENTRY');
+      throw shapeError('ENTRY', body);
     }
     const index = entry.index;
     if (
@@ -226,14 +335,14 @@ export function parseVerifierResponse(text: string): VerifierResponse {
       index > 3 ||
       seen.has(index)
     ) {
-      throw new VerifierParseError('INDEX');
+      throw shapeError('INDEX', body);
     }
     const verdict =
       typeof entry.verdict === 'string'
         ? entry.verdict.trim().toUpperCase()
         : entry.verdict;
     if (!isVerdict(verdict)) {
-      throw new VerifierParseError('ENUM');
+      throw shapeError('ENUM', body);
     }
     const absent = !Object.hasOwn(entry, 'quote');
     const quote =

@@ -467,6 +467,63 @@ describe('verifyDraft output parsing', () => {
     expect(JSON.stringify(warns)).not.toContain(sentinel);
   });
 
+  it('logs the reply shape for a FLAGS failure without any reply text', async () => {
+    const warns: Array<{
+      event: string;
+      fields?: Record<string, string | number | undefined>;
+    }> = [];
+    const sentinel = 'SECRET-REPLY';
+    const { ai } = fakeAi(
+      JSON.stringify({
+        verdicts: [
+          { index: 0, verdict: 'SUPPORTED', quote: Q_MET },
+          { index: 1, verdict: 'NOT_ADDRESSED', quote: '' },
+          { index: 2, verdict: 'NOT_ADDRESSED', quote: '' },
+          { index: 3, verdict: 'NOT_ADDRESSED', quote: '' },
+        ],
+        needsOutsideKnowledge: sentinel,
+        ambiguous: false,
+      }),
+      response([
+        ['SUPPORTED', Q_MET],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+      ]),
+    );
+
+    const result = await verifyDraft(makeDraft(), PAGE, ai, {
+      jobId: 'job-1',
+      logger: {
+        info: () => {},
+        warn: (event, fields) => warns.push({ event, fields }),
+        error: () => {},
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(warns).toContainEqual({
+      event: 'generation.verifier.shape',
+      fields: {
+        jobId: 'job-1',
+        bucket: 'FLAGS',
+        topType: 'object',
+        topKeys: '["ambiguous","needsOutsideKnowledge","verdicts"]',
+        itemsKey: 'verdicts',
+        itemsCount: 4,
+        expectedCount: 4,
+        entryKeySets:
+          '[["index","quote","verdict"],["index","quote","verdict"],' +
+          '["index","quote","verdict"],["index","quote","verdict"]]',
+        flagsKeys: '["ambiguous","needsOutsideKnowledge"]',
+        flagsTypes: '["boolean","string"]',
+        verdictValues:
+          '["SUPPORTED","NOT_ADDRESSED","NOT_ADDRESSED","NOT_ADDRESSED"]',
+      },
+    });
+    expect(JSON.stringify(warns)).not.toContain(sentinel);
+  });
+
   it('ignores extra fields and tolerates a JSON fence', async () => {
     const body = JSON.parse(
       response([
