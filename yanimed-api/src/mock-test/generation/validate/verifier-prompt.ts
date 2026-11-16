@@ -87,10 +87,14 @@ const SYSTEM_PROMPT = [
   '- NOT_ADDRESSED: the page does not settle the choice.',
   'For SUPPORTED and CONTRADICTED copy a short quote verbatim from the page. For NOT_ADDRESSED return an empty quote.',
   'Set ambiguous to true when the page is unclear or two choices fit equally well.',
-  'Return only strict JSON, with no prose and no markdown, in this shape:',
-  '{"verdicts":[{"index":0,"verdict":"SUPPORTED","quote":"..."},{"index":1,"verdict":"NOT_ADDRESSED","quote":""},{"index":2,"verdict":"CONTRADICTED","quote":"..."},{"index":3,"verdict":"NOT_ADDRESSED","quote":""}],"needsOutsideKnowledge":false,"ambiguous":false}',
-  'Return exactly four verdicts, index 0 to 3, one per choice and in order.',
+  'Return exactly ONE JSON object and nothing else: no prose, no code fence, no text before or after it.',
+  'It has exactly these three keys, all always present:',
+  '- "verdicts": an array of EXACTLY 4 entries, one per choice, in order, with "index" 0 to 3. Each entry is one object with "index" (number), "verdict" (string) and "quote" (string): never a string, never an extra entry, never a bare entry object.',
+  '- "needsOutsideKnowledge": a boolean, always present, false when the page alone settles every choice.',
+  '- "ambiguous": a boolean, always present, false when the page is clear.',
   'verdict must be exactly one of SUPPORTED, CONTRADICTED, NOT_ADDRESSED, in uppercase.',
+  'Worked example, with invented text that is not from the page:',
+  '{"verdicts":[{"index":0,"verdict":"SUPPORTED","quote":"the sample label names blue"},{"index":1,"verdict":"CONTRADICTED","quote":"the sample label names green"},{"index":2,"verdict":"NOT_ADDRESSED","quote":""},{"index":3,"verdict":"NOT_ADDRESSED","quote":""}],"needsOutsideKnowledge":false,"ambiguous":false}',
 ].join('\n');
 
 /** Any open or close of the two data tags, in any case. */

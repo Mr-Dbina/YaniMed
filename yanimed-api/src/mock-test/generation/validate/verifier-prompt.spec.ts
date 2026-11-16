@@ -36,6 +36,24 @@ function userContent(pageText = PAGE): string {
   return messages[1].content;
 }
 
+function systemContent(): string {
+  return buildVerifierMessages({
+    stem: STEM,
+    leadIn: null,
+    choices: CHOICES,
+    pageText: PAGE,
+  })[0].content;
+}
+
+/** The one worked-example line of the prompt. */
+function exampleLine(): string {
+  const line = systemContent()
+    .split('\n')
+    .find((text) => text.startsWith('{"verdicts"'));
+  if (line === undefined) throw new Error('prompt has no worked example');
+  return line;
+}
+
 function bucketOf(text: string): string {
   try {
     parseVerifierResponse(text);
@@ -140,6 +158,43 @@ describe('buildVerifierMessages', () => {
     const tail = 'END_OF_PAGE_SENTINEL';
     const page = 'y'.repeat(PAGE_MATCH_MAX_CHARS - tail.length) + tail;
     expect(userContent(page)).toContain(tail);
+  });
+});
+
+describe('verifier prompt reply format', () => {
+  it('worked example parses with both flags false and four verdicts', () => {
+    const parsed = parseVerifierResponse(exampleLine());
+
+    expect(parsed.verdicts).toHaveLength(4);
+    expect(parsed.verdicts.map((entry) => entry.index)).toEqual([0, 1, 2, 3]);
+    expect(parsed.verdicts.map((entry) => entry.verdict)).toEqual([
+      'SUPPORTED',
+      'CONTRADICTED',
+      'NOT_ADDRESSED',
+      'NOT_ADDRESSED',
+    ]);
+    expect(parsed.needsOutsideKnowledge).toBe(false);
+    expect(parsed.ambiguous).toBe(false);
+  });
+
+  it('states one JSON object, the flags and the exact count', () => {
+    const prompt = systemContent();
+
+    expect(prompt).toContain('ONE JSON object');
+    expect(prompt).toContain('"needsOutsideKnowledge"');
+    expect(prompt).toContain('"ambiguous"');
+    expect(prompt).toContain('EXACTLY 4 entries');
+    expect(prompt).toContain('"index" 0 to 3');
+    expect(prompt).toContain('SUPPORTED, CONTRADICTED, NOT_ADDRESSED');
+  });
+
+  it('keeps the answer key, explanations and data tags out of the reply shape', () => {
+    const prompt = systemContent();
+
+    for (const forbidden of ['keyIndex', 'explanation', 'objective']) {
+      expect(prompt).not.toContain(forbidden);
+    }
+    expect(exampleLine()).not.toMatch(/PAGE_TEXT|QUESTION/);
   });
 });
 
