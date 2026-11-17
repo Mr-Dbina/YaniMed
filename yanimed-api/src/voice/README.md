@@ -4,6 +4,8 @@
 - `POST /voice/transcribe`: multipart field `file`, maximum 10 MiB. Supports MP3, WAV, WebM, Ogg, MP4/M4A and FLAC with matching audio MIME/header. Returns `{ "text": "..." }`. Empty transcripts are permitted for silence; malformed/empty uploads are rejected. Header checks are preliminary; ElevenLabs performs decoding.
 - Backend-only `ELEVENLABS_API_KEY` is read from the existing environment configuration. Missing configuration returns 503 without preventing unrelated API startup.
 - Models: `eleven_flash_v2_5` and `scribe_v1`. No provider retries, audio persistence or transcript logging. Provider requests have a 60-second deadline, two concurrent requests and ten incoming requests/minute shared across both routes in this process.
+- `VOICE_PROVIDER` picks the backend: `elevenlabs` (default) or `local`, which sends both routes to VoiceStudio (`LOCAL_VOICE_BASE_URL`, default `http://localhost:3900/v1`). The local path allows one concurrent request, uses `LOCAL_TTS_TIMEOUT_MS` (default 150000) and `LOCAL_STT_TIMEOUT_MS` (default 60000), and ignores `voiceId` in favour of `LOCAL_TTS_VOICE`. A stopped local server returns 503 with `code: "VOICE_PROVIDER_UNAVAILABLE"`; there is no automatic fallback. `LOCAL_STT_PROMPT` is only sent when non-empty. `scripts/voice-accuracy.ts` measures TTS→STT term accuracy with and without that hint.
+- `LOCAL_STT_LANGUAGE` is sent as the STT `language` field when set (ISO 639-1, e.g. `en`); empty lets VoiceStudio detect it. Local clips longer than about 15 s should be split by the caller: faster-whisper-base starts repeating or inventing text on longer input, and the prompt makes that worse.
 
 ## Access limitations
 
