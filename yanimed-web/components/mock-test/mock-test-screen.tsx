@@ -26,7 +26,9 @@ import {
 } from "@/lib/mock-test-api";
 import {
   ATTEMPT_RETRY_DELAY_MS,
+  generationNeededMessage,
   isActiveGenerationState,
+  needsGeneration,
   shouldRetryCreateAttempt,
 } from "@/lib/mock-test-generation";
 import { ConfirmDialog } from "@/components/mock-test/confirm-dialog";
@@ -245,6 +247,8 @@ function MockTestSession({
   const [generationBusy, setGenerationBusy] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [generationNotice, setGenerationNotice] = useState<string | null>(null);
+  /** Set when the app starts a job itself because too few questions are unseen. */
+  const [generationNote, setGenerationNote] = useState<string | null>(null);
 
   const autoResumedRef = useRef(false);
   const epochRef = useRef(0);
@@ -417,6 +421,7 @@ function MockTestSession({
     setGenerationJob(null);
     setGenerationError(null);
     setGenerationNotice(null);
+    setGenerationNote(null);
     setPhase("start");
     refreshOverview();
   }, [refreshOverview]);
@@ -522,7 +527,10 @@ function MockTestSession({
           if (pendingStart) {
             if (
               !data.unfinishedAttempt &&
-              data.eligibleQuestionCount >= data.questionsPerTest
+              !needsGeneration(
+                data.unseenEligibleCount,
+                data.questionsPerTest,
+              )
             ) {
               try {
                 const created = await createAttempt(subjectId);
@@ -550,6 +558,9 @@ function MockTestSession({
               try {
                 const job = await requestGenerationJob(subjectId);
                 if (!applies()) return;
+                setGenerationNote(
+                  generationNeededMessage(data.questionsPerTest),
+                );
                 showGeneration(job);
               } catch (error) {
                 if (!applies()) return;
@@ -615,6 +626,20 @@ function MockTestSession({
     setActionError(null);
     setAnswersError(null);
     try {
+      // Retry must not silently repeat seen questions: read the live overview.
+      const data = await getSubjectOverview(subjectId);
+      if (!mountedRef.current) return;
+      setOverview(data);
+      if (
+        !data.unfinishedAttempt &&
+        needsGeneration(data.unseenEligibleCount, data.questionsPerTest)
+      ) {
+        const job = await requestGenerationJob(subjectId);
+        if (!mountedRef.current) return;
+        setGenerationNote(generationNeededMessage(data.questionsPerTest));
+        showGeneration(job);
+        return;
+      }
       const created = await createAttempt(subjectId);
       await beginAttempt(created.attemptId, "READY");
     } catch (error) {
@@ -1002,6 +1027,7 @@ function MockTestSession({
         key={`${generationJob.jobId}:${generationNonce}`}
         subjectName={subjectName}
         initialJob={generationJob}
+        note={generationNote}
         completing={generationBusy}
         retryBusy={generationBusy}
         retryError={generationError}

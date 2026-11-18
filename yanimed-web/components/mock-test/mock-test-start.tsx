@@ -22,6 +22,7 @@ import {
   type MockTestApiError,
   type SubjectOverview,
 } from "@/lib/mock-test-api";
+import { needsGeneration } from "@/lib/mock-test-generation";
 
 export interface SyncedSubjectOption {
   backendId: string;
@@ -167,8 +168,9 @@ export function MockTestStart({
         ? overview
         : (overviewBySubject[selected.backendId] ?? null);
   const required = selectedOverview?.questionsPerTest ?? 25;
-  const eligible = selectedOverview?.eligibleQuestionCount ?? required;
-  const notEnough = selectedOverview !== null && eligible < required;
+  const unseen = selectedOverview?.unseenEligibleCount ?? required;
+  const notEnough =
+    selectedOverview !== null && needsGeneration(unseen, required);
 
   const query = search.trim().toLowerCase();
   const ordered = (() => {
@@ -470,7 +472,7 @@ export function MockTestStart({
 
             {notEnough && (
               <p className="mock-test__muted" role="status">
-                This subject has {eligible} of {required} eligible questions.
+                This subject has {unseen} of {required} unseen questions.
                 Starting the Mock Test will generate the rest automatically.
               </p>
             )}

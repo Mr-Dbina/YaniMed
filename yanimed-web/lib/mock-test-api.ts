@@ -87,6 +87,7 @@ export interface SubjectOverview {
     createdAt: string;
   } | null;
   eligibleQuestionCount: number;
+  unseenEligibleCount: number;
   questionsPerTest: number;
   generationJob: GenerationJobSummary | null;
 }

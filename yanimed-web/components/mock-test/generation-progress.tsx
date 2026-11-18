@@ -25,6 +25,8 @@ import { useGenerationJob } from "@/components/mock-test/use-generation-job";
 interface GenerationProgressProps {
   subjectName: string;
   initialJob: GenerationJobSummary;
+  /** Calm note for a job the app started on its own. */
+  note?: string | null;
   /** True while the parent turns a completed job into an attempt. */
   completing: boolean;
   retryBusy: boolean;
@@ -44,6 +46,7 @@ const STEP_STATUS_LABEL = {
 export function GenerationProgress({
   subjectName,
   initialJob,
+  note,
   completing,
   retryBusy,
   retryError,
@@ -136,6 +139,8 @@ export function GenerationProgress({
           {generationStateLabel(state)}
         </span>
       </header>
+
+      {note && <p className="mock-test__muted">{note}</p>}
 
       <div className="mock-test__card">
         <div className="flex flex-wrap items-center gap-6">

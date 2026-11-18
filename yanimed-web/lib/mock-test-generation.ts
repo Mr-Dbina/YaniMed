@@ -43,6 +43,22 @@ export function shouldRetryCreateAttempt(
   return code === "INSUFFICIENT_CONTENT" && elapsedMs < ATTEMPT_RETRY_WINDOW_MS;
 }
 
+/**
+ * createAttempt prefers unseen questions, so a test needs one unseen question
+ * per slot. Anything less needs a generation job first.
+ */
+export function needsGeneration(
+  unseenEligibleCount: number,
+  questionsPerTest: number,
+): boolean {
+  return unseenEligibleCount < questionsPerTest;
+}
+
+/** Calm explanation shown on the progress screen for an automatic job. */
+export function generationNeededMessage(questionsPerTest: number): string {
+  return `Generating ${questionsPerTest} new questions. This can take about 30 minutes.`;
+}
+
 export type GenerationStepKey = "PLANNING" | "DRAFTING" | "FINALIZING";
 
 export interface GenerationStep {
