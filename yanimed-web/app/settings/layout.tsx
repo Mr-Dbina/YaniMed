@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { SettingsNav } from "@/components/settings/settings-nav";
 
 /**
@@ -9,7 +9,9 @@ import { SettingsNav } from "@/components/settings/settings-nav";
 export default async function SettingsLayout({ children }: { children: ReactNode }) {
   return (
     <div className="settings-layout">
-      <SettingsNav />
+      <Suspense fallback={<div className="settings-nav" aria-hidden="true" />}>
+        <SettingsNav />
+      </Suspense>
       <main className="settings-layout__main">{children}</main>
     </div>
   );
