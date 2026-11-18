@@ -6,8 +6,17 @@ import { LeaseLostError, type JobContext } from '../document-processing/processi
 
 export const EMBEDDING_MODEL = 'gemini-embedding-001';
 export const EMBEDDING_DIMENSIONS = 768;
+const EMBEDDING_REQUEST_TIMEOUT_MS = 30_000;
+const EMBEDDING_PROGRESS_EVERY = 25;
 
 type EmbeddingErrorCode = 'EMBEDDING_TRANSIENT' | 'EMBEDDING_PERMANENT';
+
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === 'AbortError' || error.name === 'TimeoutError')
+  );
+}
 
 function tagEmbeddingError(error: unknown, code: EmbeddingErrorCode): Error {
   if (error instanceof Error) {
@@ -96,12 +105,21 @@ export class EmbeddingService {
             outputDimensionality: EMBEDDING_DIMENSIONS,
             ...(taskType ? { taskType } : {}),
           }),
+          signal: AbortSignal.timeout(EMBEDDING_REQUEST_TIMEOUT_MS),
         });
         if (!response.ok) {
           const body = await response.text();
           if (response.status === 429 || response.status >= 500) {
             lastError = embeddingError(`Gemini embedding request failed (${response.status}): ${body}`, 'EMBEDDING_TRANSIENT');
-            await this.sleep(this.backoff(attempt) + this.jitter());
+            const retryAfter =
+              response.status === 429 ? this.retryAfterMs(response) : null;
+            const waitMs = retryAfter ?? this.backoff(attempt) + this.jitter();
+            if (response.status === 429) {
+              this.logger.warn(
+                `embedding.rate_limited ${JSON.stringify({ attempt: attempt + 1, waitMs })}`,
+              );
+            }
+            await this.sleep(waitMs);
             continue;
           }
           throw embeddingError(`Gemini embedding request failed (${response.status}): ${body}`, 'EMBEDDING_PERMANENT');
@@ -116,7 +134,7 @@ export class EmbeddingService {
         }
         return values as number[];
       } catch (error) {
-        lastError = isTransientNetworkError(error)
+        lastError = isTransientNetworkError(error) || isAbortError(error)
           ? tagEmbeddingError(error, 'EMBEDDING_TRANSIENT')
           : error;
         if (attempt === this.maxAttempts - 1) break;
@@ -147,8 +165,17 @@ export class EmbeddingService {
 
       await writeDocument({ status: 'PROCESSING', errorMessage: null });
 
+      const total = document.chunks.length;
+      const alreadyEmbedded = document.chunks.filter(
+        chunk => chunk.embeddingModel === EMBEDDING_MODEL,
+      ).length;
+      this.logger.log(
+        `embedding.started ${JSON.stringify({ documentId, total, alreadyEmbedded })}`,
+      );
+
       let embeddedChunks = 0;
       let skippedChunks = 0;
+      let done = 0;
       const failures: unknown[] = [];
       for (const chunk of document.chunks) {
         if (ctx?.lost) throw new LeaseLostError();
@@ -156,17 +183,29 @@ export class EmbeddingService {
           if (await this.hasValidEmbedding(chunk.id)) {
             skippedChunks += 1;
             embeddedChunks += 1;
-            continue;
+          } else {
+            const vector = await this.embedText(chunk.content);
+            if (ctx?.lost) throw new LeaseLostError();
+            await this.persistEmbedding(chunk.id, vector);
+            embeddedChunks += 1;
           }
-          const vector = await this.embedText(chunk.content);
-          if (ctx?.lost) throw new LeaseLostError();
-          await this.persistEmbedding(chunk.id, vector);
-          embeddedChunks += 1;
         } catch (error) {
           if (error instanceof LeaseLostError) throw error;
           failures.push(error);
         }
+
+        done += 1;
+        if (done % EMBEDDING_PROGRESS_EVERY === 0) {
+          await writeDocument({ embeddedChunks });
+          this.logger.log(
+            `embedding.progress ${JSON.stringify({ done, total, failures: failures.length })}`,
+          );
+        }
       }
+
+      this.logger.log(
+        `embedding.finished ${JSON.stringify({ done, failures: failures.length })}`,
+      );
 
       const failedChunks = failures.length;
       const firstFailure = failures[0];
@@ -261,6 +300,18 @@ export class EmbeddingService {
 
   private backoff(attempt: number): number {
     return Math.min(30000, 1000 * 2 ** attempt);
+  }
+
+  private retryAfterMs(response: { headers?: { get(name: string): string | null } }): number | null {
+    const raw = response.headers?.get('Retry-After')?.trim();
+    if (!raw) return null;
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(60_000, Math.round(seconds * 1000));
+    }
+    const at = Date.parse(raw);
+    if (Number.isFinite(at)) return Math.min(60_000, Math.max(0, at - Date.now()));
+    return null;
   }
 
   private jitter(): number {

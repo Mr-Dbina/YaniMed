@@ -95,6 +95,67 @@ describe('EmbeddingService', () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
+  it('tags request timeouts as EMBEDDING_TRANSIENT', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(
+      Object.assign(new Error('The operation was aborted due to timeout'), {
+        name: 'TimeoutError',
+        code: 23,
+      }),
+    );
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 1 });
+    await expect(service.embedText('text')).rejects.toMatchObject({
+      code: 'EMBEDDING_TRANSIENT',
+    });
+  });
+
+  it('honours Retry-After on 429', async () => {
+    vi.useFakeTimers();
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: async () => 'rate limited',
+        headers: { get: (name: string) => (name === 'Retry-After' ? '2' : null) },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ embedding: { values: Array(EMBEDDING_DIMENSIONS).fill(0.5) } }),
+      });
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 2 });
+    const result = service.embedText('text');
+
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toHaveLength(EMBEDDING_DIMENSIONS);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('writes embeddedChunks every 25 chunks', async () => {
+    const chunks = Array.from({ length: 50 }, (_, index) => ({
+      id: `chunk-${index}`,
+      content: 'text',
+      chunkIndex: index,
+    }));
+    const prisma = makePrisma(chunks);
+    prisma.$queryRaw.mockResolvedValue([{ has_embedding: false, model: null }]);
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ embedding: { values: Array(EMBEDDING_DIMENSIONS).fill(0.1) } }),
+    });
+    const service = new EmbeddingService(prisma as never, { requestsPerMinute: 100000, maxAttempts: 1 });
+
+    const result = await service.embedDocument('doc-1');
+
+    expect(result.embeddedChunks).toBe(50);
+    const progressWrites = (prisma.document.update as ReturnType<typeof vi.fn>).mock.calls
+      .map((call: any) => call[0]?.data)
+      .filter((data: any) => data?.embeddedChunks !== undefined && data?.status === undefined)
+      .map((data: any) => data.embeddedChunks);
+    expect(progressWrites).toEqual([25, 50]);
+  });
+
   it('tags non-retryable HTTP failures as EMBEDDING_PERMANENT', async () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: false,
