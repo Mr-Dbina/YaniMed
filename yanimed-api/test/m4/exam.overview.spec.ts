@@ -4,6 +4,7 @@ import {
   assertTestDb,
   createSubjectWithQuestions,
   prisma,
+  seedAttemptAtAwaitingSubmission,
   seededRng,
   service,
 } from './helpers.js';
@@ -22,9 +23,56 @@ describe('M4 subject overview', () => {
     expect(overview).toEqual({
       unfinishedAttempt: null,
       eligibleQuestionCount: 25,
+      unseenEligibleCount: 25,
       questionsPerTest: 25,
       generationJob: null,
     });
+  });
+
+  it('reports all eligible questions as unseen before any attempt starts', async () => {
+    const { subject } = await createSubjectWithQuestions();
+    await service.createAttempt(subject.id, seededRng());
+
+    const overview = await service.getSubjectOverview(subject.id);
+
+    expect(overview.eligibleQuestionCount).toBe(25);
+    expect(overview.unseenEligibleCount).toBe(25);
+  });
+
+  it('counts questions seen once the attempt reached IN_PROGRESS', async () => {
+    const { subject } = await createSubjectWithQuestions();
+    const created = await service.createAttempt(subject.id, seededRng());
+    await service.startAttempt(created.attemptId);
+
+    const overview = await service.getSubjectOverview(subject.id);
+
+    expect(overview.eligibleQuestionCount).toBe(25);
+    expect(overview.unseenEligibleCount).toBe(0);
+  });
+
+  it('does not count an ABANDONED attempt that never started as seen', async () => {
+    const { subject } = await createSubjectWithQuestions();
+    const created = await service.createAttempt(subject.id, seededRng());
+    await service.discardAttempt(created.attemptId);
+
+    const overview = await service.getSubjectOverview(subject.id);
+
+    expect(overview.eligibleQuestionCount).toBe(25);
+    expect(overview.unseenEligibleCount).toBe(25);
+  });
+
+  it('reports only the questions never used by a started attempt', async () => {
+    const { subject } = await createSubjectWithQuestions(30);
+    const seeded = await seedAttemptAtAwaitingSubmission(subject.id);
+    await prisma.mockAttempt.update({
+      where: { id: seeded.attemptId },
+      data: { status: 'COMPLETED' },
+    });
+
+    const overview = await service.getSubjectOverview(subject.id);
+
+    expect(overview.eligibleQuestionCount).toBe(30);
+    expect(overview.unseenEligibleCount).toBe(5);
   });
 
   it('returns the unfinished attempt and clears it after discard', async () => {

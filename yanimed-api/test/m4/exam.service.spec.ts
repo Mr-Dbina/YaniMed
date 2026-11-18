@@ -116,6 +116,79 @@ describe('M4 exam service', () => {
     expect(started.question.choices[firstIndex].id).toBe(firstCorrect.id);
   });
 
+  it('createAttempt: prefers unseen questions, then fills with seen ones', async () => {
+    const { subject } = await createSubjectWithQuestions(30);
+    const seeded = await seedAttemptAtAwaitingSubmission(subject.id);
+    await prisma.mockAttempt.update({
+      where: { id: seeded.attemptId },
+      data: { status: 'COMPLETED' },
+    });
+
+    const seenIds = new Set(seeded.questions.map((question) => question.questionId));
+    const unseen = await prisma.mockQuestion.findMany({
+      where: { subjectId: subject.id, id: { notIn: [...seenIds] } },
+      select: { id: true },
+    });
+    expect(unseen).toHaveLength(5);
+
+    const created = await service.createAttempt(subject.id, seededRng());
+    const rows = await getAttemptQuestions(created.attemptId);
+
+    expect(rows).toHaveLength(25);
+    const selectedIds = new Set(rows.map((row) => row.questionId));
+    for (const question of unseen) {
+      expect(selectedIds.has(question.id)).toBe(true);
+    }
+
+    const perTopic = new Map<string, number>();
+    for (const row of rows) {
+      perTopic.set(
+        row.question.topicId,
+        (perTopic.get(row.question.topicId) ?? 0) + 1,
+      );
+    }
+    for (const count of perTopic.values()) expect(count).toBeLessThanOrEqual(2);
+
+    const letterCounts = [0, 0, 0, 0];
+    for (const row of rows) {
+      const correct = row.question.choices.find((choice) => choice.isCorrect);
+      if (!correct) throw new Error('ZZ-m4 fixture has no correct choice.');
+      letterCounts[row.choiceOrder.indexOf(correct.position)] += 1;
+    }
+    expect(letterCounts.reduce((sum, count) => sum + count, 0)).toBe(25);
+    for (const count of letterCounts) expect(count).toBeGreaterThanOrEqual(5);
+    for (const count of letterCounts) expect(count).toBeLessThanOrEqual(8);
+    expect(letterCounts.filter((count) => count === 6)).toHaveLength(3);
+    expect(letterCounts.filter((count) => count === 7)).toHaveLength(1);
+  });
+
+  it('createAttempt: falls back to least recently seen when no question is unseen', async () => {
+    const { subject } = await createSubjectWithQuestions();
+    const seeded = await seedAttemptAtAwaitingSubmission(subject.id);
+    await prisma.mockAttempt.update({
+      where: { id: seeded.attemptId },
+      data: { status: 'COMPLETED' },
+    });
+
+    const created = await service.createAttempt(subject.id, seededRng());
+    const rows = await getAttemptQuestions(created.attemptId);
+
+    expect(rows).toHaveLength(25);
+    const selectedIds = new Set(rows.map((row) => row.questionId));
+    for (const question of seeded.questions) {
+      expect(selectedIds.has(question.questionId)).toBe(true);
+    }
+
+    const letterCounts = [0, 0, 0, 0];
+    for (const row of rows) {
+      const correct = row.question.choices.find((choice) => choice.isCorrect);
+      if (!correct) throw new Error('ZZ-m4 fixture has no correct choice.');
+      letterCounts[row.choiceOrder.indexOf(correct.position)] += 1;
+    }
+    for (const count of letterCounts) expect(count).toBeGreaterThanOrEqual(5);
+    for (const count of letterCounts) expect(count).toBeLessThanOrEqual(8);
+  });
+
   it('createAttempt: 24 ACTIVE questions -> INSUFFICIENT_CONTENT with counts', async () => {
     const { subject } = await createSubjectWithQuestions(24);
 

@@ -112,6 +112,7 @@ const OVERVIEW: SubjectOverviewResponse = {
     createdAt: new Date('2026-01-02T03:04:05.000Z'),
   },
   eligibleQuestionCount: 25,
+  unseenEligibleCount: 25,
   questionsPerTest: 25,
   generationJob: null,
 };

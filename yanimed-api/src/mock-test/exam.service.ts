@@ -97,6 +97,7 @@ export interface SubjectOverviewResponse {
     createdAt: Date;
   } | null;
   eligibleQuestionCount: number;
+  unseenEligibleCount: number;
   questionsPerTest: 25;
   generationJob: GenerationJobOverview | null;
 }
@@ -133,6 +134,27 @@ const UNFINISHED_STATUSES: AttemptStatus[] = [
   'IN_PROGRESS',
   'AWAITING_SUBMISSION',
 ];
+
+/**
+ * A question counts as seen only once its attempt reached IN_PROGRESS or later.
+ * startAttempt increments sessionVersion, so an ABANDONED attempt that never
+ * started stays at 1. The status branch also covers rows seeded directly in a
+ * started state without the version bump.
+ */
+const STARTED_STATUSES: AttemptStatus[] = [
+  'IN_PROGRESS',
+  'AWAITING_SUBMISSION',
+  'COMPLETED',
+];
+
+function seenAttemptFilter() {
+  return {
+    OR: [
+      { sessionVersion: { gt: 1 } },
+      { status: { in: STARTED_STATUSES } },
+    ],
+  };
+}
 
 /**
  * Interactive transactions lock one attempt row and then do a handful of
@@ -203,6 +225,41 @@ function toEngineQuestions(
   }));
 }
 
+interface SeenQuestion {
+  id: string;
+  topicId: string;
+  attemptQuestions: { attempt: { lastActivityAt: Date } }[];
+}
+
+function lastSeenAt(question: SeenQuestion): number | null {
+  let latest: number | null = null;
+  for (const row of question.attemptQuestions) {
+    const time = row.attempt.lastActivityAt.getTime();
+    if (latest === null || time > latest) latest = time;
+  }
+  return latest;
+}
+
+/**
+ * Unseen questions first, then the least recently seen. Topic id and question
+ * id keep the order deterministic for equal timestamps and fresh questions.
+ */
+function orderBySeen<T extends SeenQuestion>(questions: T[]): T[] {
+  return [...questions].sort((left, right) => {
+    const leftSeen = lastSeenAt(left);
+    const rightSeen = lastSeenAt(right);
+    if (leftSeen === null && rightSeen !== null) return -1;
+    if (leftSeen !== null && rightSeen === null) return 1;
+    if (leftSeen !== null && rightSeen !== null && leftSeen !== rightSeen) {
+      return leftSeen - rightSeen;
+    }
+    return (
+      left.topicId.localeCompare(right.topicId) ||
+      left.id.localeCompare(right.id)
+    );
+  });
+}
+
 /**
  * Take at most two questions per topic first, then fill any remaining slots.
  * This makes the spread as even as the available content allows.
@@ -258,6 +315,12 @@ export class ExamService {
             include: {
               choices: { orderBy: { position: 'asc' } },
               citations: { select: { documentId: true } },
+              attemptQuestions: {
+                where: { attempt: seenAttemptFilter() },
+                select: {
+                  attempt: { select: { lastActivityAt: true } },
+                },
+              },
             },
           });
 
@@ -274,7 +337,7 @@ export class ExamService {
             });
           }
 
-          const selected = selectQuestions(eligible);
+          const selected = selectQuestions(orderBySeen(eligible));
           const correctPositions = selected.map((question) => {
             const correct = question.choices.find((choice) => choice.isCorrect);
             if (!correct) throw new MockTestError('INSUFFICIENT_CONTENT');
@@ -336,34 +399,56 @@ export class ExamService {
     });
     if (!subject) throw new MockTestError('SUBJECT_NOT_FOUND');
 
-    const [unfinishedAttempt, questions, generationJob] = await Promise.all([
-      this.prisma.mockAttempt.findFirst({
-        where: { subjectId, status: { in: UNFINISHED_STATUSES } },
-        orderBy: { createdAt: 'desc' },
-        select: { id: true, status: true, createdAt: true },
-      }),
-      this.prisma.mockQuestion.findMany({
-        where: { subjectId, status: 'ACTIVE' },
-        select: { citations: { select: { documentId: true } } },
-      }),
-      this.prisma.generationJob.findFirst({
-        where: {
-          subjectId,
-          state: { notIn: [...TERMINAL_GENERATION_JOB_STATES] },
-        },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          state: true,
-          acceptedCount: true,
-          requestedCount: true,
-        },
-      }),
-    ]);
+    const [unfinishedAttempt, questions, unseenRows, generationJob] =
+      await Promise.all([
+        this.prisma.mockAttempt.findFirst({
+          where: { subjectId, status: { in: UNFINISHED_STATUSES } },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, status: true, createdAt: true },
+        }),
+        this.prisma.mockQuestion.findMany({
+          where: { subjectId, status: 'ACTIVE' },
+          select: { citations: { select: { documentId: true } } },
+        }),
+        this.prisma.$queryRaw<{ count: number }[]>(Prisma.sql`
+          SELECT COUNT(*)::int AS "count"
+            FROM "MockQuestion" q
+           WHERE q."subjectId" = ${subjectId}
+             AND q."status" = 'ACTIVE'
+             AND EXISTS (
+               SELECT 1 FROM "QuestionCitation" c
+                WHERE c."questionId" = q."id"
+                  AND c."documentId" IS NOT NULL
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM "AttemptQuestion" aq
+                 JOIN "MockAttempt" a ON a."id" = aq."attemptId"
+                WHERE aq."questionId" = q."id"
+                  AND (
+                    a."sessionVersion" > 1
+                    OR a."status"::text IN (${Prisma.join(STARTED_STATUSES)})
+                  )
+             )
+        `),
+        this.prisma.generationJob.findFirst({
+          where: {
+            subjectId,
+            state: { notIn: [...TERMINAL_GENERATION_JOB_STATES] },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            state: true,
+            acceptedCount: true,
+            requestedCount: true,
+          },
+        }),
+      ]);
 
     return {
       unfinishedAttempt: unfinishedAttempt ?? null,
       eligibleQuestionCount: questions.filter(isCitationEligible).length,
+      unseenEligibleCount: unseenRows[0]?.count ?? 0,
       questionsPerTest: QUESTIONS_PER_TEST,
       generationJob:
         generationJob === null
