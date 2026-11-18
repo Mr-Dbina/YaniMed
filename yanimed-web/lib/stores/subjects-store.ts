@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Subject } from "@/lib/types";
 import { loadLocalSubjects, writeLocalSubject } from "@/lib/subject-storage";
+import { deleteChatThread } from "@/lib/chat-storage";
 import { ApiError } from "@/lib/api";
 import {
   createInitialSubject,
@@ -247,11 +248,16 @@ export const useSubjectsStore = create<SubjectsState>((set, get) => ({
   },
   deleteSubject: (id) => {
     void enqueue(async () => {
+      const current = get().subjects.find(s => s.id === id);
       const subjects = get().subjects.filter(s => s.id !== id);
       const activeSubjectId = get().activeSubjectId === id ? subjects[0]?.id ?? null : get().activeSubjectId;
       await writeLocalSubject(null, activeSubjectId, id);
       set({ subjects, activeSubjectId, storageError: null });
       writeActiveSubjectKey(subjects.find(s => s.id === activeSubjectId));
+      // Best-effort: a stored thread without its subject must not linger.
+      if (current?.backendSubjectId) {
+        void deleteChatThread(current.backendSubjectId).catch(() => undefined);
+      }
     }).catch((error: Error) => set({ storageError: error.message }));
   },
   setActiveSubject: (id) => {

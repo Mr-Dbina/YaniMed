@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Check, X } from "lucide-react";
 import type { ExamReview, ReviewQuestion } from "@/lib/mock-test-api";
 
@@ -28,6 +28,144 @@ function questionMatches(
   if (outcome === "incorrect" && question.isCorrect) return false;
   if (topic !== "all" && question.topicName !== topic) return false;
   return true;
+}
+
+interface TopicSelectProps {
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}
+
+/** Topic filter using the same listbox pattern as LanguageSelect. */
+function TopicSelect({ value, options, onChange }: TopicSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const entries = [
+    { key: "all", label: "All Topics" },
+    ...options.map((name) => ({ key: name, label: humanizeTopic(name) })),
+  ];
+  const selectedIndex = entries.findIndex((entry) => entry.key === value);
+  const selectedLabel =
+    selectedIndex >= 0 ? entries[selectedIndex].label : entries[0].label;
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const onPointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    // Seed the highlight from the current value here rather than in an effect,
+    // which would cascade renders.
+    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+    setOpen(true);
+  };
+
+  const choose = (next: string) => {
+    onChange(next);
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!open) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      const next = (activeIndex + 1) % entries.length;
+      setActiveIndex(next);
+      optionRefs.current[next]?.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      const next = (activeIndex - 1 + entries.length) % entries.length;
+      setActiveIndex(next);
+      optionRefs.current[next]?.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const picked = entries[activeIndex];
+      if (picked) choose(picked.key);
+    }
+  };
+
+  return (
+    <div className="mock-test__topic" ref={rootRef} onKeyDown={onKeyDown}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="lang-select__trigger"
+        aria-label="Topic"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={toggle}
+      >
+        {selectedLabel}
+        <svg
+          viewBox="0 0 24 24"
+          width="15"
+          height="15"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      {open ? (
+        <div className="lang-select__panel">
+          <div role="listbox" aria-label="Topic" className="lang-select__list">
+            {entries.map((entry, index) => (
+              <button
+                key={entry.key}
+                type="button"
+                role="option"
+                aria-selected={entry.key === value}
+                ref={(node) => {
+                  optionRefs.current[index] = node;
+                }}
+                className={`lang-select__option${
+                  index === activeIndex ? " lang-select__option--active" : ""
+                }`}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => choose(entry.key)}
+              >
+                {entry.label}
+                {entry.key === value ? (
+                  <Check size={15} strokeWidth={1.9} aria-hidden="true" />
+                ) : null}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function MockTestAnswers({
@@ -100,25 +238,17 @@ export function MockTestAnswers({
           ))}
         </div>
 
-        <label className="mock-test__field" htmlFor="mock-test-topic-filter">
+        <div className="mock-test__field">
           <span className="mock-test__legend">Topic</span>
-          <select
-            id="mock-test-topic-filter"
-            className="mock-test__select"
+          <TopicSelect
             value={topic}
-            onChange={(event) => {
-              setTopic(event.target.value);
+            options={topics}
+            onChange={(next) => {
+              setTopic(next);
               setActivePosition(null);
             }}
-          >
-            <option value="all">All Topics</option>
-            {topics.map((name) => (
-              <option key={name} value={name}>
-                {humanizeTopic(name)}
-              </option>
-            ))}
-          </select>
-        </label>
+          />
+        </div>
       </div>
 
       <div className="mock-test__review-layout">

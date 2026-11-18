@@ -92,12 +92,12 @@ export function SubjectDetail({
   const showDropzone = Boolean(backendSubjectId) && summary !== null && !summary.loading &&
     !summary.error && summary.documentCount === 0;
   const isChat = isChatSubject(subject);
-  // "Loading documents..." stays in SubjectDocuments only; the composer just stays disabled.
+  // Status text lives in SubjectDocuments (compact) or the local processing line; the composer just stays disabled.
   const backendChatDisabledReason = hasReadyDocument
     ? undefined
     : summary && summary.documentCount === 0
       ? "Upload a PDF to start chatting."
-      : "Chat available when the PDF is READY";
+      : "Chat available once the PDF is processed.";
 
   const breadcrumb = (
     <nav className="subject-detail__breadcrumb">
@@ -205,35 +205,36 @@ export function SubjectDetail({
             </div>
           )}
 
-          <ChatConversation
-            key={`chat-${subject.id}`}
-            subjectId={backendSubjectId}
-            disabledReason={backendSubjectId
-              ? backendChatDisabledReason
-              : "Chat unavailable until this PDF is processed and its index is verified."}
-            emptyState={backendSubjectId && hasReadyDocument ? undefined : (
-              <section className="subject-processing" aria-label="PDF processing status">
-                <h1>{subject.name}</h1>
-                <p>{subject.file?.name}</p>
-                <h2>{processing.title}</h2>
-                <p>{processing.detail}</p>
-                <p>Keep the original PDF. Browser storage is local to this browser and can be cleared.</p>
-                {processing.retrySync && subject.idempotencyKey && (
-                  <button type="button" onClick={() => void syncSubject(subject.id)}>Retry sync</button>
-                )}
-              </section>
-            )}
-            onAsked={(prompt) => onUpdateSubject(subject.id, { lastMessage: prompt })}
-          />
-
-          {backendSubjectId && (
+          {backendSubjectId ? (
             <SubjectDocuments
               key={`documents-${backendSubjectId}`}
               subjectId={backendSubjectId}
               refreshToken={documentsRefreshToken}
               onSummary={handleDocumentsSummary}
             />
+          ) : (
+            (Boolean(subject.idempotencyKey) ||
+              subject.processingStatus === "processing" ||
+              subject.processingStatus === "failed") && (
+              <p className="subject-docstatus" role="status">
+                <span>{processing.title}</span>
+                {processing.retrySync && subject.idempotencyKey && (
+                  <button type="button" onClick={() => void syncSubject(subject.id)}>
+                    Retry sync
+                  </button>
+                )}
+              </p>
+            )
           )}
+
+          <ChatConversation
+            key={`chat-${subject.id}`}
+            subjectId={backendSubjectId}
+            disabledReason={backendSubjectId
+              ? backendChatDisabledReason
+              : "Chat unavailable until this PDF is processed and its index is verified."}
+            onAsked={(prompt) => onUpdateSubject(subject.id, { lastMessage: prompt })}
+          />
         </>
       ) : (
         <>

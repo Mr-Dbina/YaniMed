@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 interface MessageProps {
+  id?: string;
   message: ChatMessage;
   onCopy?: (message: ChatMessage) => void | Promise<void>;
   onEdit?: (message: ChatMessage, content: string) => void;
@@ -100,6 +101,7 @@ function useCopyFeedback(onCopy?: () => void | Promise<void>) {
 }
 
 export function Message({
+  id,
   message,
   onCopy,
   onEdit,
@@ -209,7 +211,7 @@ export function Message({
   );
 
   return (
-    <div className={`subject-chat__message group/message flex flex-col ${isUser ? "items-end" : "items-start"}`}>
+    <div id={id} className={`subject-chat__message group/message flex flex-col ${isUser ? "items-end" : "items-start"}`}>
       {isUser ? (
         isEditing ? (
           <div className="flex w-full max-w-md flex-col items-end gap-1">

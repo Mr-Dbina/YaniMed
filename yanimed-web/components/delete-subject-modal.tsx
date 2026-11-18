@@ -44,8 +44,8 @@ export function DeleteSubjectModal({
           Delete subject
         </h2>
         <p className="subject-modal__confirm-text">
-          &ldquo;{subjectName}&rdquo; and all of its chats will be permanently
-          deleted. This can&rsquo;t be undone.
+          &ldquo;{subjectName}&rdquo; will be removed from this device. Chats
+          saved only in this browser are cleared too. This can&rsquo;t be undone.
         </p>
 
         <div className="subject-modal__footer">

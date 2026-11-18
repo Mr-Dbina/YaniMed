@@ -1,14 +1,15 @@
 ﻿"use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useSidebarStore } from "@/lib/stores/sidebar-store";
 import { SettingsMenu } from "@/components/settings/settings-menu";
-import { DeleteSubjectModal } from "@/components/delete-subject-modal";
+import { loadChatThread } from "@/lib/chat-storage";
 import {
-  Archive,
+  ChevronDown,
+  ChevronRight,
   ClipboardList,
   GraduationCap,
   Moon,
@@ -20,6 +21,8 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { Subject } from "@/lib/types";
 
+const RECENTS_OPEN_KEY = "yanimed:recents-open";
+
 const navItems: { label: string; href: string; icon: LucideIcon }[] = [
   { label: "Subjects", href: "/subjects", icon: GraduationCap },
   { label: "Mock Test", href: "/mock-test", icon: ClipboardList },
@@ -30,69 +33,84 @@ const subscribeMounted = () => () => {};
 interface SidebarProps {
   subjects: Subject[];
   activeSubjectId: string | null;
+  currentSubject?: Subject | null;
   onSelectSubject: (id: string) => void;
   onAddSubject: () => void;
-  onUpdateSubject: (id: string, patch: Partial<Omit<Subject, "id">>) => void;
-  onDeleteSubject: (id: string) => void;
+  onUpdateSubject?: (id: string, patch: Partial<Omit<Subject, "id">>) => void;
+  onDeleteSubject?: (id: string) => void;
 }
 
 export function Sidebar({
-  subjects,
-  activeSubjectId,
-  onSelectSubject,
+  currentSubject,
   onAddSubject,
-  onUpdateSubject,
-  onDeleteSubject,
 }: SidebarProps) {
   const pathname = usePathname();
   const { resolvedTheme, setTheme } = useTheme();
   const isCollapsed = useSidebarStore((state) => state.isCollapsed);
   const toggle = useSidebarStore((state) => state.toggle);
   const mounted = useSyncExternalStore(subscribeMounted, () => true, () => false);
-  const [menuSubjectId, setMenuSubjectId] = useState<string | null>(null);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const renameInputRef = useRef<HTMLInputElement>(null);
-  const subjectsRef = useRef<HTMLDivElement>(null);
 
-  const startRename = (subject: Subject) => {
-    setRenameValue(subject.name);
-    setRenamingId(subject.id);
-  };
-
-  const commitRename = (id: string) => {
-    const next = renameValue.trim();
-    if (next) {
-      // Rename is local-only: uploadName, idempotencyKey, file and filename stay frozen.
-      onUpdateSubject(id, { name: next });
+  const [prompts, setPrompts] = useState<{ id: string; content: string }[]>([]);
+  const [isRecentsOpen, setIsRecentsOpen] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(RECENTS_OPEN_KEY);
+      if (stored !== null) return stored === "true";
+    } catch {
+      // localStorage unavailable
     }
-    setRenamingId(null);
+    return true;
+  });
+
+  const toggleRecents = () => {
+    setIsRecentsOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(RECENTS_OPEN_KEY, String(next));
+      } catch {
+        // localStorage unavailable
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
-    if (renamingId) renameInputRef.current?.focus();
-  }, [renamingId]);
+    if (!currentSubject) return undefined;
+    const key = currentSubject.backendSubjectId ?? currentSubject.id;
+    let cancelled = false;
 
-  useEffect(() => {
-    if (!menuSubjectId) return;
+    void loadChatThread(key)
+      .then((thread) => {
+        if (cancelled) return;
+        if (!thread) {
+          setPrompts([]);
+          return;
+        }
+        const userPrompts = thread.messages
+          .filter((message) => message.role === "user")
+          .map((message) => ({ id: message.id, content: message.content }));
+        userPrompts.reverse();
+        setPrompts(userPrompts);
+      })
+      .catch(() => {
+        if (!cancelled) setPrompts([]);
+      });
 
-    const onPointerDown = (event: MouseEvent) => {
-      if (!subjectsRef.current?.contains(event.target as Node)) setMenuSubjectId(null);
-    };
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuSubjectId(null);
-    };
-
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onEscape);
     return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onEscape);
+      cancelled = true;
     };
-  }, [menuSubjectId]);
+  }, [currentSubject, currentSubject?.lastMessage]);
 
-  const pendingDelete = subjects.find((s) => s.id === pendingDeleteId) ?? null;
+  const displayedPrompts = currentSubject ? prompts : [];
+
+  const handlePromptClick = (messageId: string) => {
+    const target = document.getElementById(`msg-${messageId}`);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      useSidebarStore.setState({ isCollapsed: true });
+    }
+  };
 
   const activeTheme = mounted ? resolvedTheme : "light";
 
@@ -139,99 +157,39 @@ export function Sidebar({
           })}
         </nav>
 
-        {subjects.length > 0 && (
-          <div className="sidebar__subjects" ref={subjectsRef}>
-            <div className="sidebar__subjects-header">
-              <span className="sidebar__subjects-label">Subjects</span>
+        {currentSubject && (
+          <div className="sidebar__recents">
+            <div className="sidebar__recents-header">
               <button
                 type="button"
-                aria-label="Add subject"
-                className="sidebar__subjects-add"
-                onClick={onAddSubject}
+                className="sidebar__recents-toggle"
+                aria-expanded={isRecentsOpen}
+                onClick={toggleRecents}
               >
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
+                <span className="sidebar__recents-label">Recents</span>
+                {isRecentsOpen ? (
+                  <ChevronDown size={15} strokeWidth={1.8} aria-hidden="true" />
+                ) : (
+                  <ChevronRight size={15} strokeWidth={1.8} aria-hidden="true" />
+                )}
               </button>
             </div>
-            {subjects.map((subject) => (
-              <div key={subject.id} className="sidebar__subject-row">
-                <button
-                  type="button"
-                  className={`sidebar__subject${subject.id === activeSubjectId ? " sidebar__subject--active" : ""}`}
-                  onClick={() => {
-                    setMenuSubjectId(null);
-                    onSelectSubject(subject.id);
-                  }}
-                >
-                  <Archive size={18} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
-                  {renamingId === subject.id ? (
-                    <input
-                      ref={renameInputRef}
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onBlur={() => commitRename(subject.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitRename(subject.id);
-                        if (e.key === "Escape") setRenamingId(null);
-                      }}
-                      className="sidebar__subject-rename"
-                      aria-label={`Rename ${subject.name}`}
-                    />
-                  ) : (
-                    <span className="sidebar__subject-name">{subject.name}</span>
-                  )}
-                </button>
 
-                <button
-                  type="button"
-                  className="sidebar__subject-more"
-                  aria-label={`Actions for ${subject.name}`}
-                  aria-haspopup="menu"
-                  aria-expanded={menuSubjectId === subject.id}
-                  onClick={() =>
-                    setMenuSubjectId(menuSubjectId === subject.id ? null : subject.id)
-                  }
-                >
-                  <svg viewBox="0 0 24 24" width={16} height={16} fill="currentColor" aria-hidden="true">
-                    <circle cx="5" cy="12" r="1.8" />
-                    <circle cx="12" cy="12" r="1.8" />
-                    <circle cx="19" cy="12" r="1.8" />
-                  </svg>
-                </button>
-
-                {subject.lastMessage ? (
-                  <p className="sidebar__subject-preview">{subject.lastMessage}</p>
-                ) : null}
-
-                {menuSubjectId === subject.id ? (
-                  <div role="menu" className="sidebar__subject-menu">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="sidebar__subject-menu-item"
-                      onClick={() => {
-                        setMenuSubjectId(null);
-                        startRename(subject);
-                      }}
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="sidebar__subject-menu-item sidebar__subject-menu-item--danger"
-                      onClick={() => {
-                        setMenuSubjectId(null);
-                        setPendingDeleteId(subject.id);
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ) : null}
+            {isRecentsOpen && displayedPrompts.length > 0 && (
+              <div className="sidebar__recents-list" role="list">
+                {displayedPrompts.map((prompt) => (
+                  <button
+                    key={prompt.id}
+                    type="button"
+                    className="sidebar__recents-item"
+                    title={prompt.content}
+                    onClick={() => handlePromptClick(prompt.id)}
+                  >
+                    <span className="sidebar__recents-text">{prompt.content}</span>
+                  </button>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         )}
       </div>
@@ -266,18 +224,6 @@ export function Sidebar({
           </button>
         </div>
       </div>
-
-      <DeleteSubjectModal
-        open={pendingDelete !== null}
-        onOpenChange={(next) => {
-          if (!next) setPendingDeleteId(null);
-        }}
-        subjectName={pendingDelete?.name ?? ""}
-        onConfirm={() => {
-          if (pendingDeleteId) onDeleteSubject(pendingDeleteId);
-          setPendingDeleteId(null);
-        }}
-      />
     </aside>
   );
 }

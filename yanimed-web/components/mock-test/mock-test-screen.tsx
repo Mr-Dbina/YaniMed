@@ -1029,6 +1029,7 @@ function MockTestSession({
         activeIsLocalOnly={activeIsLocalOnly}
         onSelectSubject={onSelectSubject}
         overview={overview}
+        refreshToken={reloadToken}
         loading={overviewLoading}
         error={overviewError}
         actionError={actionError}

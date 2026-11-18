@@ -1,17 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent } from "react";
 import { AudioWaveform, Mic, Plus } from "lucide-react";
 import { Message } from "@/components/chat/message";
 import type { ChatMessage } from "@/lib/types";
 import { ApiError, MAX_PROMPT_LENGTH, requestAnswer } from "@/lib/api";
 import { requestSubjectAnswer } from "@/lib/backend-api";
+import { loadChatThread, writeChatThread } from "@/lib/chat-storage";
 
 interface ChatConversationProps {
   onAsked?: (prompt: string) => void;
   disabledReason?: string;
-  emptyState?: ReactNode;
   subjectId?: string;
 }
 
@@ -29,7 +29,7 @@ function createMessageId(): string {
   return crypto.randomUUID();
 }
 
-export function ChatConversation({ onAsked, disabledReason, emptyState, subjectId }: ChatConversationProps) {
+export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatConversationProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const chatIdRef = useRef<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
@@ -40,10 +40,44 @@ export function ChatConversation({ onAsked, disabledReason, emptyState, subjectI
   const viewportRef = useRef<HTMLDivElement>(null);
   const followLatest = useRef(true);
   const [showLatest, setShowLatest] = useState(false);
+  // Saves stay off until this subject's stored thread has been read, so an
+  // empty initial state cannot wipe the history it is about to load.
+  const [loadedThreadFor, setLoadedThreadFor] = useState<string | null>(null);
 
   useEffect(() => {
-    return () => abortRef.current?.abort();
-  }, []);
+    if (!subjectId) return undefined;
+    let cancelled = false;
+    void loadChatThread(subjectId)
+      .then((thread) => {
+        if (cancelled || !thread) return;
+        chatIdRef.current = chatIdRef.current ?? thread.chatId;
+        setMessages((current) => (current.length === 0 ? thread.messages : current));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setLoadedThreadFor(subjectId);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [subjectId]);
+
+  useEffect(() => {
+    if (!subjectId || loadedThreadFor !== subjectId) return;
+    void writeChatThread({ subjectId, chatId: chatIdRef.current, messages }).catch(
+      () => undefined,
+    );
+  }, [subjectId, loadedThreadFor, messages]);
+
+  useEffect(() => {
+    if (!messages.length || typeof window === "undefined" || !window.location.hash) return;
+    const targetId = window.location.hash.replace(/^#/, "");
+    const element = document.getElementById(targetId) || document.getElementById(`msg-${targetId}`);
+    if (element) {
+      followLatest.current = false;
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [messages]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -141,17 +175,17 @@ export function ChatConversation({ onAsked, disabledReason, emptyState, subjectI
         followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
         setShowLatest(!followLatest.current);
       }}>
-      {!hasThread && (emptyState ?? (
+      {!hasThread && (
         <div className="subject-chat__hero">
           <img src="/images/yanimed_logo.png" alt="" width={64} height={64} />
           <h1 className="subject-chat__title">How can I help?</h1>
         </div>
-      ))}
+      )}
 
       {hasThread && (
         <div className="subject-chat__thread">
           {messages.map((message) => (
-            <Message key={message.id} message={message} onCopy={copyMessage}
+            <Message key={message.id} id={`msg-${message.id}`} message={message} onCopy={copyMessage}
               onFeedback={(item, rating) => setMessages(current => current.map(entry => entry.id === item.id ? { ...entry, rating: entry.rating === rating ? null : rating } : entry))}
               onRegenerate={regenerateMessage} actionsDisabled={isPending || Boolean(disabledReason)} />
           ))}
@@ -209,6 +243,7 @@ export function ChatConversation({ onAsked, disabledReason, emptyState, subjectI
           <AudioWaveform size={20} strokeWidth={1.75} aria-hidden="true" />
         </button>
       </form>
+      <p className="subject-chat__disclaimer">YaniMed is AI and can make mistakes.</p>
       {disabledReason && <p id="chat-disabled-reason" className="subject-chat__notice">{disabledReason}</p>}
     </div>
   );

@@ -35,6 +35,8 @@ interface MockTestStartProps {
   activeIsLocalOnly: boolean;
   onSelectSubject: (backendId: string | null) => void;
   overview: SubjectOverview | null;
+  /** Bumps after a successful discard; invalidates the per-subject overview cache. */
+  refreshToken: number;
   loading: boolean;
   error: MockTestApiError | null;
   actionError: string | null;
@@ -67,6 +69,7 @@ export function MockTestStart({
   activeIsLocalOnly,
   onSelectSubject,
   overview,
+  refreshToken,
   loading,
   error,
   actionError,
@@ -79,10 +82,13 @@ export function MockTestStart({
   const modalTitleId = useId();
   const filterWrapRef = useRef<HTMLDivElement>(null);
   const requestedRef = useRef<Set<string>>(new Set());
+  const lastRefreshRef = useRef(refreshToken);
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("default");
   const [filterOpen, setFilterOpen] = useState(false);
-  const [selectedBackendId, setSelectedBackendId] = useState<string | null>(null);
+  const [selectedBackendId, setSelectedBackendId] = useState<string | null>(
+    null,
+  );
   const [pendingSubject, setPendingSubject] =
     useState<SyncedSubjectOption | null>(null);
   const [overviewBySubject, setOverviewBySubject] = useState<
@@ -90,7 +96,12 @@ export function MockTestStart({
   >({});
 
   // Cache each subject overview once, so sorting and tags do not refetch.
+  // A discard bumps refreshToken, dropping the stale "Unfinished" entries.
   useEffect(() => {
+    if (lastRefreshRef.current !== refreshToken) {
+      lastRefreshRef.current = refreshToken;
+      requestedRef.current.clear();
+    }
     const missing = syncedSubjects
       .map((subject) => subject.backendId)
       .filter((id) => !requestedRef.current.has(id));
@@ -113,7 +124,7 @@ export function MockTestStart({
         return next;
       });
     });
-  }, [syncedSubjects]);
+  }, [syncedSubjects, refreshToken]);
 
   useEffect(() => {
     if (!filterOpen) return undefined;
@@ -145,8 +156,9 @@ export function MockTestStart({
   const unfinished = overview?.unfinishedAttempt ?? null;
 
   const selected = selectedBackendId
-    ? syncedSubjects.find((subject) => subject.backendId === selectedBackendId) ??
-      null
+    ? (syncedSubjects.find(
+        (subject) => subject.backendId === selectedBackendId,
+      ) ?? null)
     : null;
   const selectedOverview =
     selected === null
@@ -166,10 +178,12 @@ export function MockTestStart({
       return list
         .map((subject, index) => ({ subject, index }))
         .sort((a, b) => {
-          const aUnfinished = overviewBySubject[a.subject.backendId]?.unfinishedAttempt
+          const aUnfinished = overviewBySubject[a.subject.backendId]
+            ?.unfinishedAttempt
             ? 1
             : 0;
-          const bUnfinished = overviewBySubject[b.subject.backendId]?.unfinishedAttempt
+          const bUnfinished = overviewBySubject[b.subject.backendId]
+            ?.unfinishedAttempt
             ? 1
             : 0;
           return bUnfinished - aUnfinished || a.index - b.index;
@@ -186,7 +200,7 @@ export function MockTestStart({
 
   const sortOptions: { value: SortMode; label: string }[] = [
     { value: "recent", label: "Recently added" },
-    { value: "unfinished", label: "Unfinished test first" },
+    { value: "unfinished", label: "Unfinished Test" },
   ];
 
   return (
@@ -398,7 +412,10 @@ export function MockTestStart({
       )}
 
       {selected && (
-        <section className="mock-test__card mock-test__selected" aria-live="polite">
+        <section
+          className="mock-test__card mock-test__selected"
+          aria-live="polite"
+        >
           <div className="mock-test__panel-head">
             <span className="mock-test__selected-pill">Selected Subject</span>
             <span
@@ -471,7 +488,10 @@ export function MockTestStart({
         </section>
       )}
 
-      <section className="mock-test__recent" aria-labelledby="mock-test-recent-title">
+      <section
+        className="mock-test__recent"
+        aria-labelledby="mock-test-recent-title"
+      >
         <h2 className="mock-test__section-title" id="mock-test-recent-title">
           <BarChart3 size={20} aria-hidden="true" />
           Recent Attempts

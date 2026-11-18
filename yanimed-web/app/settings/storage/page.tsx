@@ -4,6 +4,9 @@ import { ChevronRight } from "lucide-react";
 import { formatBytes } from "@/lib/format";
 import { listLibraryFiles, summarizeStorage } from "@/lib/library";
 
+// Disk usage is read per request below, so this page blocks by design.
+export const instant = false;
+
 export default async function StorageSettingsPage() {
   // Usage is summed from disk at request time, so this must not be prerendered.
   // `connection()` is the Cache-Components-compatible opt-out; `export const

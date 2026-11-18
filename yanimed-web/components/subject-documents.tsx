@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   getDocumentStatus,
   getSubjectDocuments,
@@ -11,13 +11,6 @@ import {
 } from "@/lib/backend-api";
 
 const STATUS_POLL_INTERVAL_MS = 15_000;
-
-const STATUS_LABELS: Record<DocumentProcessingStatus, string> = {
-  QUEUED: "Queued",
-  PROCESSING: "Processing",
-  READY: "Ready",
-  FAILED: "Failed",
-};
 
 export interface SubjectDocumentsSummary {
   loading: boolean;
@@ -36,151 +29,34 @@ function isTerminalStatus(status: DocumentProcessingStatus): boolean {
   return status === "READY" || status === "FAILED";
 }
 
-function DocumentRow({
-  item,
-  onStatus,
-}: {
-  item: BackendDocument;
-  onStatus: (documentId: string, status: DocumentProcessingStatus) => void;
-}) {
-  const [status, setStatus] = useState<DocumentProcessingStatus>(item.status);
-  const [details, setDetails] = useState<BackendDocumentStatus | null>(null);
-  const [pollError, setPollError] = useState<string | null>(null);
-  const [retrying, setRetrying] = useState(false);
-  const [retryError, setRetryError] = useState<string | null>(null);
-  const retryingRef = useRef(false);
-  const didInitialFetch = useRef(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    let inFlight = false;
-    const documentId = item.documentId;
-    const terminal = isTerminalStatus(status);
-
-    const poll = async () => {
-      if (cancelled || inFlight || document.hidden) return;
-      inFlight = true;
-      try {
-        const next = await getDocumentStatus(documentId);
-        if (cancelled) return;
-        setStatus(next.status);
-        onStatus(documentId, next.status);
-        setDetails(next);
-        setPollError(null);
-      } catch (err) {
-        if (cancelled) return;
-        setPollError(err instanceof Error ? err.message : "Could not check status.");
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    const runVisiblePoll = () => {
-      if (document.hidden) return;
-      didInitialFetch.current = true;
-      void poll();
-    };
-
-    if (terminal) {
-      if (!didInitialFetch.current) {
-        if (document.hidden) {
-          const onFirstVisible = () => {
-            if (document.hidden) return;
-            document.removeEventListener("visibilitychange", onFirstVisible);
-            runVisiblePoll();
-          };
-          document.addEventListener("visibilitychange", onFirstVisible);
-          return () => {
-            cancelled = true;
-            document.removeEventListener("visibilitychange", onFirstVisible);
-          };
-        }
-        runVisiblePoll();
-      }
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    if (!didInitialFetch.current) runVisiblePoll();
-
-    const timer = setInterval(() => {
-      void poll();
-    }, STATUS_POLL_INTERVAL_MS);
-    document.addEventListener("visibilitychange", runVisiblePoll);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", runVisiblePoll);
-    };
-  }, [item.documentId, status, onStatus]);
-
-  const retry = async () => {
-    if (retryingRef.current) return;
-    retryingRef.current = true;
-    setRetrying(true);
-    setRetryError(null);
-
-    try {
-      const result = await retryDocument(item.documentId);
-      didInitialFetch.current = false;
-      setStatus(result.status);
-      onStatus(item.documentId, result.status);
-      setDetails({
-        ...item,
-        status: result.status,
-        readyForRetrieval: false,
-        retryAllowed: false,
-        retryUnavailableReason: "RETRY_IN_PROGRESS",
-        failure: null,
-      });
-      setPollError(null);
-    } catch (err) {
-      setRetryError(err instanceof Error ? err.message : "Could not retry processing. Please try again.");
-    } finally {
-      retryingRef.current = false;
-      setRetrying(false);
-    }
-  };
-
-  return (
-    <li>
-      <p><strong>{item.filename}</strong></p>
-      <p aria-live="polite">{STATUS_LABELS[status]}</p>
-      {status === "FAILED" && details?.failure?.message && <p>{details.failure.message}</p>}
-      {status === "FAILED" && details?.retryAllowed === true && (
-        <button type="button" disabled={retrying} onClick={() => void retry()}>
-          {retrying ? "Retrying..." : "Retry processing"}
-        </button>
-      )}
-      {retryError && <p role="alert">{retryError}</p>}
-      {pollError && <p role="status">Could not check status. {pollError}</p>}
-    </li>
-  );
-}
-
 export function SubjectDocuments({ subjectId, refreshToken, onSummary }: SubjectDocumentsProps) {
   const [documents, setDocuments] = useState<BackendDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statuses, setStatuses] = useState<Record<string, DocumentProcessingStatus>>({});
-  const reportStatus = useCallback((documentId: string, status: DocumentProcessingStatus) => {
-    setStatuses((current) =>
-      current[documentId] === status ? current : { ...current, [documentId]: status },
-    );
-  }, []);
+  const [details, setDetails] = useState<Record<string, BackendDocumentStatus>>({});
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  const statusOf = useCallback(
+    (item: BackendDocument) => statuses[item.documentId] ?? item.status,
+    [statuses],
+  );
+
+  const reportSummary = useCallback(
+    (next: SubjectDocumentsSummary) => onSummary?.(next),
+    [onSummary],
+  );
 
   useEffect(() => {
-    onSummary?.({
+    reportSummary({
       loading,
       error: Boolean(error),
       documentCount: documents.length,
-      hasReady: documents.some(
-        (document) => (statuses[document.documentId] ?? document.status) === "READY",
-      ),
+      hasReady: documents.some((document) => statusOf(document) === "READY"),
     });
-  }, [documents, statuses, loading, error, onSummary]);
+  }, [documents, statuses, loading, error, statusOf, reportSummary]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,19 +82,115 @@ export function SubjectDocuments({ subjectId, refreshToken, onSummary }: Subject
     };
   }, [subjectId, refreshToken]);
 
+  // Poll non-terminal documents (and failures still missing details) until done.
+  useEffect(() => {
+    const needsPoll = documents.some((item) => !isTerminalStatus(statusOf(item)));
+    const needsDetail = documents.some(
+      (item) => statusOf(item) === "FAILED" && !details[item.documentId],
+    );
+    if (!needsPoll && !needsDetail) return undefined;
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const poll = async () => {
+      if (cancelled || inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        for (const item of documents) {
+          const status = statusOf(item);
+          const missingDetail = status === "FAILED" && !details[item.documentId];
+          if (isTerminalStatus(status) && !missingDetail) continue;
+          const next = await getDocumentStatus(item.documentId);
+          if (cancelled) return;
+          setStatuses((current) =>
+            current[item.documentId] === next.status
+              ? current
+              : { ...current, [item.documentId]: next.status },
+          );
+          setDetails((current) =>
+            current[item.documentId] === next ? current : { ...current, [item.documentId]: next },
+          );
+        }
+        setPollError(null);
+      } catch (err) {
+        if (!cancelled) {
+          setPollError(err instanceof Error ? err.message : "Could not check status.");
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void poll();
+    const timer = setInterval(() => void poll(), STATUS_POLL_INTERVAL_MS);
+    const runVisiblePoll = () => {
+      if (!document.hidden) void poll();
+    };
+    document.addEventListener("visibilitychange", runVisiblePoll);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", runVisiblePoll);
+    };
+  }, [documents, statuses, details, statusOf]);
+
+  const retry = async (documentId: string) => {
+    if (retrying) return;
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const result = await retryDocument(documentId);
+      setStatuses((current) => ({ ...current, [documentId]: result.status }));
+      setDetails((current) => {
+        const next = { ...current };
+        delete next[documentId];
+        return next;
+      });
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : "Could not retry processing. Please try again.");
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  if (loading && documents.length === 0) return null;
+
+  const active = documents.filter((item) => {
+    const status = statusOf(item);
+    return status === "QUEUED" || status === "PROCESSING" || status === "FAILED";
+  });
+  const processingCount = active.filter((item) => {
+    const status = statusOf(item);
+    return status === "QUEUED" || status === "PROCESSING";
+  }).length;
+  const failed = active.filter((item) => statusOf(item) === "FAILED");
+
+  if (!error && !pollError && active.length === 0) return null;
+
   return (
-    <section className="subject-processing" aria-label="Documents">
-      <h2>Documents</h2>
-      {loading && documents.length === 0 && <p>Loading documents...</p>}
-      {error && <p role="alert">{error}</p>}
-      {!loading && !error && documents.length === 0 && <p>No documents yet.</p>}
-      {documents.length > 0 && (
-        <ul>
-          {documents.map((document) => (
-            <DocumentRow key={document.documentId} item={document} onStatus={reportStatus} />
-          ))}
-        </ul>
+    <div className="subject-docstatus" role="status">
+      {processingCount > 0 && (
+        <span>
+          {processingCount === 1
+            ? "Processing PDF…"
+            : `Processing ${processingCount} PDFs…`}
+        </span>
       )}
-    </section>
+      {failed.map((item) => (
+        <span key={item.documentId} className="subject-docstatus__failed">
+          {item.filename}: processing failed.
+          {details[item.documentId]?.retryAllowed === true && (
+            <button type="button" disabled={retrying} onClick={() => void retry(item.documentId)}>
+              {retrying ? "Retrying…" : "Retry"}
+            </button>
+          )}
+        </span>
+      ))}
+      {error && <span>{error}</span>}
+      {pollError && <span>{pollError}</span>}
+      {retryError && <span role="alert">{retryError}</span>}
+    </div>
   );
 }
