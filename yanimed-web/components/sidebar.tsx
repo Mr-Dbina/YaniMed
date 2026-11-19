@@ -12,6 +12,7 @@ import {
   ChevronRight,
   ClipboardList,
   GraduationCap,
+  LayoutDashboard,
   Moon,
   PanelLeft,
   Plus,
@@ -24,6 +25,7 @@ import type { Subject } from "@/lib/types";
 const RECENTS_OPEN_KEY = "yanimed:recents-open";
 
 const navItems: { label: string; href: string; icon: LucideIcon }[] = [
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Subjects", href: "/subjects", icon: GraduationCap },
   { label: "Mock Test", href: "/mock-test", icon: ClipboardList },
 ];
