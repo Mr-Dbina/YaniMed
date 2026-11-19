@@ -75,3 +75,12 @@ export const MAX_RECOVERIES = 3;
 export const MIN_ELIGIBLE_CHUNK_CHARS = 200;
 export const HEADING_SCAN_LINES = 12;
 export const PAGE_MATCH_MAX_CHARS = 20_000;
+
+/**
+ * Front-matter heuristics. Provisional: calibrate on real chunks before
+ * treating these thresholds as product rules.
+ */
+export const FRONT_MATTER_SCAN_PAGES = 30;
+export const CREDENTIAL_MIN = 6;
+export const CREDENTIAL_PAIR_MIN = 3;
+export const AFFILIATION_PAIR_MIN = 3;

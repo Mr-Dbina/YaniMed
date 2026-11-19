@@ -1,4 +1,8 @@
 import {
+  AFFILIATION_PAIR_MIN,
+  CREDENTIAL_MIN,
+  CREDENTIAL_PAIR_MIN,
+  FRONT_MATTER_SCAN_PAGES,
   HEADING_SCAN_LINES,
   MIN_DISTINCT_PAGES,
   MIN_ELIGIBLE_CHUNK_CHARS,
@@ -54,6 +58,55 @@ const FRONT_MATTER_HEADINGS = new Set([
   'list of abbreviations',
   'index',
 ]);
+
+/** Prefixes checked against flattened production chunk text. Longest first. */
+const FRONT_MATTER_ADMIN_HEADINGS = [
+  'table of contents',
+  'acknowledgements',
+  'acknowledgments',
+  'contributing authors',
+  'list of contributors',
+  'editorial board',
+  'acknowledgement',
+  'acknowledgment',
+  'title page',
+  'contributors',
+  'dedication',
+  'copyright',
+  'contents',
+  'preface',
+  'foreword',
+  'editors',
+] as const;
+
+/** Lowercase words that show a heading word is part of a normal sentence. */
+const SENTENCE_CONTINUATIONS = new Set([
+  'of',
+  'the',
+  'a',
+  'an',
+  'in',
+  'on',
+  'at',
+  'was',
+  'were',
+  'is',
+  'are',
+  'has',
+  'have',
+  'had',
+  'contain',
+  'contains',
+  'include',
+  'includes',
+  'consist',
+  'consists',
+]);
+
+const CREDENTIAL_TOKEN =
+  /\b(?:MBBS|MSc|MSN|MHS|PhD|MPH|FAAP|MD|MS|DO|RN)\b/gi;
+const AFFILIATION_MARKER =
+  /\b(?:University|Hospital|Department of|School of Medicine|Professor|Editor|Chief)\b/gi;
 
 const REFERENCE_HEADINGS = new Set([
   'references',
@@ -112,6 +165,88 @@ function looksLikeBibliographyEntry(lines: readonly string[]): boolean {
   );
 }
 
+function stripFrontMatterLead(text: string): string {
+  let rest = text.trimStart();
+  for (;;) {
+    const before = rest;
+    rest = rest
+      .replace(
+        /^(?:chapter|section|part)\b[\s.:)]*(?:[0-9]+|[ivxlcdm]+)?[\s.:)]*/i,
+        '',
+      )
+      .replace(/^[^A-Za-z]+/, '');
+    if (rest === before) return rest;
+  }
+}
+
+function startsWithAdminHeading(text: string): boolean {
+  const stripped = stripFrontMatterLead(text);
+  const lower = stripped.toLowerCase();
+
+  for (const heading of FRONT_MATTER_ADMIN_HEADINGS) {
+    if (!lower.startsWith(heading)) continue;
+
+    const after = stripped.slice(heading.length);
+    if (after !== '' && /\p{L}/u.test(after[0])) continue;
+
+    const nextWord = /^[^\p{L}]*([\p{L}]+)/u.exec(after)?.[1];
+    if (
+      nextWord !== undefined &&
+      nextWord[0] === nextWord[0].toLowerCase() &&
+      SENTENCE_CONTINUATIONS.has(nextWord.toLowerCase())
+    ) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+function hasPublisherMarker(text: string): boolean {
+  return (
+    /\bisbn\b/i.test(text) ||
+    /all rights reserved/i.test(text) ||
+    /library of congress/i.test(text) ||
+    /printed in the united states/i.test(text) ||
+    /\u00a9\s*(?:19|20)\d{2}/u.test(text)
+  );
+}
+
+function isCredentialDense(text: string): boolean {
+  const credentials = (text.match(CREDENTIAL_TOKEN) ?? []).length;
+  if (credentials >= CREDENTIAL_MIN) return true;
+  if (credentials < CREDENTIAL_PAIR_MIN) return false;
+
+  const affiliations = (text.match(AFFILIATION_MARKER) ?? []).length;
+  return affiliations >= AFFILIATION_PAIR_MIN;
+}
+
+/**
+ * Detects administrative front matter on the single-line text production
+ * chunks really have. The page window alone never excludes a chunk.
+ *
+ * shortcut: thresholds are provisional; calibrate them on real chunks.
+ */
+export function classifyFrontMatter(
+  text: string,
+  firstPage: number | null | undefined,
+): ChunkExclusionReason | null {
+  if (firstPage === null || firstPage === undefined) return null;
+  if (
+    !Number.isInteger(firstPage) ||
+    firstPage < 1 ||
+    firstPage > FRONT_MATTER_SCAN_PAGES
+  ) {
+    return null;
+  }
+
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (startsWithAdminHeading(flat)) return 'front-matter';
+  if (hasPublisherMarker(flat)) return 'front-matter';
+  if (isCredentialDense(flat)) return 'front-matter';
+  return null;
+}
+
 /**
  * Pure classifier. The returned state must be passed to the next chunk of the
  * same document, so a reference heading keeps excluding the entries after it.
@@ -128,6 +263,11 @@ export function classifyChunk(
   }
 
   const text = chunk.content.trim();
+  const frontMatterReason = classifyFrontMatter(text, chunk.page);
+  if (frontMatterReason !== null) {
+    return { eligible: false, reason: frontMatterReason, state };
+  }
+
   if (state.inReferenceSection) {
     return { eligible: false, reason: 'reference-section', state };
   }

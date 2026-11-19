@@ -11,6 +11,36 @@ const NORMAL =
   'A total serum bilirubin should be measured when the clinical level is unclear. ' +
   'Treatment depends on age, gestation and the bilirubin trend over time.';
 
+/** The production shape: no line breaks anywhere in a chunk. */
+const CONTRIBUTOR_DENSE =
+  'Pediatric faculty Jane Smith MD, John Doe MD, Alice Brown MD, ' +
+  'Bob Green MD, Carol White MD, David Black MD. ' +
+  NORMAL;
+
+const PAIR_DENSE =
+  'Pediatric faculty Jane Smith MD, John Doe MD, Alice Brown MD. ' +
+  'University Hospital, Department of Pediatrics, School of Medicine. ' +
+  NORMAL;
+
+const ADMIN_HEADINGS = [
+  'table of contents',
+  'contents',
+  'dedication',
+  'acknowledgement',
+  'acknowledgements',
+  'acknowledgment',
+  'acknowledgments',
+  'preface',
+  'foreword',
+  'list of contributors',
+  'contributors',
+  'contributing authors',
+  'editorial board',
+  'editors',
+  'title page',
+  'copyright',
+] as const;
+
 function makeChunk(overrides: Partial<ChunkInput> = {}): ChunkInput {
   return {
     documentId: 'doc-1',
@@ -146,6 +176,180 @@ describe('classifyChunk', () => {
     expect(classifyChunk(makeChunk({ content })).reason).toBe(
       'mostly-short-lines',
     );
+  });
+});
+
+describe('classifyChunk front matter on flattened text', () => {
+  it('excludes a credential-dense contributor list with no admin heading', () => {
+    const result = classifyChunk(makeChunk({ content: CONTRIBUTOR_DENSE }));
+
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('front-matter');
+  });
+
+  it('excludes a credential and affiliation pair list', () => {
+    const result = classifyChunk(makeChunk({ content: PAIR_DENSE }));
+
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('front-matter');
+  });
+
+  it('keeps a list below both density thresholds eligible', () => {
+    const content =
+      'Pediatric faculty Jane Smith MD, John Doe MD. ' +
+      'University Hospital, Department of Pediatrics. ' +
+      NORMAL;
+
+    expect(content).not.toContain('\n');
+    expect(classifyChunk(makeChunk({ content })).eligible).toBe(true);
+  });
+
+  it('excludes an editorial board page', () => {
+    const content = `Editorial Board Jane Smith MD, John Doe MD. ${NORMAL}`;
+    const result = classifyChunk(makeChunk({ content }));
+
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('front-matter');
+  });
+
+  it('excludes a dedication phrase', () => {
+    const content = `Dedication In memory of the founding editors. ${NORMAL}`;
+    const result = classifyChunk(makeChunk({ content }));
+
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('front-matter');
+  });
+
+  it('excludes a table of contents without dot leaders', () => {
+    const content =
+      `Contents Chapter 1 Introduction Chapter 2 Assessment ${NORMAL}`;
+    const result = classifyChunk(makeChunk({ content }));
+
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('front-matter');
+  });
+
+  it('excludes publisher markers anywhere in the window', () => {
+    const markers = [
+      'ISBN 978-1-2345-6789-0',
+      'All rights reserved',
+      'Library of Congress',
+      'Printed in the United States',
+      '\u00a9 2024',
+    ];
+
+    for (const marker of markers) {
+      const content = `Pediatric handbook ${marker}. ${NORMAL}`;
+      expect(content).not.toContain('\n');
+      expect(classifyChunk(makeChunk({ content })).reason).toBe(
+        'front-matter',
+      );
+    }
+  });
+
+  for (const heading of ADMIN_HEADINGS) {
+    it(`excludes a single-line chunk that starts with "${heading}"`, () => {
+      const content = `${heading} ${NORMAL}`;
+
+      expect(content).not.toContain('\n');
+      expect(classifyChunk(makeChunk({ content })).reason).toBe(
+        'front-matter',
+      );
+    });
+  }
+
+  it('strips chapter numbering before matching a heading', () => {
+    const content = `Chapter 3 Contents ${NORMAL}`;
+    const result = classifyChunk(makeChunk({ content }));
+
+    expect(result.reason).toBe('front-matter');
+  });
+
+  it('does not treat a sentence beginning with "Contents of" as a heading', () => {
+    const content =
+      `Contents of the stomach were aspirated before the procedure. ` +
+      `${NORMAL} ${NORMAL}`;
+    const result = classifyChunk(makeChunk({ content }));
+
+    expect(result.eligible).toBe(true);
+  });
+
+  it('excludes a short admin chunk before the length rule', () => {
+    const result = classifyChunk(
+      makeChunk({ content: 'Dedication In memory.' }),
+    );
+
+    expect(result.reason).toBe('front-matter');
+  });
+
+  it('applies front matter rules through page 30 only', () => {
+    expect(
+      classifyChunk(makeChunk({ content: CONTRIBUTOR_DENSE, page: 30 })).reason,
+    ).toBe('front-matter');
+    expect(
+      classifyChunk(makeChunk({ content: CONTRIBUTOR_DENSE, page: 31 }))
+        .eligible,
+    ).toBe(true);
+  });
+
+  it('treats a missing or zero page as outside the window', () => {
+    expect(
+      classifyChunk(makeChunk({ content: CONTRIBUTOR_DENSE, page: 0 }))
+        .eligible,
+    ).toBe(true);
+    expect(
+      classifyChunk(
+        makeChunk({
+          content: CONTRIBUTOR_DENSE,
+          page: undefined as unknown as number,
+        }),
+      ).eligible,
+    ).toBe(true);
+  });
+
+  it('applies the same front matter rules in another document', () => {
+    const chunks = [
+      makeChunk({
+        documentId: 'doc-1',
+        content: CONTRIBUTOR_DENSE,
+        page: 1,
+        chunkIndex: 0,
+      }),
+      makeChunk({
+        documentId: 'doc-2',
+        content: CONTRIBUTOR_DENSE,
+        page: 1,
+        chunkIndex: 0,
+      }),
+      makeChunk({
+        documentId: 'doc-3',
+        content: NORMAL,
+        page: 1,
+        chunkIndex: 0,
+      }),
+    ];
+
+    const results = classifyChunks(chunks);
+
+    for (const documentId of ['doc-1', 'doc-2']) {
+      expect(
+        results.find((item) => item.chunk.documentId === documentId)?.eligible,
+      ).toBe(false);
+    }
+    expect(
+      results.find((item) => item.chunk.documentId === 'doc-3')?.eligible,
+    ).toBe(true);
+  });
+
+  it('keeps normal clinical text with incidental terms eligible', () => {
+    const content =
+      'Gastric contents were clear. Body mass index was normal. ' +
+      'The preface was brief. The University of Manila and the ' +
+      'Department of Health reported one MD reviewer. ' +
+      `${NORMAL} ${NORMAL}`;
+
+    expect(content).not.toContain('\n');
+    expect(classifyChunk(makeChunk({ content })).eligible).toBe(true);
   });
 });
 
