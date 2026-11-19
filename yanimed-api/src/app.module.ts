@@ -17,6 +17,7 @@ import { EmbeddingModule } from './embeddings/embedding.module.js';
 import { DocumentProcessingModule } from './document-processing/document-processing.module.js';
 import { RetrievalModule } from './retrieval/retrieval.module.js';
 import { SubjectsModule } from './subjects/subjects.module.js';
+import { DashboardModule } from './dashboard/dashboard.module.js';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { SubjectsModule } from './subjects/subjects.module.js';
     EmbeddingModule,
     DocumentProcessingModule,
     RetrievalModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],
