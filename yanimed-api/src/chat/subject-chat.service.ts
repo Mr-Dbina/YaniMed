@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { OmniRouteService } from '../omniroute/omniroute.service.js';
-import { RetrievalService, type RetrievalMatch } from '../retrieval/retrieval.service.js';
+import { RetrievalService, type RetrievalMatch, type RetrievalResult } from '../retrieval/retrieval.service.js';
 import { normalizeCitationBrackets } from './citation-normalize.js';
 import { sanitizePassageText, sanitizeQuestion, sanitizeTitle } from './prompt-sanitize.js';
 
@@ -85,9 +85,7 @@ export class SubjectChatService {
 
     const chat = await this.resolveChat(request.chatId, subject.id);
 
-    const retrievalResult = await this.retrieval.retrieve(request.subjectId, request.prompt, {
-      topK: request.topK ?? 5,
-    });
+    const retrievalResult = await this.retrieveOrFail(request);
 
     if (!retrievalResult.hasReadyDocuments || retrievalResult.matches.length === 0) {
       return this.persistInsufficient(request, subject.id, started, 'No relevant passages were retrieved from the uploaded PDFs.', 0, chat);
@@ -176,6 +174,37 @@ export class SubjectChatService {
         retrievedChunks: retrievalResult.matches.length,
       },
     };
+  }
+
+  private async retrieveOrFail(request: SubjectChatRequest): Promise<RetrievalResult> {
+    try {
+      return await this.retrieval.retrieve(request.subjectId, request.prompt, {
+        topK: request.topK ?? 5,
+      });
+    } catch (error) {
+      throw this.mapEmbeddingFailure(error);
+    }
+  }
+
+  /** The gateway must answer, not wait out five embedding retries. */
+  private mapEmbeddingFailure(error: unknown): Error {
+    const code =
+      typeof error === 'object' && error !== null
+        ? (error as { code?: unknown }).code
+        : undefined;
+    if (code === 'EMBEDDING_QUOTA_EXHAUSTED') {
+      return new ServiceUnavailableException({
+        code: 'EMBEDDING_QUOTA_EXHAUSTED',
+        message: 'Embedding daily quota exhausted. Chat is unavailable until the quota resets.',
+      });
+    }
+    if (code === 'EMBEDDING_TRANSIENT') {
+      return new ServiceUnavailableException({
+        code: 'EMBEDDING_UNAVAILABLE',
+        message: 'Embedding service is temporarily unavailable. Please try again shortly.',
+      });
+    }
+    return error instanceof Error ? error : new Error(String(error));
   }
 
   private async resolveChat(chatId: string | undefined, subjectId: string): Promise<ResolvedChat> {

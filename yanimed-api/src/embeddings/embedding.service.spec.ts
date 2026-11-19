@@ -78,6 +78,138 @@ describe('EmbeddingService', () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
+  it('stops on a per-day quota 429 without retrying', async () => {
+    const perDayBody = JSON.stringify({
+      error: {
+        code: 429,
+        status: 'RESOURCE_EXHAUSTED',
+        details: [
+          {
+            '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+            violations: [{ quotaId: 'EmbedContentRequestsPerDayPerUserPerProjectPerModel-FreeTier' }],
+          },
+          { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '58234s' },
+        ],
+      },
+    });
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 429,
+      text: async () => perDayBody,
+      headers: { get: () => null },
+    });
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 5 });
+    const warn = vi.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+
+    await expect(service.embedText('text')).rejects.toMatchObject({
+      code: 'EMBEDDING_QUOTA_EXHAUSTED',
+      message: 'Gemini embedding daily quota exhausted.',
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('embedding.quota_exhausted');
+    expect(String(warn.mock.calls[0][0])).toContain('"retryAfterSec":58234');
+  });
+
+  it('still retries a per-minute quota 429', async () => {
+    const perMinuteBody = JSON.stringify({
+      error: {
+        code: 429,
+        status: 'RESOURCE_EXHAUSTED',
+        details: [
+          {
+            '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+            violations: [{ quotaId: 'EmbedContentRequestsPerMinutePerUserPerProjectPerModel-FreeTier' }],
+          },
+          { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '45s' },
+        ],
+      },
+    });
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: async () => perMinuteBody,
+        headers: { get: (name: string) => (name === 'Retry-After' ? '0' : null) },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ embedding: { values: Array(EMBEDDING_DIMENSIONS).fill(0.5) } }),
+      });
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 2 });
+
+    await expect(service.embedText('text')).resolves.toHaveLength(EMBEDDING_DIMENSIONS);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('still retries a 429 whose body is not JSON', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: async () => '{not json',
+        headers: { get: (name: string) => (name === 'Retry-After' ? '0' : null) },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ embedding: { values: Array(EMBEDDING_DIMENSIONS).fill(0.5) } }),
+      });
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 2 });
+
+    await expect(service.embedText('text')).resolves.toHaveLength(EMBEDDING_DIMENSIONS);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('honours an HTTP-date Retry-After on 429', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+    const retryAt = new Date(Date.now() + 2000).toUTCString();
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: async () => 'rate limited',
+        headers: { get: (name: string) => (name === 'Retry-After' ? retryAt : null) },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ embedding: { values: Array(EMBEDDING_DIMENSIONS).fill(0.5) } }),
+      });
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 2 });
+    const result = service.embedText('text');
+
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toHaveLength(EMBEDDING_DIMENSIONS);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('caps a numeric Retry-After at 60 seconds and still retries', async () => {
+    vi.useFakeTimers();
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: async () => 'rate limited',
+        headers: { get: (name: string) => (name === 'Retry-After' ? '120' : null) },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ embedding: { values: Array(EMBEDDING_DIMENSIONS).fill(0.5) } }),
+      });
+    const service = new EmbeddingService(undefined as never, { requestsPerMinute: 100000, maxAttempts: 2 });
+    const result = service.embedText('text');
+
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toHaveLength(EMBEDDING_DIMENSIONS);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('tags rate-limited failures after retries as EMBEDDING_TRANSIENT', async () => {
     vi.useFakeTimers();
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({

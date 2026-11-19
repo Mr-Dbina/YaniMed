@@ -9,7 +9,70 @@ export const EMBEDDING_DIMENSIONS = 768;
 const EMBEDDING_REQUEST_TIMEOUT_MS = 30_000;
 const EMBEDDING_PROGRESS_EVERY = 25;
 
-type EmbeddingErrorCode = 'EMBEDDING_TRANSIENT' | 'EMBEDDING_PERMANENT';
+type EmbeddingErrorCode =
+  | 'EMBEDDING_TRANSIENT'
+  | 'EMBEDDING_PERMANENT'
+  | 'EMBEDDING_QUOTA_EXHAUSTED';
+
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null;
+}
+
+function parseRetryDelaySeconds(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d+(?:\.\d+)?)s$/.exec(value.trim());
+  if (!match) return null;
+  const seconds = Number(match[1]);
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+/**
+ * A 429 is per-day when any QuotaFailure violation names a PerDay quota, or
+ * when RetryInfo asks for a wait longer than a minute. The body is untrusted:
+ * any parse failure means "not per-day" and the caller retries as before.
+ */
+function perDayQuotaRetryAfterSec(
+  body: string,
+  retryAfterMs: number | null,
+): { retryAfterSec: number | null } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  const root = isRecord(parsed) ? parsed : null;
+  const error = root && isRecord(root.error) ? root.error : root;
+  if (!error || !Array.isArray(error.details)) return null;
+
+  let perDay = false;
+  let retryDelaySec: number | null = null;
+  for (const detail of error.details) {
+    if (!isRecord(detail)) continue;
+    if (Array.isArray(detail.violations)) {
+      for (const violation of detail.violations) {
+        if (
+          isRecord(violation) &&
+          typeof violation.quotaId === 'string' &&
+          violation.quotaId.includes('PerDay')
+        ) {
+          perDay = true;
+        }
+      }
+    }
+    const parsedDelay = parseRetryDelaySeconds(detail.retryDelay);
+    if (parsedDelay !== null) retryDelaySec = parsedDelay;
+  }
+
+  if (!perDay && (retryDelaySec === null || retryDelaySec <= 60)) return null;
+
+  const retryAfterSec =
+    retryDelaySec ??
+    (retryAfterMs === null ? null : Math.ceil(retryAfterMs / 1000));
+  return { retryAfterSec };
+}
 
 function isAbortError(error: unknown): boolean {
   return (
@@ -110,9 +173,21 @@ export class EmbeddingService {
         if (!response.ok) {
           const body = await response.text();
           if (response.status === 429 || response.status >= 500) {
-            lastError = embeddingError(`Gemini embedding request failed (${response.status}): ${body}`, 'EMBEDDING_TRANSIENT');
             const retryAfter =
               response.status === 429 ? this.retryAfterMs(response) : null;
+            if (response.status === 429) {
+              const quota = perDayQuotaRetryAfterSec(body, retryAfter);
+              if (quota !== null) {
+                this.logger.warn(
+                  `embedding.quota_exhausted ${JSON.stringify({ retryAfterSec: quota.retryAfterSec })}`,
+                );
+                throw embeddingError(
+                  'Gemini embedding daily quota exhausted.',
+                  'EMBEDDING_QUOTA_EXHAUSTED',
+                );
+              }
+            }
+            lastError = embeddingError(`Gemini embedding request failed (${response.status}): ${body}`, 'EMBEDDING_TRANSIENT');
             const waitMs = retryAfter ?? this.backoff(attempt) + this.jitter();
             if (response.status === 429) {
               this.logger.warn(
@@ -134,6 +209,13 @@ export class EmbeddingService {
         }
         return values as number[];
       } catch (error) {
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          (error as { code?: unknown }).code === 'EMBEDDING_QUOTA_EXHAUSTED'
+        ) {
+          throw error;
+        }
         lastError = isTransientNetworkError(error) || isAbortError(error)
           ? tagEmbeddingError(error, 'EMBEDDING_TRANSIENT')
           : error;

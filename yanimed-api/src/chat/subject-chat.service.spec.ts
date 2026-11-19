@@ -512,4 +512,59 @@ describe('SubjectChatService', () => {
     const systemPrompt = omniroute.complete.mock.calls[0][1] as string;
     expect(systemPrompt).toContain('Write each source identifier with plain ASCII square brackets exactly like [S1]; never use other bracket characters or symbols around it.');
   });
+
+  it('E1 maps a daily embedding quota failure to HTTP 503 with a stable body', async () => {
+    const prisma = makePrisma();
+    const retrieval = {
+      retrieve: vi.fn().mockRejectedValue(
+        Object.assign(new Error('Gemini embedding daily quota exhausted.'), {
+          code: 'EMBEDDING_QUOTA_EXHAUSTED',
+        }),
+      ),
+    };
+    const omniroute = { complete: vi.fn(), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+
+    await expect(service.answer({ subjectId: 'subject-1', prompt: 'question' })).rejects.toMatchObject({
+      status: 503,
+      response: {
+        code: 'EMBEDDING_QUOTA_EXHAUSTED',
+        message: 'Embedding daily quota exhausted. Chat is unavailable until the quota resets.',
+      },
+    });
+    expect(omniroute.complete).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('E2 maps a transient embedding failure to HTTP 503 EMBEDDING_UNAVAILABLE', async () => {
+    const prisma = makePrisma();
+    const retrieval = {
+      retrieve: vi.fn().mockRejectedValue(
+        Object.assign(new Error('Gemini embedding request failed (429): rate limited'), {
+          code: 'EMBEDDING_TRANSIENT',
+        }),
+      ),
+    };
+    const omniroute = { complete: vi.fn(), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+
+    await expect(service.answer({ subjectId: 'subject-1', prompt: 'question' })).rejects.toMatchObject({
+      status: 503,
+      response: {
+        code: 'EMBEDDING_UNAVAILABLE',
+        message: 'Embedding service is temporarily unavailable. Please try again shortly.',
+      },
+    });
+    expect(omniroute.complete).not.toHaveBeenCalled();
+  });
+
+  it('E3 leaves unrelated retrieval failures unchanged', async () => {
+    const prisma = makePrisma();
+    const retrieval = { retrieve: vi.fn().mockRejectedValue(new Error('retrieval exploded')) };
+    const omniroute = { complete: vi.fn(), getRequestedModel: () => 'primary' };
+    const service = new SubjectChatService(prisma as never, omniroute as never, retrieval as never);
+
+    await expect(service.answer({ subjectId: 'subject-1', prompt: 'question' })).rejects.toThrow('retrieval exploded');
+    expect(omniroute.complete).not.toHaveBeenCalled();
+  });
 });
