@@ -229,13 +229,12 @@ describe('classifyChunk front matter on flattened text', () => {
     expect(result.reason).toBe('front-matter');
   });
 
-  it('excludes publisher markers anywhere in the window', () => {
+  it('excludes strong publisher markers anywhere in the window', () => {
     const markers = [
       'ISBN 978-1-2345-6789-0',
       'All rights reserved',
       'Library of Congress',
       'Printed in the United States',
-      '\u00a9 2024',
     ];
 
     for (const marker of markers) {
@@ -245,6 +244,20 @@ describe('classifyChunk front matter on flattened text', () => {
         'front-matter',
       );
     }
+  });
+
+  it('keeps a short chunk with only a copyright symbol eligible', () => {
+    const content = `Pediatric handbook \u00a9 2020. ${NORMAL}`;
+
+    expect(content.length).toBeLessThan(600);
+    expect(classifyChunk(makeChunk({ content })).eligible).toBe(true);
+  });
+
+  it('blocks when a copyright symbol sits beside a strong marker', () => {
+    const content =
+      `Pediatric handbook \u00a9 2020. All rights reserved. ${NORMAL}`;
+
+    expect(classifyChunk(makeChunk({ content })).reason).toBe('front-matter');
   });
 
   for (const heading of ADMIN_HEADINGS) {
@@ -350,6 +363,107 @@ describe('classifyChunk front matter on flattened text', () => {
 
     expect(content).not.toContain('\n');
     expect(classifyChunk(makeChunk({ content })).eligible).toBe(true);
+  });
+});
+
+describe('classifyChunks front matter page propagation', () => {
+  const LONG_CLINICAL = `${NORMAL} ${NORMAL} ${NORMAL}`;
+
+  it('keeps a long clinical chunk with a lone copyright symbol eligible', () => {
+    const content = `${LONG_CLINICAL} Figure \u00a9 2024 Elsevier.`;
+
+    expect(content.length).toBeGreaterThanOrEqual(600);
+    expect(classifyChunk(makeChunk({ content, page: 10 })).eligible).toBe(true);
+  });
+
+  it('blocks a long chunk when the copyright symbol has another marker', () => {
+    const content = `${LONG_CLINICAL} Library of Congress \u00a9 2024.`;
+
+    expect(content.length).toBeGreaterThanOrEqual(600);
+    expect(classifyChunk(makeChunk({ content, page: 10 })).reason).toBe(
+      'front-matter',
+    );
+  });
+
+  it('propagates an ISBN page to its other chunks', () => {
+    const results = classifyChunks([
+      makeChunk({
+        page: 3,
+        chunkIndex: 2,
+        content: `ISBN 978-1-2345-6789-0 ${NORMAL}`,
+      }),
+      makeChunk({ page: 3, chunkIndex: 3 }),
+      makeChunk({ page: 3, chunkIndex: 4 }),
+      makeChunk({ page: 4, chunkIndex: 5 }),
+    ]);
+
+    const page3 = results.filter((result) => result.chunk.page === 3);
+    expect(page3).toHaveLength(3);
+    expect(page3.every((result) => result.reason === 'front-matter')).toBe(
+      true,
+    );
+    expect(results.find((result) => result.chunk.page === 4)?.eligible).toBe(
+      true,
+    );
+  });
+
+  it('propagates a preface heading page', () => {
+    const results = classifyChunks([
+      makeChunk({ page: 13, chunkIndex: 29, content: `Preface ${NORMAL}` }),
+      makeChunk({ page: 13, chunkIndex: 30 }),
+    ]);
+
+    expect(results.every((result) => result.reason === 'front-matter')).toBe(
+      true,
+    );
+  });
+
+  it('propagates a contributor page to a zero-credential tail chunk', () => {
+    const results = classifyChunks([
+      makeChunk({ page: 18, chunkIndex: 41, content: CONTRIBUTOR_DENSE }),
+      makeChunk({ page: 18, chunkIndex: 42 }),
+    ]);
+
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => result.reason === 'front-matter')).toBe(
+      true,
+    );
+  });
+
+  it('leaves a clinical page with no flags untouched', () => {
+    const results = classifyChunks([
+      makeChunk({ page: 10, chunkIndex: 21 }),
+      makeChunk({ page: 10, chunkIndex: 22 }),
+    ]);
+
+    expect(results.every((result) => result.eligible)).toBe(true);
+  });
+
+  it('never propagates beyond page 30', () => {
+    const results = classifyChunks([
+      makeChunk({
+        page: 31,
+        chunkIndex: 40,
+        content: `ISBN 978-1-2345-6789-0 ${NORMAL}`,
+      }),
+      makeChunk({ page: 31, chunkIndex: 41 }),
+      makeChunk({ page: 32, chunkIndex: 42 }),
+    ]);
+
+    expect(results.every((result) => result.eligible)).toBe(true);
+  });
+
+  it('does not propagate from a lone copyright symbol', () => {
+    const results = classifyChunks([
+      makeChunk({
+        page: 10,
+        chunkIndex: 20,
+        content: `${LONG_CLINICAL} Figure \u00a9 2024 Elsevier.`,
+      }),
+      makeChunk({ page: 10, chunkIndex: 21 }),
+    ]);
+
+    expect(results.every((result) => result.eligible)).toBe(true);
   });
 });
 

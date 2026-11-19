@@ -202,14 +202,38 @@ function startsWithAdminHeading(text: string): boolean {
   return false;
 }
 
-function hasPublisherMarker(text: string): boolean {
+/**
+ * Only a strong publisher marker blocks a chunk. A lone
+ * copyright-symbol-year hit never blocks; when a strong marker sits beside it,
+ * that marker is what blocks.
+ */
+function hasStrongPublisherMarker(text: string): boolean {
   return (
     /\bisbn\b/i.test(text) ||
     /all rights reserved/i.test(text) ||
     /library of congress/i.test(text) ||
-    /printed in the united states/i.test(text) ||
-    /\u00a9\s*(?:19|20)\d{2}/u.test(text)
+    /printed in the united states/i.test(text)
   );
+}
+
+/** Rules whose hit spreads to the other chunks on the same physical page. */
+function spreadsAcrossPage(
+  text: string,
+  firstPage: number | null | undefined,
+): boolean {
+  if (firstPage === null || firstPage === undefined) return false;
+  if (
+    !Number.isInteger(firstPage) ||
+    firstPage < 1 ||
+    firstPage > FRONT_MATTER_SCAN_PAGES
+  ) {
+    return false;
+  }
+
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (startsWithAdminHeading(flat)) return true;
+  if (hasStrongPublisherMarker(flat)) return true;
+  return isCredentialDense(flat);
 }
 
 function isCredentialDense(text: string): boolean {
@@ -242,7 +266,7 @@ export function classifyFrontMatter(
 
   const flat = text.replace(/\s+/g, ' ').trim();
   if (startsWithAdminHeading(flat)) return 'front-matter';
-  if (hasPublisherMarker(flat)) return 'front-matter';
+  if (hasStrongPublisherMarker(flat)) return 'front-matter';
   if (isCredentialDense(flat)) return 'front-matter';
   return null;
 }
@@ -337,7 +361,7 @@ export function classifyChunks(
   });
 
   const states = new Map<string, EligibilityState>();
-  return sorted.map((chunk) => {
+  const results = sorted.map((chunk) => {
     const prior = states.get(chunk.documentId) ?? INITIAL_ELIGIBILITY_STATE;
     const result = classifyChunk(chunk, prior);
     states.set(chunk.documentId, result.state);
@@ -345,6 +369,29 @@ export function classifyChunks(
       chunk,
       eligible: result.eligible,
       ...(result.reason ? { reason: result.reason } : {}),
+    };
+  });
+
+  // A page that is really front matter carries that over to its other chunks.
+  // Only pages inside the scan window and only spreading rules qualify.
+  const spreads = new Set<string>();
+  for (const result of results) {
+    if (result.reason !== 'front-matter') continue;
+    if (!spreadsAcrossPage(result.chunk.content.trim(), result.chunk.page)) {
+      continue;
+    }
+    spreads.add(`${result.chunk.documentId}:${result.chunk.page}`);
+  }
+
+  return results.map((result) => {
+    if (!result.eligible) return result;
+    if (!spreads.has(`${result.chunk.documentId}:${result.chunk.page}`)) {
+      return result;
+    }
+    return {
+      chunk: result.chunk,
+      eligible: false,
+      reason: 'front-matter' as const,
     };
   });
 }
