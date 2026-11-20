@@ -237,7 +237,7 @@ export class DashboardService {
         WHERE a."status" = 'COMPLETED'
           AND s."status" = 'ACTIVE'
           AND ((ar."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila')::date
-              >= ((now() AT TIME ZONE 'Asia/Manila'))::date - 181
+              >= ((now() AT TIME ZONE 'Asia/Manila'))::date - 364
         UNION ALL
         SELECT ((m."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila')::date AS day
         FROM "Message" m
@@ -246,7 +246,7 @@ export class DashboardService {
         WHERE m."role" = 'USER'
           AND s."status" = 'ACTIVE'
           AND ((m."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila')::date
-              >= ((now() AT TIME ZONE 'Asia/Manila'))::date - 181
+              >= ((now() AT TIME ZONE 'Asia/Manila'))::date - 364
       )
       SELECT to_char(day, 'YYYY-MM-DD') AS "date",
              count(*)::int AS "count"
