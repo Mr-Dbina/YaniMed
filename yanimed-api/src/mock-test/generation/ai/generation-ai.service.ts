@@ -4,6 +4,7 @@ import {
   EmbeddingService,
   EMBEDDING_MODEL,
 } from '../../../embeddings/embedding.service.js';
+import { resolveOmniRouteModels } from '../../../config/env.validation.js';
 import {
   AI_CALL_RETRIES,
   AI_CALL_TIMEOUT_MS,
@@ -71,7 +72,7 @@ export type AiFetch = (
 export interface GenerationAiConfig {
   baseUrl: string;
   apiKey: string;
-  primaryModel: string;
+  drafterModel: string;
   verifierModel: string | null;
 }
 
@@ -90,14 +91,15 @@ export interface GenerationAiOptions {
 export function readGenerationAiConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): GenerationAiConfig {
+  const models = resolveOmniRouteModels(env);
   return {
     baseUrl: (env.OMNIROUTE_BASE_URL ?? '')
       .trim()
       .replace(/\/+$/, '')
       .replace(/\/v1$/, ''),
     apiKey: env.OMNIROUTE_API_KEY ?? '',
-    primaryModel: (env.OMNIROUTE_PRIMARY_MODEL ?? '').trim(),
-    verifierModel: env.OMNIROUTE_VERIFIER_MODEL?.trim() || null,
+    drafterModel: models.drafter,
+    verifierModel: models.verifier,
   };
 }
 
@@ -173,13 +175,13 @@ export class GenerationAiService {
   }
 
   /**
-   * VERIFY must never fall back to the primary model: that would let the
+   * VERIFY must never fall back to the drafter model: that would let the
    * generator grade its own work.
    */
   assertReady(): void {
     if (
       !this.config.verifierModel ||
-      this.config.verifierModel === this.config.primaryModel
+      this.config.verifierModel === this.config.drafterModel
     ) {
       throw new GenerationError('GENERATION_VERIFIER_NOT_CONFIGURED');
     }
@@ -191,7 +193,7 @@ export class GenerationAiService {
     const model =
       input.purpose === 'VERIFY'
         ? this.resolveVerifier()
-        : this.config.primaryModel;
+        : this.config.drafterModel;
     if (!this.config.baseUrl || !this.config.apiKey || !model) {
       throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
         jobId: input.jobId,

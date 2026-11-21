@@ -163,6 +163,71 @@ describe('validateEnv PDF OCR budget settings', () => {
   });
 });
 
+describe('validateEnv OmniRoute combo settings', () => {
+  const keys = [
+    'OMNIROUTE_PRIMARY_MODEL',
+    'OMNIROUTE_DRAFTER_MODEL',
+    'OMNIROUTE_VERIFIER_MODEL',
+  ] as const;
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of keys) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+    process.env.DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://example';
+  });
+
+  afterEach(() => {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  it('applies the chat, drafter and verifier combo defaults', () => {
+    const cfg = validateEnv();
+
+    expect(cfg.omniroutePrimaryModel).toBe('yanimed');
+    expect(cfg.omnirouteDrafterModel).toBe('yanimed-draft');
+    expect(cfg.omnirouteVerifierModel).toBe('yanimed-verify');
+  });
+
+  it('applies explicit combo overrides', () => {
+    process.env.OMNIROUTE_PRIMARY_MODEL = 'chat-x';
+    process.env.OMNIROUTE_DRAFTER_MODEL = 'draft-x';
+    process.env.OMNIROUTE_VERIFIER_MODEL = 'verify-x';
+
+    const cfg = validateEnv();
+
+    expect(cfg.omniroutePrimaryModel).toBe('chat-x');
+    expect(cfg.omnirouteDrafterModel).toBe('draft-x');
+    expect(cfg.omnirouteVerifierModel).toBe('verify-x');
+  });
+
+  it('rejects a verifier that resolves to the drafter combo', () => {
+    process.env.OMNIROUTE_DRAFTER_MODEL = 'same-combo';
+    process.env.OMNIROUTE_VERIFIER_MODEL = 'same-combo';
+
+    expect(() => validateEnv()).toThrow(
+      /OMNIROUTE_DRAFTER_MODEL and OMNIROUTE_VERIFIER_MODEL resolve to the same combo/,
+    );
+  });
+
+  it('allows the drafter combo to equal the chat combo', () => {
+    process.env.OMNIROUTE_PRIMARY_MODEL = 'shared-combo';
+    process.env.OMNIROUTE_DRAFTER_MODEL = 'shared-combo';
+    process.env.OMNIROUTE_VERIFIER_MODEL = 'verify-x';
+
+    const cfg = validateEnv();
+
+    expect(cfg.omniroutePrimaryModel).toBe('shared-combo');
+    expect(cfg.omnirouteDrafterModel).toBe('shared-combo');
+    expect(cfg.omnirouteVerifierModel).toBe('verify-x');
+  });
+});
+
 describe('validateEnv processing job settings', () => {
   const keys = [
     'PROCESSING_LEASE_MS',

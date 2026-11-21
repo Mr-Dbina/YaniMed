@@ -32,6 +32,8 @@ export class OmniRouteService implements OnModuleInit {
   private baseUrl = '';
   private apiKey = '';
   private primaryModel = '';
+  private drafterModel = '';
+  private verifierModel = '';
 
   constructor(private readonly config: ConfigService) {}
 
@@ -46,6 +48,12 @@ export class OmniRouteService implements OnModuleInit {
     this.baseUrl = this.normaliseBaseUrl(this.config.get<string>('omnirouteBaseUrl')!);
     this.apiKey = this.config.get<string>('omnirouteApiKey')!;
     this.primaryModel = this.config.get<string>('omniroutePrimaryModel')!;
+    this.drafterModel = this.config.get<string>('omnirouteDrafterModel')!;
+    this.verifierModel = this.config.get<string>('omnirouteVerifierModel')!;
+    // Combo names only. Never log the API key or the base URL.
+    this.logger.log(
+      `OmniRoute combos: chat=${this.primaryModel} drafter=${this.drafterModel} verifier=${this.verifierModel}`,
+    );
   }
 
   /**

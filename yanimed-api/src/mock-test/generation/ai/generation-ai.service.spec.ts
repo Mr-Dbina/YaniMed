@@ -12,6 +12,7 @@ import type {
 import { CircuitBreaker } from './circuit-breaker.js';
 import {
   GenerationAiService,
+  readGenerationAiConfig,
   type AiFetch,
   type AiHttpResponse,
   type GenerationAiConfig,
@@ -20,7 +21,7 @@ import {
 const CONFIG: GenerationAiConfig = {
   baseUrl: 'https://gateway.test',
   apiKey: 'test-api-key',
-  primaryModel: 'primary-model',
+  drafterModel: 'drafter-model',
   verifierModel: 'verifier-model',
 };
 
@@ -124,7 +125,7 @@ function completeInput(overrides: Record<string, unknown> = {}) {
 }
 
 describe('GenerationAiService model selection', () => {
-  it('uses the primary model for PLAN and DRAFT and the verifier for VERIFY', async () => {
+  it('uses the drafter model for PLAN and DRAFT and the verifier for VERIFY', async () => {
     const bodies: Array<{ model: string }> = [];
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
       bodies.push(JSON.parse(init.body as string) as { model: string });
@@ -137,10 +138,27 @@ describe('GenerationAiService model selection', () => {
     await service.complete(completeInput({ purpose: 'VERIFY' }));
 
     expect(bodies.map((body) => body.model)).toEqual([
-      'primary-model',
-      'primary-model',
+      'drafter-model',
+      'drafter-model',
       'verifier-model',
     ]);
+  });
+
+  it('applies drafter and verifier defaults when the env is empty', () => {
+    const config = readGenerationAiConfig({});
+
+    expect(config.drafterModel).toBe('yanimed-draft');
+    expect(config.verifierModel).toBe('yanimed-verify');
+  });
+
+  it('reads explicit drafter and verifier combos', () => {
+    const config = readGenerationAiConfig({
+      OMNIROUTE_DRAFTER_MODEL: 'draft-x',
+      OMNIROUTE_VERIFIER_MODEL: 'verify-x',
+    });
+
+    expect(config.drafterModel).toBe('draft-x');
+    expect(config.verifierModel).toBe('verify-x');
   });
 
   it('sends temperature, json mode and a bearer key', async () => {
@@ -164,7 +182,7 @@ describe('GenerationAiService model selection', () => {
 });
 
 describe('GenerationAiService verifier guard', () => {
-  it.each([null, '', 'primary-model'])(
+  it.each([null, '', 'drafter-model'])(
     'refuses VERIFY when the verifier model is %s',
     async (verifierModel) => {
       const fetchImpl = vi.fn();
@@ -373,7 +391,7 @@ describe('GenerationAiService call log', () => {
     expect(logs.rows[0]).toMatchObject({
       jobId: JOB_ID,
       purpose: 'PLAN',
-      model: 'primary-model',
+      model: 'drafter-model',
       promptTokens: null,
       completionTokens: null,
       outcome: 'HTTP_ERROR',

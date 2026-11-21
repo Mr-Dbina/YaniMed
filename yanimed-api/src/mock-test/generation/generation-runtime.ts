@@ -165,7 +165,7 @@ function runnerDeps(
       embed,
     }),
     models: {
-      verifier: config?.get<string>('OMNIROUTE_VERIFIER_MODEL')?.trim() ?? '',
+      verifier: config?.get<string>('omnirouteVerifierModel')?.trim() ?? '',
     },
     logger,
   };

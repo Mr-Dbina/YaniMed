@@ -15,8 +15,33 @@ const bootRequired = ['DATABASE_URL'] as const;
 export const omnirouteEnv = [
   'OMNIROUTE_BASE_URL',
   'OMNIROUTE_API_KEY',
-  'OMNIROUTE_PRIMARY_MODEL',
 ] as const;
+
+/** Combo names, not upstream model ids. The gateway resolves each combo. */
+const DEFAULT_OMNIROUTE_MODELS = {
+  chat: 'yanimed',
+  drafter: 'yanimed-draft',
+  verifier: 'yanimed-verify',
+} as const;
+
+export interface OmniRouteModels {
+  chat: string;
+  drafter: string;
+  verifier: string;
+}
+
+/** One source of truth for the three combo names and their defaults. */
+export function resolveOmniRouteModels(
+  env: NodeJS.ProcessEnv = process.env,
+): OmniRouteModels {
+  return {
+    chat: env.OMNIROUTE_PRIMARY_MODEL?.trim() || DEFAULT_OMNIROUTE_MODELS.chat,
+    drafter:
+      env.OMNIROUTE_DRAFTER_MODEL?.trim() || DEFAULT_OMNIROUTE_MODELS.drafter,
+    verifier:
+      env.OMNIROUTE_VERIFIER_MODEL?.trim() || DEFAULT_OMNIROUTE_MODELS.verifier,
+  };
+}
 
 export const r2Env = [
   'R2_ACCOUNT_ID',
@@ -55,6 +80,14 @@ export function validateEnv() {
     throw new Error(
       `Missing required environment variables: ${missing.join(', ')}\n` +
         'Copy .env.example to .env and fill them in.',
+    );
+  }
+
+  const omnirouteModels = resolveOmniRouteModels();
+  if (omnirouteModels.drafter === omnirouteModels.verifier) {
+    throw new Error(
+      'OMNIROUTE_DRAFTER_MODEL and OMNIROUTE_VERIFIER_MODEL resolve to the same combo ' +
+        `(${omnirouteModels.drafter}). The verifier must use a different combo from the drafter (architecture D7).`,
     );
   }
 
@@ -111,7 +144,9 @@ export function validateEnv() {
   geminiApiKey: process.env.GEMINI_API_KEY,
     omnirouteBaseUrl: process.env.OMNIROUTE_BASE_URL,
     omnirouteApiKey: process.env.OMNIROUTE_API_KEY,
-    omniroutePrimaryModel: process.env.OMNIROUTE_PRIMARY_MODEL,
+    omniroutePrimaryModel: omnirouteModels.chat,
+    omnirouteDrafterModel: omnirouteModels.drafter,
+    omnirouteVerifierModel: omnirouteModels.verifier,
     omnirouteFallbackModels: (fallback ?? '')
       .split(',')
       .map((m) => m.trim())
