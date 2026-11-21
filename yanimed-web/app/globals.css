@@ -941,20 +941,20 @@ html.dark .icon-mono {
   }
 }
 
-/* Settings layout: flex row, both panes scroll independently. No positioning. */
+/* Settings layout: fixed left nav + flexible content on desktop. The layout
+    height fits the content; the nav stretches to the tallest column. */
 .settings-layout {
   display: flex;
-  height: 100vh;
-  overflow: hidden;
+  align-items: stretch;
+  min-height: 0;
 }
 
-/* Settings nav - always expanded at its fixed width. */
+/* Settings nav - fixed left column on desktop, full-width menu on mobile. */
 .settings-nav {
   display: flex;
-  width: 378px;
+  width: 280px;
   flex-shrink: 0;
   flex-direction: column;
-  overflow-y: auto;
   box-sizing: border-box;
   border-right: 1px solid hsl(var(--border) / 0.5);
   padding: 24px 16px;
@@ -980,6 +980,45 @@ html.dark .icon-mono {
   background: hsl(var(--muted));
 }
 
+.settings-nav__back:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* Mobile menu header: round back, centered title, round info. */
+.settings-nav__mobile-top {
+  display: none;
+}
+
+.settings-nav__icon-btn {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid hsl(var(--border));
+  border-radius: 9999px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.settings-nav__icon-btn:hover {
+  background: hsl(var(--muted));
+}
+
+.settings-nav__icon-btn:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.settings-nav__title {
+  font-size: 17px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
 .settings-nav__search {
   display: flex;
   height: 38px;
@@ -987,11 +1026,16 @@ html.dark .icon-mono {
   flex-shrink: 0;
   align-items: center;
   gap: 8px;
+  border: 1px solid transparent;
   border-radius: 9999px;
   background: hsl(var(--muted));
   margin-top: 16px;
   padding: 0 14px;
   color: hsl(var(--muted-foreground));
+}
+
+.settings-nav__search:focus-within {
+  border-color: hsl(var(--ring));
 }
 
 .settings-nav__search-input {
@@ -1019,6 +1063,14 @@ html.dark .icon-mono {
   flex-direction: column;
 }
 
+.settings-nav__label {
+  min-width: 0;
+}
+
+.settings-nav__chevron {
+  display: none;
+}
+
 .settings-nav__item {
   display: flex;
   height: 38px;
@@ -1036,11 +1088,12 @@ html.dark .icon-mono {
   background: hsl(var(--muted));
 }
 
-.settings-nav__item--active {
-  background: hsl(var(--muted));
+.settings-nav__item:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: -2px;
 }
 
-.dark .settings-nav__item--active {
+.settings-nav__item--active {
   background: hsl(var(--muted));
 }
 
@@ -1053,10 +1106,118 @@ html.dark .icon-mono {
 
 /* Settings content pane */
 .settings-layout__main {
-  flex: 1;
-  overflow-y: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 1096px;
   box-sizing: border-box;
   padding: 28px 48px 64px;
+}
+
+/* Mobile section pages get a round back link; desktop keeps the nav. */
+.settings-mobile-back {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .settings-layout {
+    display: block;
+  }
+
+  .settings-layout--index .settings-layout__main {
+    display: none;
+  }
+
+  .settings-layout:not(.settings-layout--index) .settings-nav {
+    display: none;
+  }
+
+  .settings-nav {
+    width: 100%;
+    border-right: 0;
+    padding: 12px 16px 24px;
+  }
+
+  .settings-nav__back,
+  .settings-nav__group {
+    display: none;
+  }
+
+  .settings-nav__mobile-top {
+    display: grid;
+    grid-template-columns: 44px 1fr 44px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .settings-nav__title {
+    text-align: center;
+  }
+
+  .settings-nav__search {
+    height: 44px;
+    margin-top: 0;
+    border-color: hsl(var(--border));
+  }
+
+  .settings-nav__items {
+    border: 1px solid hsl(var(--border));
+    border-radius: 20px;
+    background: hsl(var(--card));
+    padding: 4px 8px;
+  }
+
+  .settings-nav__item {
+    height: 52px;
+    border-radius: 12px;
+    padding: 0 12px;
+  }
+
+  .settings-nav__item + .settings-nav__item {
+    border-top: 1px solid hsl(var(--border));
+  }
+
+  .settings-nav__item:hover,
+  .settings-nav__item--active {
+    background: transparent;
+  }
+
+  .settings-nav__label {
+    flex: 1;
+  }
+
+  .settings-nav__chevron {
+    display: inline-flex;
+    margin-left: auto;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .settings-layout__main {
+    max-width: none;
+    padding: 16px 16px 32px;
+  }
+
+  .settings-mobile-back {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid hsl(var(--border));
+    border-radius: 9999px;
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    margin-bottom: 16px;
+  }
+
+  .settings-mobile-back:hover {
+    background: hsl(var(--muted));
+  }
+
+  .settings-mobile-back:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
 }
 
 .settings-loading {
@@ -1078,14 +1239,10 @@ html.dark .icon-mono {
    the card edges without any positioning. */
 .setting-card {
   max-width: 1000px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  border: 1px solid hsl(var(--border));
   border-radius: 24px;
   background: hsl(var(--card));
   padding: 0 24px;
-}
-
-.dark .setting-card {
-  border-color: rgba(255, 255, 255, 0.09);
 }
 
 .setting-card + .setting-card {
@@ -1101,21 +1258,19 @@ html.dark .icon-mono {
 }
 
 .setting-row + .setting-row {
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  border-top: 1px solid hsl(var(--border));
 }
 
-.dark .setting-row + .setting-row {
-  border-top-color: rgba(255, 255, 255, 0.09);
-}
-
+/* Text takes the flexible space and may shrink; the control never does. */
 .setting-row__text {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   flex-direction: column;
 }
 
 .setting-row__text--narrow {
-  max-width: 60%;
+  max-width: 480px;
 }
 
 .setting-row__label {
@@ -1139,7 +1294,7 @@ html.dark .icon-mono {
 }
 
 /* Stack the control under the text once the row gets tight. */
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   .setting-row {
     flex-direction: column;
     gap: 12px;
@@ -1156,15 +1311,11 @@ html.dark .icon-mono {
 
 .setting-card__footnote {
   margin: 0;
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  border-top: 1px solid hsl(var(--border));
   padding: 16px 0;
   font-size: 15px;
   line-height: 22px;
   color: hsl(var(--muted-foreground));
-}
-
-.dark .setting-card__footnote {
-  border-top-color: rgba(255, 255, 255, 0.09);
 }
 
 .setting-section-title {
@@ -1234,16 +1385,12 @@ html.dark .icon-mono {
 }
 
 .setting-toggle--on {
-  background: #3b7a5c;
+  background: hsl(var(--success));
 }
 
 /* Personalization switches use a dark track rather than green. */
 .setting-toggle--dark.setting-toggle--on {
-  background: #2b2b2b;
-}
-
-.dark .setting-toggle--dark.setting-toggle--on {
-  background: #f5f2ee;
+  background: hsl(var(--foreground));
 }
 
 .setting-toggle__knob {
@@ -1253,8 +1400,8 @@ html.dark .icon-mono {
   width: 19px;
   height: 19px;
   border-radius: 9999px;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  background: hsl(var(--primary-foreground));
+  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.2);
   transition: transform 150ms ease-out;
 }
 

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, Search } from "lucide-react";
+import { ArrowLeft, ChevronRight, Info, Search } from "lucide-react";
 import { settingsItems } from "@/components/settings/settings-items";
 
 export function SettingsNav() {
@@ -27,12 +27,28 @@ export function SettingsNav() {
         Back
       </Link>
 
+      {/* Mobile menu header: round back, centered title, round info. */}
+      <div className="settings-nav__mobile-top">
+        <Link href="/" className="settings-nav__icon-btn" aria-label="Back">
+          <ArrowLeft size={18} strokeWidth={1.7} aria-hidden="true" />
+        </Link>
+        <span className="settings-nav__title">Settings</span>
+        <button
+          type="button"
+          className="settings-nav__icon-btn"
+          aria-label="Settings information"
+          data-todo="no-destination"
+        >
+          <Info size={18} strokeWidth={1.7} aria-hidden="true" />
+        </button>
+      </div>
+
       <div className="settings-nav__search">
         <Search size={15} strokeWidth={1.7} aria-hidden="true" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search"
+          placeholder="Search settings"
           aria-label="Search settings"
           className="settings-nav__search-input"
         />
@@ -45,7 +61,11 @@ export function SettingsNav() {
           <p className="settings-nav__empty">No results</p>
         ) : (
           filtered.map((item) => {
-            const active = pathname === item.href;
+            // On the mobile menu (/settings) General is the default section, so
+            // it keeps the active treatment there too.
+            const active =
+              pathname === item.href ||
+              (pathname === "/settings" && item.href === "/settings/general");
             const Icon = item.icon;
             return (
               <Link
@@ -58,7 +78,13 @@ export function SettingsNav() {
                 <span className="nav-icon">
                   <Icon size={17} strokeWidth={1.7} className="sidebar__icon" aria-hidden="true" />
                 </span>
-                <span>{item.label}</span>
+                <span className="settings-nav__label">{item.label}</span>
+                <ChevronRight
+                  size={17}
+                  strokeWidth={1.7}
+                  className="settings-nav__chevron"
+                  aria-hidden="true"
+                />
               </Link>
             );
           })

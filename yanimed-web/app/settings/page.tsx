@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
-
 export default function SettingsIndexPage() {
-  redirect("/settings/general");
+  // Desktop redirects to General from the layout effect; on mobile this route
+  // is the settings menu, which the nav already renders.
+  return null;
 }
