@@ -9,3 +9,4 @@ node_modules
 /dist
 *.tsbuildinfo
 eng.traineddata
+graphify-out/
