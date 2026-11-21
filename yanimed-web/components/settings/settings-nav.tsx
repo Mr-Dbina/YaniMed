@@ -51,10 +51,13 @@ export function SettingsNav() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`settings-nav__item${active ? " settings-nav__item--active" : ""}`}
+                className={`settings-nav__item nav-item${active ? " settings-nav__item--active" : ""}`}
                 aria-current={active ? "page" : undefined}
+                data-active={active}
               >
-                <Icon size={17} strokeWidth={1.7} aria-hidden="true" />
+                <span className="nav-icon">
+                  <Icon size={17} strokeWidth={1.7} className="sidebar__icon" aria-hidden="true" />
+                </span>
                 <span>{item.label}</span>
               </Link>
             );

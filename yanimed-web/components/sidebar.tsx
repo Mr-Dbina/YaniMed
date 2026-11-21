@@ -133,14 +133,18 @@ export function Sidebar({
           </div>
         </div>
 
-        <button type="button" className="sidebar__new" onClick={onAddSubject}>
-          <Plus size={18} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
+        <button type="button" className="sidebar__new nav-item" onClick={onAddSubject}>
+          <span className="nav-icon">
+            <Plus size={18} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
+          </span>
           New
         </button>
 
         <nav className="sidebar__nav">
-          <button type="button" className="sidebar__link sidebar__link--button">
-            <Search size={18} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
+          <button type="button" className="sidebar__link sidebar__link--button nav-item">
+            <span className="nav-icon">
+              <Search size={18} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
+            </span>
             Search
           </button>
           {navItems.map((item) => {
@@ -150,9 +154,12 @@ export function Sidebar({
               <Link
                 key={item.href}
                 href={item.href}
-                className={`sidebar__link${active ? " sidebar__link--active" : ""}`}
+                className={`sidebar__link nav-item${active ? " sidebar__link--active" : ""}`}
+                data-active={active}
               >
-                <Icon size={18} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
+                <span className="nav-icon">
+                  <Icon size={18} strokeWidth={1.75} className="sidebar__icon" aria-hidden="true" />
+                </span>
                 {item.label}
               </Link>
             );

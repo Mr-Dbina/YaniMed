@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import { useSubjectsStore } from "@/lib/stores/subjects-store";
 import {
   MockTestApiError,
@@ -126,10 +127,28 @@ export function MockTestScreen() {
   const subjects = useSubjectsStore((state) => state.subjects);
   const activeSubjectId = useSubjectsStore((state) => state.activeSubjectId);
   const setActiveSubject = useSubjectsStore((state) => state.setActiveSubject);
+  const requestedSubjectId = useSearchParams().get("subjectId");
+  const appliedPreselectRef = useRef<string | null>(null);
   const [pendingStartSubject, setPendingStartSubject] = useState<string | null>(
     null,
   );
   const [startNonce, setStartNonce] = useState(0);
+
+  // ?subjectId= preselects a subject once. Missing/unknown ids fall back to
+  // the current active-subject behaviour.
+  useEffect(() => {
+    if (!hydrated || !requestedSubjectId) return;
+    if (appliedPreselectRef.current === requestedSubjectId) return;
+    const match = subjects.find(
+      (subject) =>
+        subject.backendSubjectId === requestedSubjectId ||
+        subject.id === requestedSubjectId,
+    );
+    if (!match) return;
+    appliedPreselectRef.current = requestedSubjectId;
+    if (match.id !== activeSubjectId) setActiveSubject(match.id);
+  }, [activeSubjectId, hydrated, requestedSubjectId, setActiveSubject, subjects]);
+
   const handlePendingStartConsumed = useCallback(() => {
     setPendingStartSubject(null);
   }, []);

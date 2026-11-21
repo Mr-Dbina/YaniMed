@@ -1,5 +1,9 @@
 ﻿@import "tailwindcss";
 
+@theme {
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
@@ -26,6 +30,10 @@
   --primary-tint: 328 78% 95%;
   --ring: 328 100% 45%;
   --overlay: 221 39% 11%;
+  --choice-hover-bg: rgba(230, 0, 122, 0.06);
+  --choice-icon-bg: rgba(230, 0, 122, 0.1);
+  --heat-empty: #E9EBF0;
+  --heat-label: #6B7280;
 }
 
 .dark {
@@ -48,6 +56,10 @@
   --primary-tint: 328 45% 24%;
   --ring: 328 100% 60%;
   --overlay: 0 0% 0%;
+  --choice-hover-bg: rgba(230, 0, 122, 0.12);
+  --choice-icon-bg: rgba(230, 0, 122, 0.18);
+  --heat-empty: #2A2F3A;
+  --heat-label: #9CA3AF;
 }
 
 *,
@@ -68,11 +80,18 @@ body {
   margin: 0;
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans",
-    "Helvetica Neue", sans-serif;
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Icon assets are solid black; invert them on the dark theme. */
@@ -522,6 +541,291 @@ html.dark .icon-mono {
   color: currentColor;
 }
 
+/* Nav rows (sidebar links, New, Search, Settings trigger and settings popup):
+   the icon wrapper owns the pink hover/active colour and the tada motion. */
+.nav-item .nav-icon {
+  display: inline-flex;
+  transform-origin: center;
+  transition: color 150ms ease;
+}
+
+.nav-item:hover .nav-icon,
+.nav-item:focus-visible .nav-icon {
+  color: #E6007A;
+  animation: nav-tada 600ms ease-in-out 1;
+}
+
+.nav-item[data-active="true"] .nav-icon {
+  color: #E6007A;
+}
+
+@keyframes nav-tada {
+  0% { transform: scale(1) rotate(0); }
+  10%, 20% { transform: scale(0.9) rotate(-3deg); }
+  30%, 50%, 70%, 90% { transform: scale(1.1) rotate(3deg); }
+  40%, 60%, 80% { transform: scale(1.1) rotate(-3deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-item:hover .nav-icon,
+  .nav-item:focus-visible .nav-icon {
+    animation: none;
+  }
+}
+
+/* Dashboard "Focus next" rows: whole row is the link, only the subject name
+   reacts to hover/focus. Reuses nav-tada from above. */
+.focus-row {
+  cursor: pointer;
+}
+
+.focus-row:hover,
+.focus-row:focus-visible {
+  background: hsl(var(--muted));
+}
+
+.focus-row .focus-subject {
+  display: inline-block;
+  transform-origin: center;
+  transition: color 150ms ease;
+}
+
+.focus-row:hover .focus-subject,
+.focus-row:focus-visible .focus-subject {
+  color: #E6007A;
+  animation: nav-tada 600ms ease-in-out 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-row:hover .focus-subject,
+  .focus-row:focus-visible .focus-subject {
+    animation: none;
+  }
+}
+
+/* Focus-next choice dialog */
+.focus-choice-overlay {
+  box-sizing: border-box;
+  padding: 16px 0;
+}
+
+.focus-choice {
+  position: relative;
+  width: calc(100% - 32px);
+  max-width: 560px;
+  box-sizing: border-box;
+  border: 1px solid hsl(var(--border));
+  border-radius: 20px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  padding: 24px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+.dark .focus-choice {
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.65),
+    0 8px 16px -8px rgba(0, 0, 0, 0.5);
+}
+
+.focus-choice__close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 4px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.focus-choice__close:hover {
+  color: #e6007a;
+}
+
+.focus-choice__close:focus-visible {
+  outline: 2px solid #e6007a;
+  outline-offset: 2px;
+}
+
+.focus-choice__title {
+  margin: 0;
+  padding-right: 40px;
+  font-size: 1.5rem;
+  line-height: 1.25;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+  overflow-wrap: anywhere;
+}
+
+.focus-choice__subtitle {
+  margin: 4px 0 0;
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.focus-choice__options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 24px;
+}
+
+@media (min-width: 640px) {
+  .focus-choice__options {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.choice-option {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 16px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease,
+    transform 150ms ease, box-shadow 150ms ease;
+}
+
+.choice-option:hover {
+  border-color: #e6007a;
+  background: var(--choice-hover-bg);
+  transform: translateY(-1px);
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+.choice-option:focus-visible {
+  border-color: #e6007a;
+  outline: 2px solid #e6007a;
+  outline-offset: 2px;
+}
+
+.choice-option .choice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--choice-icon-bg);
+  color: #e6007a;
+  transform-origin: center;
+}
+
+.choice-option:hover .choice-icon,
+.choice-option:focus-visible .choice-icon {
+  animation: nav-tada 600ms ease-in-out 1;
+}
+
+.focus-choice__option-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.focus-choice__option-label {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.focus-choice__badge {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-self: flex-start;
+  margin-top: 6px;
+  border-radius: 9999px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.focus-choice__badge--mock {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.focus-choice__badge--chat {
+  background: #e0f2fe;
+  color: #1d4ed8;
+  border: 1px solid #bae6fd;
+}
+
+.dark .focus-choice__badge--mock {
+  background: rgba(34, 197, 94, 0.15);
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.dark .focus-choice__badge--chat {
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.focus-choice__option-desc {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.875rem;
+  line-height: 1.375;
+  color: hsl(var(--muted-foreground));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .choice-option:hover .choice-icon,
+  .choice-option:focus-visible .choice-icon {
+    animation: none;
+  }
+
+  .choice-option:hover {
+    transform: none;
+  }
+}
+
+/* Dashboard study-activity heatmap */
+.heatmap {
+  margin-top: 12px;
+}
+
+.heatmap__scroll {
+  overflow-x: auto;
+}
+
+.heatmap__legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.heatmap__legend-tile {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+}
+
 .sidebar__bottom {
   width: 208px;
   flex-shrink: 0;
@@ -733,7 +1037,7 @@ html.dark .icon-mono {
 }
 
 .settings-nav__item--active {
-  background: #ebe8e2;
+  background: hsl(var(--muted));
 }
 
 .dark .settings-nav__item--active {
@@ -1591,20 +1895,23 @@ html.dark .icon-mono {
 /* Neutral gray, not the warm cream token - it was nearly invisible on the
    white panel. Focus styling is deliberately focus-visible only. */
 .settings-menu__item:hover,
-.settings-menu__item:focus-visible {
+.settings-menu__item:focus-visible,
+.settings-menu__item[data-active="true"] {
   background: #f0f0f0;
   outline: none;
 }
 
 .dark .settings-menu__item:hover,
-.dark .settings-menu__item:focus-visible {
+.dark .settings-menu__item:focus-visible,
+.dark .settings-menu__item[data-active="true"] {
   background: rgba(255, 255, 255, 0.07);
 }
 
-/* Uniform outline icon for every menu row and the trigger. */
+/* Uniform outline icon for every menu row and the trigger. Inherits so the
+   row's nav-item hover/active colour reaches the SVG. */
 .settings-menu__icon {
   flex-shrink: 0;
-  color: hsl(var(--foreground));
+  color: currentColor;
 }
 
 /* Geometry (display, gap, padding, radius, colour, size) comes from
@@ -1619,9 +1926,14 @@ html.dark .icon-mono {
 }
 
 .settings-menu__trigger:hover,
-.settings-menu__trigger:focus-visible {
+.settings-menu__trigger:focus-visible,
+.settings-menu__trigger[data-active="true"] {
   background: hsl(var(--muted));
   outline: none;
+}
+
+.settings-menu__trigger[data-active="true"] {
+  color: var(--sidebar-fg);
 }
 
 /* Settings pages */

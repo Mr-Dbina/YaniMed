@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ClipboardCheck, MessagesSquare, X } from "lucide-react";
 import { useSubjectsStore } from "@/lib/stores/subjects-store";
 import { discardAttempt } from "@/lib/mock-test-api";
 import {
@@ -10,6 +12,7 @@ import {
   getDashboard,
   type DashboardBandLabel,
   type DashboardData,
+  type DashboardFocusTopic,
   type DashboardRange,
   type DashboardUnfinished,
 } from "@/lib/dashboard-api";
@@ -52,11 +55,133 @@ const subtitle = "text-[13px] text-[hsl(var(--muted-foreground))]";
 const subjectGrid =
   "mt-3 grid grid-cols-[minmax(0,1fr)_40px_72px] items-center gap-x-2.5 gap-y-1.5 sm:grid-cols-[90px_minmax(0,1fr)_40px_72px]";
 
+function FocusChoiceDialog({
+  topic,
+  onClose,
+  onOpenChat,
+  onTakeMockTest,
+}: {
+  topic: DashboardFocusTopic;
+  onClose: () => void;
+  onOpenChat: () => void;
+  onTakeMockTest: () => void;
+}) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    panelRef.current?.querySelector<HTMLElement>("button.choice-option")?.focus();
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const onPanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const focusables =
+      panelRef.current?.querySelectorAll<HTMLElement>("button:not([disabled])");
+    if (!focusables || focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  return (
+    <div
+      className="subject-modal__overlay subject-modal__overlay--fixed focus-choice-overlay"
+      onMouseDown={onClose}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        className="focus-choice"
+        onMouseDown={(event) => event.stopPropagation()}
+        onKeyDown={onPanelKeyDown}
+      >
+        <button
+          type="button"
+          aria-label="Close"
+          className="focus-choice__close"
+          onClick={onClose}
+        >
+          <X size={20} strokeWidth={1.75} aria-hidden="true" />
+        </button>
+
+        <h2 id={titleId} className="focus-choice__title">
+          What would you like to do?
+        </h2>
+        <p className="focus-choice__subtitle">
+          Choose how you want to improve in this topic.
+        </p>
+        <p id={descriptionId} className="focus-choice__context sr-only">
+          {topic.topicName} in {topic.subjectName}
+        </p>
+
+        <div className="focus-choice__options">
+          <button
+            type="button"
+            className="choice-option"
+            onClick={onTakeMockTest}
+          >
+            <span className="choice-icon">
+              <ClipboardCheck size={22} strokeWidth={1.75} aria-hidden="true" />
+            </span>
+            <span className="focus-choice__option-body">
+              <span className="focus-choice__option-label">Take a Mock Test</span>
+              <span className="focus-choice__badge focus-choice__badge--mock">Practice</span>
+              <span className="focus-choice__option-desc">
+                Test your knowledge with practice questions based on your
+                uploaded PDFs.
+              </span>
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className="choice-option"
+            onClick={onOpenChat}
+          >
+            <span className="choice-icon">
+              <MessagesSquare size={22} strokeWidth={1.75} aria-hidden="true" />
+            </span>
+            <span className="focus-choice__option-body">
+              <span className="focus-choice__option-label">Open Subject Chat</span>
+              <span className="focus-choice__badge focus-choice__badge--chat">Study</span>
+              <span className="focus-choice__option-desc">
+                Review this topic, ask questions, and get explanations from
+                your uploaded PDFs.
+              </span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
     <div className={`${panel} flex flex-col gap-1`}>
       <span className={subtitle}>{label}</span>
-      <span className="text-[26px] font-medium leading-tight text-[hsl(var(--foreground))]">{value}</span>
+      <span className="text-[26px] font-medium leading-tight text-[hsl(var(--foreground))] tabular">{value}</span>
     </div>
   );
 }
@@ -80,6 +205,8 @@ export function DashboardScreen() {
   const error = result?.key === requestKey ? result.error : null;
 
   const [discardTarget, setDiscardTarget] = useState<DashboardUnfinished | null>(null);
+  const [choiceTopic, setChoiceTopic] = useState<DashboardFocusTopic | null>(null);
+  const choiceTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [discardBusy, setDiscardBusy] = useState(false);
   const [discardError, setDiscardError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
@@ -130,6 +257,25 @@ export function DashboardScreen() {
     } finally {
       setDiscardBusy(false);
     }
+  };
+
+  const closeChoice = () => {
+    setChoiceTopic(null);
+    requestAnimationFrame(() => choiceTriggerRef.current?.focus());
+  };
+
+  const openSubjectChat = () => {
+    if (!choiceTopic) return;
+    const subjectId = choiceTopic.subjectId;
+    closeChoice();
+    router.push(`/subjects/${subjectId}`);
+  };
+
+  const openMockTest = () => {
+    if (!choiceTopic) return;
+    const subjectId = choiceTopic.subjectId;
+    closeChoice();
+    router.push(`/mock-test?subjectId=${encodeURIComponent(subjectId)}`);
   };
 
   const empty = data !== null && data.totals.testsTaken === 0 && data.study.heatmap.length === 0;
@@ -265,7 +411,7 @@ export function DashboardScreen() {
                           style={{ width: `${percent}%` }}
                         />
                       </div>
-                      <span className="col-start-2 row-start-1 text-right text-[13px] text-[hsl(var(--foreground))] sm:col-start-auto sm:row-start-auto">
+                      <span className="col-start-2 row-start-1 text-right text-[13px] text-[hsl(var(--foreground))] tabular sm:col-start-auto sm:row-start-auto">
                         {Math.round(percent)}%
                       </span>
                       <span
@@ -287,16 +433,24 @@ export function DashboardScreen() {
               <p className={`m-0 mt-0.5 ${subtitle}`}>Topics you need to study more</p>
               <ul className="mt-1 flex list-none flex-col p-0">
                 {data.focusTopics.map((topic) => (
-                  <li
-                    key={topic.topicKey}
-                    className="mt-2.5 flex items-center justify-between gap-3 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2.5"
-                  >
-                    <span className="min-w-0 truncate text-[13px] text-[hsl(var(--foreground))]">
-                      {topic.topicName}
-                    </span>
-                    <span className="flex-shrink-0 text-xs text-[hsl(var(--muted-foreground))]">
-                      {topic.subjectName}
-                    </span>
+                  <li key={topic.topicKey} className="mt-2.5">
+                    <button
+                      type="button"
+                      aria-haspopup="dialog"
+                      aria-label={`Study ${topic.topicName} in ${topic.subjectName}`}
+                      className="focus-row flex w-full items-center justify-between gap-3 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2.5 text-left font-[inherit] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))]"
+                      onClick={(event) => {
+                        choiceTriggerRef.current = event.currentTarget;
+                        setChoiceTopic(topic);
+                      }}
+                    >
+                      <span className="min-w-0 truncate text-[13px] text-[hsl(var(--foreground))]">
+                        {topic.topicName}
+                      </span>
+                      <span className="focus-subject flex-shrink-0 whitespace-nowrap text-xs text-[hsl(var(--muted-foreground))]">
+                        {topic.subjectName}
+                      </span>
+                    </button>
                   </li>
                 ))}
                 {data.focusTopics.length === 0 && (
@@ -321,13 +475,13 @@ export function DashboardScreen() {
                     >
                       <span className="min-w-0 text-[13px] text-[hsl(var(--foreground))]">
                         {test.subjectName}{" "}
-                        <span className="text-[hsl(var(--muted-foreground))]">
+                        <span className="text-[hsl(var(--muted-foreground))] tabular">
                           · {formatManilaShortDate(test.completedAt)}
                         </span>
                       </span>
                       <span className="flex flex-wrap items-center gap-3">
                         <span
-                          className={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
+                          className={`rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular ${
                             info ? info.badge : "bg-[hsl(var(--muted))] text-[hsl(var(--foreground))]"
                           }`}
                         >
@@ -338,7 +492,7 @@ export function DashboardScreen() {
                           aria-label={`View answers for ${test.subjectName}`}
                           className="whitespace-nowrap text-[13px] text-[hsl(var(--primary))] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))]"
                         >
-                          View answers →
+                          View answers 
                         </Link>
                       </span>
                     </li>
@@ -357,6 +511,15 @@ export function DashboardScreen() {
             </section>
           </div>
         </>
+      )}
+
+      {choiceTopic && (
+        <FocusChoiceDialog
+          topic={choiceTopic}
+          onClose={closeChoice}
+          onOpenChat={openSubjectChat}
+          onTakeMockTest={openMockTest}
+        />
       )}
 
       <ConfirmDialog

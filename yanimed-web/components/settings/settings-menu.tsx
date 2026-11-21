@@ -156,14 +156,17 @@ export function SettingsMenu() {
                   href={item.href}
                   role="menuitem"
                   tabIndex={index === activeIndex ? 0 : -1}
-                  className="settings-menu__item"
+                  className="settings-menu__item nav-item"
+                  data-active={pathname === item.href}
                   aria-current={pathname === item.href ? "page" : undefined}
                   ref={(node) => {
                     itemRefs.current[index] = node;
                   }}
                   onClick={() => close(false)}
                 >
-                  <Icon size={18} strokeWidth={1.75} className="settings-menu__icon" aria-hidden="true" />
+                  <span className="nav-icon">
+                    <Icon size={18} strokeWidth={1.75} className="settings-menu__icon" aria-hidden="true" />
+                  </span>
                   <span className="settings-menu__label">{item.label}</span>
                 </Link>
               );
@@ -176,7 +179,8 @@ export function SettingsMenu() {
         id={`${menuId}-trigger`}
         ref={triggerRef}
         href="/settings/general"
-        className="sidebar__row settings-menu__trigger"
+        className="sidebar__row settings-menu__trigger nav-item"
+        data-active={pathname.startsWith("/settings")}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
@@ -189,7 +193,9 @@ export function SettingsMenu() {
         onClick={() => close(false)}
         onKeyDown={onTriggerKeyDown}
       >
-        <Settings size={18} strokeWidth={1.75} className="settings-menu__icon" aria-hidden="true" />
+        <span className="nav-icon">
+          <Settings size={18} strokeWidth={1.75} className="settings-menu__icon" aria-hidden="true" />
+        </span>
         <span>Settings</span>
       </Link>
     </div>
