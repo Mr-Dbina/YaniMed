@@ -80,8 +80,8 @@ export class SubjectChatService {
 
   async answer(request: SubjectChatRequest): Promise<SubjectChatResponse> {
     const started = Date.now();
-    const subject = await this.prisma.subject.findUnique({ where: { id: request.subjectId } });
-    if (!subject) throw new NotFoundException('Subject not found.');
+    const subject = await this.prisma.subject.findUnique({ where: { id: request.subjectId }, select: { id: true, status: true } });
+    if (!subject || subject.status === 'DELETING') throw new NotFoundException('Subject not found.');
 
     const chat = await this.resolveChat(request.chatId, subject.id);
 

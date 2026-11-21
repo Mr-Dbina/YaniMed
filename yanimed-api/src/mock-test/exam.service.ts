@@ -301,6 +301,11 @@ export class ExamService {
     subjectId: string,
     rng: () => number = createRng(randomInt(0, 2 ** 32)),
   ): Promise<CreateAttemptResponse> {
+    const subject = await this.prisma.subject.findUnique({
+      where: { id: subjectId },
+      select: { id: true, status: true },
+    });
+    if (!subject || subject.status === 'DELETING') throw new MockTestError('SUBJECT_NOT_FOUND');
     try {
       return await this.prisma.$transaction(
         async (tx) => {
@@ -395,9 +400,9 @@ export class ExamService {
   ): Promise<SubjectOverviewResponse> {
     const subject = await this.prisma.subject.findUnique({
       where: { id: subjectId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
-    if (!subject) throw new MockTestError('SUBJECT_NOT_FOUND');
+    if (!subject || subject.status === 'DELETING') throw new MockTestError('SUBJECT_NOT_FOUND');
 
     const [unfinishedAttempt, questions, unseenRows, generationJob] =
       await Promise.all([

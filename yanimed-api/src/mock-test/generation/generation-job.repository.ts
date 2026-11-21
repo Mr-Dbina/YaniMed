@@ -193,13 +193,15 @@ export class GenerationJobRepository {
   async claimNext(): Promise<ClaimedGenerationJob | null> {
     return this.prisma.$transaction(async (tx) => {
       const candidates = await tx.$queryRaw<{ id: string }[]>`
-        SELECT "id"
-          FROM "GenerationJob"
-         WHERE "state" = 'QUEUED'
-            OR ("state" = 'STALLED' AND "recoveryCount" < ${MAX_RECOVERIES})
-         ORDER BY "createdAt" ASC
+        SELECT j."id"
+          FROM "GenerationJob" j
+          JOIN "Subject" s ON s."id" = j."subjectId"
+         WHERE s."status" = 'ACTIVE'
+           AND (j."state" = 'QUEUED'
+             OR (j."state" = 'STALLED' AND j."recoveryCount" < ${MAX_RECOVERIES}))
+         ORDER BY j."createdAt" ASC
          LIMIT 1
-         FOR UPDATE SKIP LOCKED
+         FOR UPDATE OF j SKIP LOCKED
       `;
       const candidate = candidates[0];
       if (!candidate) return null;
@@ -364,14 +366,16 @@ export class GenerationJobRepository {
       UPDATE "GenerationJob" AS j
       SET "state" = 'STALLED'
       FROM (
-        SELECT "id"
-          FROM "GenerationJob"
-         WHERE "state" = 'RUNNING'
+        SELECT j."id"
+          FROM "GenerationJob" j
+          JOIN "Subject" s ON s."id" = j."subjectId"
+         WHERE s."status" = 'ACTIVE'
+           AND j."state" = 'RUNNING'
            AND (${options.includeFresh ?? false}::boolean
-                OR COALESCE("heartbeatAt", "startedAt") < ${staleBefore})
-         ORDER BY COALESCE("heartbeatAt", "startedAt") ASC NULLS FIRST
+                OR COALESCE(j."heartbeatAt", j."startedAt") < ${staleBefore})
+         ORDER BY COALESCE(j."heartbeatAt", j."startedAt") ASC NULLS FIRST
          LIMIT ${limit}
-         FOR UPDATE SKIP LOCKED
+         FOR UPDATE OF j SKIP LOCKED
       ) AS candidate
       WHERE j."id" = candidate."id"
         AND j."state" = 'RUNNING'
@@ -381,13 +385,9 @@ export class GenerationJobRepository {
     `;
   }
 
-  /**
-   * STALLED jobs that still wait for the recovery rule. State-filtered and
-   * bounded; used to fail jobs left behind by a crashed sweep.
-   */
   async listStalled(limit = STALL_BATCH): Promise<StalledGenerationJob[]> {
     const rows = await this.prisma.generationJob.findMany({
-      where: { state: 'STALLED' },
+      where: { state: 'STALLED', subject: { status: 'ACTIVE' } },
       orderBy: [{ recoveryCount: 'desc' }, { createdAt: 'asc' }],
       take: limit,
       select: { id: true, recoveryCount: true },

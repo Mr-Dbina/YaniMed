@@ -377,7 +377,7 @@ describe('GenerationJobRepository.listStalled', () => {
       { jobId: 'a', recoveryCount: 3 },
     ]);
     expect(fake.generationJob.findMany).toHaveBeenCalledWith({
-      where: { state: 'STALLED' },
+      where: { state: 'STALLED', subject: { status: 'ACTIVE' } },
       orderBy: [{ recoveryCount: 'desc' }, { createdAt: 'asc' }],
       take: 5,
       select: { id: true, recoveryCount: true },

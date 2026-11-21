@@ -52,9 +52,9 @@ export class GenerationService {
   ): Promise<CreateGenerationJobResponse> {
     const subject = await this.prisma.subject.findUnique({
       where: { id: subjectId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
-    if (!subject) throw new MockTestError('SUBJECT_NOT_FOUND');
+    if (!subject || subject.status === 'DELETING') throw new MockTestError('SUBJECT_NOT_FOUND');
 
     const documents = await this.prisma.document.findMany({
       where: { subjectId, status: 'READY' },

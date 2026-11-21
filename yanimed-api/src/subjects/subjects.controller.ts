@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, ParseUUIDPipe, Patch, UseGuards, ValidationPipe } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, ParseUUIDPipe, Patch, UseGuards, ValidationPipe } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ChatGuard } from '../chat/chat.guard.js';
 import { UpdateSubjectDto } from './dto/update-subject.dto.js';
@@ -27,6 +27,12 @@ export class SubjectsController {
   rename(@Param('subjectId', new ParseUUIDPipe()) id: string,
     @Body(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true, expectedType: UpdateSubjectDto })) dto: UpdateSubjectDto) {
     return this.subjects.rename(id, dto.name);
+  }
+
+  @Delete(':subjectId')
+  @ApiOperation({ summary: 'Delete a Subject' })
+  delete(@Param('subjectId', new ParseUUIDPipe()) id: string) {
+    return this.subjects.delete(id);
   }
 
 

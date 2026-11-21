@@ -68,8 +68,8 @@ export class RetrievalService {
     const minScore = options.minScore ?? 0;
     const candidateLimit = Math.min(Math.max(topK * 4, 20), 100);
 
-    const subject = await this.prisma.subject.findUnique({ where: { id: subjectId } });
-    if (!subject) throw new ForbiddenException('Subject is not accessible.');
+    const subject = await this.prisma.subject.findUnique({ where: { id: subjectId }, select: { status: true } });
+    if (!subject || subject.status === 'DELETING') throw new ForbiddenException('Subject is not accessible.');
 
     const readyCount = await this.prisma.document.count({
       where: { subjectId, status: 'READY' },
