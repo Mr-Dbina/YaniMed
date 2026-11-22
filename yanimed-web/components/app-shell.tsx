@@ -69,9 +69,9 @@ export function AppShell({ children }: { children?: ReactNode }) {
     }
   };
 
-  const handleDeleteSubject = (id: string) => {
+  const handleDeleteSubject = async (id: string) => {
     const key = subjectKey(id);
-    deleteSubject(id);
+    await deleteSubject(id);
     if (pathname === `/subjects/${key}`) router.push("/subjects");
   };
 
