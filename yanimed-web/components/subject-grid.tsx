@@ -5,6 +5,7 @@ import { AddPdfModal } from "@/components/add-pdf-modal";
 import { DeleteSubjectModal } from "@/components/delete-subject-modal";
 import { EmptyState } from "@/components/empty-state";
 import { getSubjectDocuments } from "@/lib/backend-api";
+import { useSubjectsStore } from "@/lib/stores/subjects-store";
 import type { Subject } from "@/lib/types";
 
 interface SubjectGridProps {
@@ -12,7 +13,7 @@ interface SubjectGridProps {
   onOpenSubject: (id: string) => void;
   onCreateSubject: () => void;
   onUpdateSubject: (id: string, patch: Partial<Omit<Subject, "id">>) => void;
-  onDeleteSubject: (id: string) => void;
+  onDeleteSubject: (id: string) => Promise<void>;
 }
 
 function pdfCount(subject: Subject): number {
@@ -42,7 +43,12 @@ export function SubjectGrid({
   const [menuId, setMenuId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const renameSubject = useSubjectsStore((state) => state.renameSubject);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const [addPdfId, setAddPdfId] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>("recent");
@@ -105,15 +111,52 @@ export function SubjectGrid({
   const startRename = (subject: Subject) => {
     setRenameValue(subject.name);
     setRenamingId(subject.id);
+    setRenameError(null);
   };
 
-  const commitRename = (id: string) => {
+  const commitRename = async (id: string) => {
     const next = renameValue.trim();
-    if (next) {
-      // Rename is local-only: uploadName, idempotencyKey, file and filename stay frozen.
-      onUpdateSubject(id, { name: next });
+    const subject = subjects.find(s => s.id === id);
+    if (!subject) {
+      setRenamingId(null);
+      return;
     }
-    setRenamingId(null);
+    if (!next || next === subject.name) {
+      setRenamingId(null);
+      setRenameError(null);
+      return;
+    }
+    setRenameBusy(true);
+    setRenameError(null);
+    try {
+      await renameSubject(id, next);
+      setRenamingId(null);
+    } catch (error) {
+      setRenameError(
+        error instanceof Error && error.message
+          ? error.message
+          : "Could not rename subject."
+      );
+    } finally {
+      setRenameBusy(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDeleteId) return;
+    const id = pendingDeleteId;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDeleteSubject(id);
+      setPendingDeleteId(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error && error.message
+        ? error.message
+        : "Could not delete this subject. Please try again.");
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   if (subjects.length === 0) {
@@ -222,19 +265,32 @@ export function SubjectGrid({
               >
                 <div className="subject-card__head">
                   {renamingId === subject.id ? (
-                    <input
-                      ref={renameInputRef}
-                      className="subject-card__rename"
-                      value={renameValue}
-                      aria-label={`Rename ${subject.name}`}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={(event) => setRenameValue(event.target.value)}
-                      onBlur={() => commitRename(subject.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") commitRename(subject.id);
-                        if (event.key === "Escape") setRenamingId(null);
-                      }}
-                    />
+                    <div>
+                      <input
+                        ref={renameInputRef}
+                        disabled={renameBusy}
+                        className="subject-card__rename"
+                        value={renameValue}
+                        aria-label={`Rename ${subject.name}`}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={(event) => setRenameValue(event.target.value)}
+                        onBlur={() => {
+                          if (!renameBusy) void commitRename(subject.id);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !renameBusy) void commitRename(subject.id);
+                          if (event.key === "Escape" && !renameBusy) {
+                            setRenamingId(null);
+                            setRenameError(null);
+                          }
+                        }}
+                      />
+                      {renameError && (
+                        <p role="alert" className="subject-modal__error" style={{ fontSize: "12px", marginTop: "4px" }}>
+                          {renameError}
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <button
                       type="button"
@@ -297,6 +353,7 @@ export function SubjectGrid({
                             className="subject-detail__menu-item"
                             onClick={() => {
                               setMenuId(null);
+                              setDeleteError(null);
                               setPendingDeleteId(subject.id);
                             }}
                           >
@@ -379,13 +436,15 @@ export function SubjectGrid({
       <DeleteSubjectModal
         open={pendingDelete !== null}
         onOpenChange={(next) => {
-          if (!next) setPendingDeleteId(null);
+          if (!next && !isDeleting) {
+            setPendingDeleteId(null);
+            setDeleteError(null);
+          }
         }}
         subjectName={pendingDelete?.name ?? ""}
-        onConfirm={() => {
-          if (pendingDeleteId) onDeleteSubject(pendingDeleteId);
-          setPendingDeleteId(null);
-        }}
+        onConfirm={() => void confirmDelete()}
+        busy={isDeleting}
+        error={deleteError}
       />
 
       {addPdf && addPdf.backendSubjectId && (

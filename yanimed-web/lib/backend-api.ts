@@ -78,6 +78,11 @@ export interface BackendSubject {
   documentCount: number;
 }
 
+export interface SubjectDeleteResult {
+  subjectId?: string;
+  deleted: true;
+}
+
 export interface BackendDocument {
   documentId: string;
   subjectId: string;
@@ -173,6 +178,12 @@ function isBackendSubject(value: unknown): value is BackendSubject {
     typeof value.createdAt === "string" &&
     typeof value.updatedAt === "string" &&
     typeof value.documentCount === "number";
+}
+
+function isSubjectDeleteResult(value: unknown): value is SubjectDeleteResult {
+  return isRecord(value) &&
+    value.deleted === true &&
+    (value.subjectId === undefined || typeof value.subjectId === "string");
 }
 
 function hasBackendDocumentFields(value: Record<string, unknown>): boolean {
@@ -370,6 +381,41 @@ export async function listSubjects(): Promise<BackendSubject[]> {
     (value): value is BackendSubject[] => Array.isArray(value) && value.every(isBackendSubject),
     "The API returned an invalid subjects response. Please try again.",
   );
+}
+
+export async function deleteSubject(subjectId: string): Promise<SubjectDeleteResult> {
+  const id = subjectId.trim();
+  if (!id) throw new ApiError("Subject ID is required.");
+  return requestJson(
+    `/subjects/${encodeURIComponent(id)}`,
+    isSubjectDeleteResult,
+    "The API returned an invalid delete response. Please try again.",
+    { method: "DELETE" },
+  );
+}
+
+export async function renameSubject(subjectId: string, name: string): Promise<BackendSubject> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new ApiError("Subject name is required.");
+  try {
+    return await requestJson(
+      `/subjects/${encodeURIComponent(subjectId)}`,
+      isBackendSubject,
+      "The API returned an invalid subject response. Please try again.",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      },
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      if (err.message === SUBJECT_NAME_CONFLICT_MESSAGE || err.code === "CONFLICT") {
+        throw new SubjectNameConflictError();
+      }
+    }
+    throw err;
+  }
 }
 
 export async function getSubjectDocuments(subjectId: string): Promise<BackendDocument[]> {

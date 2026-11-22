@@ -201,7 +201,18 @@ export function DashboardScreen() {
 
   const requestKey = `${range}:${retryToken}`;
   const loading = result?.key !== requestKey;
-  const data = result?.key === requestKey ? result.data : null;
+  const rawData = result?.key === requestKey ? result.data : null;
+  const mapSubjectName = (subjectId: string, fallback: string) => {
+    const match = subjects.find(s => s.backendSubjectId === subjectId || s.id === subjectId);
+    return match?.name ?? fallback;
+  };
+  const data = rawData ? {
+    ...rawData,
+    subjects: rawData.subjects.map(s => ({ ...s, name: mapSubjectName(s.subjectId, s.name) })),
+    focusTopics: rawData.focusTopics.map(t => ({ ...t, subjectName: mapSubjectName(t.subjectId, t.subjectName) })),
+    recentTests: rawData.recentTests.map(rt => ({ ...rt, subjectName: mapSubjectName(rt.subjectId, rt.subjectName) })),
+    unfinished: rawData.unfinished.map(u => ({ ...u, subjectName: mapSubjectName(u.subjectId, u.subjectName) })),
+  } : null;
   const error = result?.key === requestKey ? result.error : null;
 
   const [discardTarget, setDiscardTarget] = useState<DashboardUnfinished | null>(null);
@@ -233,7 +244,7 @@ export function DashboardScreen() {
       });
 
     return () => controller.abort();
-  }, [range, requestKey]);
+  }, [range, requestKey, subjects]);
 
   const handleResume = (item: DashboardUnfinished) => {
     // Mock Test resumes the unfinished attempt of its active subject.

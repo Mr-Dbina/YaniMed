@@ -21,7 +21,7 @@ export function isChatSubject(subject: Subject): boolean {
 interface SubjectDetailProps {
   subject: Subject;
   onUpdateSubject: (id: string, patch: Partial<Omit<Subject, "id">>) => void;
-  onDeleteSubject: (id: string) => void;
+  onDeleteSubject: (id: string) => Promise<void>;
   onBack: () => void;
 }
 
@@ -33,7 +33,12 @@ export function SubjectDetail({
 }: SubjectDetailProps) {
   const isCollapsed = useSidebarStore((state) => state.isCollapsed);
   const syncSubject = useSubjectsStore((state) => state.syncSubject);
+  const renameSubject = useSubjectsStore((state) => state.renameSubject);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [isAddPdfOpen, setIsAddPdfOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -53,19 +58,35 @@ export function SubjectDetail({
     setRenameValue(subject.name);
     setIsRenaming(true);
     setIsMenuOpen(false);
+    setRenameError(null);
   };
 
-  const commitRename = () => {
+  const commitRename = async () => {
     const next = renameValue.trim();
-    if (next && next !== subject.name) {
-      // Rename is local-only: uploadName, idempotencyKey, file and filename stay frozen.
-      onUpdateSubject(subject.id, { name: next });
+    if (!next || next === subject.name) {
+      setIsRenaming(false);
+      setRenameError(null);
+      return;
     }
-    setIsRenaming(false);
+    setRenameBusy(true);
+    setRenameError(null);
+    try {
+      await renameSubject(subject.id, next);
+      setIsRenaming(false);
+    } catch (error) {
+      setRenameError(
+        error instanceof Error && error.message
+          ? error.message
+          : "Could not rename subject."
+      );
+    } finally {
+      setRenameBusy(false);
+    }
   };
 
   const handleDelete = () => {
     setIsMenuOpen(false);
+    setDeleteError(null);
     setIsDeleteOpen(true);
   };
 
@@ -74,9 +95,19 @@ export function SubjectDetail({
     setIsAddPdfOpen(true);
   };
 
-  const confirmDelete = () => {
-    setIsDeleteOpen(false);
-    onDeleteSubject(subject.id);
+  const confirmDelete = async () => {
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDeleteSubject(subject.id);
+      setIsDeleteOpen(false);
+    } catch (error) {
+      setDeleteError(error instanceof Error && error.message
+        ? error.message
+        : "Could not delete this subject. Please try again.");
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const isUploadLocked = Boolean(subject.idempotencyKey);
@@ -242,18 +273,31 @@ export function SubjectDetail({
 
           <div className="subject-detail__header">
             {isRenaming ? (
-              <input
-                ref={renameInputRef}
-                type="text"
-                className="subject-detail__title subject-detail__title-input"
-                value={renameValue}
-                onChange={(event) => setRenameValue(event.target.value)}
-                onBlur={commitRename}
-                onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
-                  if (event.key === "Enter") commitRename();
-                  if (event.key === "Escape") setIsRenaming(false);
-                }}
-              />
+              <div>
+                <input
+                  ref={renameInputRef}
+                  disabled={renameBusy}
+                  type="text"
+                  className="subject-detail__title subject-detail__title-input"
+                  value={renameValue}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  onBlur={() => {
+                    if (!renameBusy) void commitRename();
+                  }}
+                  onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                    if (event.key === "Enter" && !renameBusy) void commitRename();
+                    if (event.key === "Escape" && !renameBusy) {
+                      setIsRenaming(false);
+                      setRenameError(null);
+                    }
+                  }}
+                />
+                {renameError && (
+                  <p role="alert" className="subject-modal__error" style={{ fontSize: "13px", marginTop: "6px" }}>
+                    {renameError}
+                  </p>
+                )}
+              </div>
             ) : (
               <h1 className="subject-detail__title">{subject.name}</h1>
             )}
@@ -293,9 +337,16 @@ export function SubjectDetail({
 
       <DeleteSubjectModal
         open={isDeleteOpen}
-        onOpenChange={setIsDeleteOpen}
+        onOpenChange={(open) => {
+          if (!isDeleting) {
+            setIsDeleteOpen(open);
+            if (!open) setDeleteError(null);
+          }
+        }}
         subjectName={subject.name}
-        onConfirm={confirmDelete}
+        onConfirm={() => void confirmDelete()}
+        busy={isDeleting}
+        error={deleteError}
       />
     </div>
   );

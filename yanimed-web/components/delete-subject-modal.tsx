@@ -7,6 +7,8 @@ interface DeleteSubjectModalProps {
   onOpenChange: (open: boolean) => void;
   subjectName: string;
   onConfirm: () => void;
+  busy?: boolean;
+  error?: string | null;
 }
 
 export function DeleteSubjectModal({
@@ -14,24 +16,28 @@ export function DeleteSubjectModal({
   onOpenChange,
   subjectName,
   onConfirm,
+  busy = false,
+  error = null,
 }: DeleteSubjectModalProps) {
   const titleId = useId();
 
   useEffect(() => {
     if (!open) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onOpenChange(false);
+      if (event.key === "Escape" && !busy) onOpenChange(false);
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onOpenChange]);
+  }, [open, busy, onOpenChange]);
 
   if (!open) return null;
 
   return (
     <div
       className="subject-modal__overlay subject-modal__overlay--fixed"
-      onMouseDown={() => onOpenChange(false)}
+      onMouseDown={() => {
+        if (!busy) onOpenChange(false);
+      }}
     >
       <div
         role="alertdialog"
@@ -48,10 +54,17 @@ export function DeleteSubjectModal({
           saved only in this browser are cleared too. This can&rsquo;t be undone.
         </p>
 
+        {error && (
+          <p role="alert" className="subject-modal__error">
+            {error}
+          </p>
+        )}
+
         <div className="subject-modal__footer">
           <button
             type="button"
             className="subject-modal__btn subject-modal__btn--ghost"
+            disabled={busy}
             onClick={() => onOpenChange(false)}
           >
             Cancel
@@ -59,9 +72,10 @@ export function DeleteSubjectModal({
           <button
             type="button"
             className="subject-modal__btn subject-modal__btn--danger"
+            disabled={busy}
             onClick={onConfirm}
           >
-            Delete
+            {busy ? "Deleting…" : "Delete"}
           </button>
         </div>
       </div>

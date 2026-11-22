@@ -5,6 +5,8 @@ import { deleteChatThread } from "@/lib/chat-storage";
 import { ApiError } from "@/lib/api";
 import {
   createInitialSubject,
+  deleteSubject as deleteBackendSubject,
+  renameSubject as renameSubjectApi,
   InitialUploadDuplicateError,
   isInitialUploadTerminal,
   listSubjects,
@@ -57,8 +59,9 @@ interface SubjectsState {
   hydrate: () => Promise<void>;
   addSubject: (data: { name: string; file: File | null }) => Promise<void>;
   updateSubject: (id: string, patch: Partial<Omit<Subject, "id">>) => void;
+  renameSubject: (id: string, name: string) => Promise<void>;
   syncSubject: (id: string, duplicateAction?: DuplicateAction) => Promise<void>;
-  deleteSubject: (id: string) => void;
+  deleteSubject: (id: string) => Promise<void>;
   setActiveSubject: (id: string | null) => void;
 }
 
@@ -212,6 +215,38 @@ export const useSubjectsStore = create<SubjectsState>((set, get) => ({
       set(state => ({ subjects: state.subjects.map(s => s.id === id ? subject : s), storageError: null }));
     }).catch((error: Error) => set({ storageError: error.message }));
   },
+  renameSubject: async (id, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("Subject name is required.");
+    const current = get().subjects.find(s => s.id === id);
+    if (!current) return;
+    if (trimmed === current.name) return;
+
+    if (current.backendSubjectId) {
+      const updated = await renameSubjectApi(current.backendSubjectId, trimmed);
+      await enqueue(async () => {
+        const target = get().subjects.find(s => s.id === id);
+        if (!target) return;
+        const subject = { ...target, name: updated.name, updatedAt: updated.updatedAt };
+        await writeLocalSubject(subject, get().activeSubjectId);
+        set(state => ({
+          subjects: state.subjects.map(s => s.id === id ? subject : s),
+          storageError: null,
+        }));
+      });
+    } else {
+      await enqueue(async () => {
+        const target = get().subjects.find(s => s.id === id);
+        if (!target) return;
+        const subject = { ...target, name: trimmed };
+        await writeLocalSubject(subject, get().activeSubjectId);
+        set(state => ({
+          subjects: state.subjects.map(s => s.id === id ? subject : s),
+          storageError: null,
+        }));
+      });
+    }
+  },
   syncSubject: async (id, duplicateAction) => {
     if (inFlightSyncs.has(id)) return;
     const subject = get().subjects.find(s => s.id === id);
@@ -246,20 +281,31 @@ export const useSubjectsStore = create<SubjectsState>((set, get) => ({
       inFlightSyncs.delete(id);
     }
   },
-  deleteSubject: (id) => {
-    void enqueue(async () => {
-      const current = get().subjects.find(s => s.id === id);
-      const subjects = get().subjects.filter(s => s.id !== id);
-      const activeSubjectId = get().activeSubjectId === id ? subjects[0]?.id ?? null : get().activeSubjectId;
-      await writeLocalSubject(null, activeSubjectId, id);
-      set({ subjects, activeSubjectId, storageError: null });
-      writeActiveSubjectKey(subjects.find(s => s.id === activeSubjectId));
-      // Best-effort: a stored thread without its subject must not linger.
-      if (current?.backendSubjectId) {
-        void deleteChatThread(current.backendSubjectId).catch(() => undefined);
+  deleteSubject: (id) => enqueue(async () => {
+    const current = get().subjects.find(s => s.id === id);
+    if (!current) return;
+
+    if (current.backendSubjectId) {
+      try {
+        await deleteBackendSubject(current.backendSubjectId);
+      } catch (error) {
+        // The server already has no such subject, so local cleanup can continue.
+        const alreadyDeleted = error instanceof ApiError &&
+          error.status === 404 && error.code === "SUBJECT_NOT_FOUND";
+        if (!alreadyDeleted) throw error;
       }
-    }).catch((error: Error) => set({ storageError: error.message }));
-  },
+    }
+
+    const subjects = get().subjects.filter(s => s.id !== id);
+    const activeSubjectId = get().activeSubjectId === id ? subjects[0]?.id ?? null : get().activeSubjectId;
+    await writeLocalSubject(null, activeSubjectId, id);
+    set({ subjects, activeSubjectId, storageError: null });
+    writeActiveSubjectKey(subjects.find(s => s.id === activeSubjectId));
+    // Best-effort: a stored thread without its subject must not linger.
+    if (current.backendSubjectId) {
+      void deleteChatThread(current.backendSubjectId).catch(() => undefined);
+    }
+  }),
   setActiveSubject: (id) => {
     set({ activeSubjectId: id });
     writeActiveSubjectKey(id ? get().subjects.find(s => s.id === id) : null);

@@ -151,7 +151,7 @@ export class DashboardService {
       JOIN "MockAttempt" a ON a."id" = ar."attemptId"
       JOIN "Subject" s ON s."id" = a."subjectId"
       WHERE a."status" = 'COMPLETED'
-        AND s."status" = 'ACTIVE'
+        AND s."status" != 'DELETING'
         ${this.rangeFilter(days)}
     `);
     return rows[0] ?? { testsTaken: 0, questionsAnswered: 0 };
@@ -170,7 +170,7 @@ export class DashboardService {
         ON a."subjectId" = s."id" AND a."status" = 'COMPLETED'
       LEFT JOIN "AttemptResult" ar
         ON ar."attemptId" = a."id" ${this.rangeFilter(days)}
-      WHERE s."status" = 'ACTIVE'
+      WHERE s."status" != 'DELETING'
       GROUP BY s."id", s."name"
       ORDER BY s."name" ASC, s."id" ASC
     `);
@@ -195,7 +195,7 @@ export class DashboardService {
       JOIN "SubjectTopic" st
         ON st."subjectId" = a."subjectId" AND st."key" = t."topicKey"
       WHERE a."status" = 'COMPLETED'
-        AND s."status" = 'ACTIVE'
+        AND s."status" != 'DELETING'
         ${this.rangeFilter(days)}
       GROUP BY a."subjectId", s."name", t."topicKey", st."name"
     `);
@@ -220,7 +220,7 @@ export class DashboardService {
       JOIN "MockAttempt" a ON a."id" = ar."attemptId"
       JOIN "Subject" s ON s."id" = a."subjectId"
       WHERE a."status" = 'COMPLETED'
-        AND s."status" = 'ACTIVE'
+        AND s."status" != 'DELETING'
         ${this.rangeFilter(days)}
       ORDER BY ar."createdAt" DESC, ar."attemptId" DESC
       LIMIT 3
@@ -235,7 +235,7 @@ export class DashboardService {
         JOIN "MockAttempt" a ON a."id" = ar."attemptId"
         JOIN "Subject" s ON s."id" = a."subjectId"
         WHERE a."status" = 'COMPLETED'
-          AND s."status" = 'ACTIVE'
+          AND s."status" != 'DELETING'
           AND ((ar."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila')::date
               >= ((now() AT TIME ZONE 'Asia/Manila'))::date - 364
         UNION ALL
@@ -244,7 +244,7 @@ export class DashboardService {
         JOIN "Chat" c ON c."id" = m."chatId"
         JOIN "Subject" s ON s."id" = c."subjectId"
         WHERE m."role" = 'USER'
-          AND s."status" = 'ACTIVE'
+          AND s."status" != 'DELETING'
           AND ((m."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila')::date
               >= ((now() AT TIME ZONE 'Asia/Manila'))::date - 364
       )
@@ -265,14 +265,14 @@ export class DashboardService {
         JOIN "MockAttempt" a ON a."id" = ar."attemptId"
         JOIN "Subject" s ON s."id" = a."subjectId"
         WHERE a."status" = 'COMPLETED'
-          AND s."status" = 'ACTIVE'
+          AND s."status" != 'DELETING'
         UNION
         SELECT DISTINCT ((m."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila')::date AS day
         FROM "Message" m
         JOIN "Chat" c ON c."id" = m."chatId"
         JOIN "Subject" s ON s."id" = c."subjectId"
         WHERE m."role" = 'USER'
-          AND s."status" = 'ACTIVE'
+          AND s."status" != 'DELETING'
       ) AS days
       ORDER BY day ASC
     `);
@@ -295,7 +295,7 @@ export class DashboardService {
       FROM "MockAttempt" a
       JOIN "Subject" s ON s."id" = a."subjectId"
       WHERE a."status" IN ('GENERATING', 'READY', 'IN_PROGRESS', 'AWAITING_SUBMISSION')
-        AND s."status" = 'ACTIVE'
+        AND s."status" != 'DELETING'
       ORDER BY a."lastActivityAt" DESC, a."id" DESC
     `);
   }
