@@ -226,15 +226,18 @@ export class StorageService implements OnModuleInit {
 
   async deleteObject(key: string, etag?: string): Promise<void> {
     if (!etag) {
-      await this.deleteReservedPdf(key, await this.requiredEtag(key));
+      const storedEtag = await this.requiredEtag(key);
+      if (storedEtag === null) return;
+      await this.deleteReservedPdf(key, storedEtag);
       return;
     }
     await this.deleteReservedPdf(key, etag);
   }
 
-  private async requiredEtag(key: string): Promise<string> {
+  private async requiredEtag(key: string): Promise<string | null> {
     const stored = await this.inspectReservedPdf(key);
-    if (!stored?.etag) throw new Error('Object version is required for cleanup.');
+    if (stored === null) return null;
+    if (!stored.etag) throw new Error('Object version is required for cleanup.');
     return stored.etag;
   }
 

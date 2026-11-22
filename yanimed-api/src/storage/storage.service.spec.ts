@@ -92,6 +92,18 @@ describe('Reserved R2 storage (mocked SDK)', () => {
     send.mockRejectedValue({ $metadata: { httpStatusCode: 404 } });
     expect(await service.inspectReservedPdf(attempt.objectKey)).toBeNull();
   });
+  it('treats a missing object as already deleted without issuing a delete', async () => {
+    const send = vi.spyOn(S3Client.prototype, 'send').mockRejectedValue({ $metadata: { httpStatusCode: 404 } });
+    await expect(service.deleteObject('pdfs/missing.pdf')).resolves.toBeUndefined();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(HeadObjectCommand);
+    expect(send.mock.calls.some(([command]) => command instanceof DeleteObjectCommand)).toBe(false);
+  });
+  it('keeps throwing when the HEAD fails with a non-404 status', async () => {
+    const send = vi.spyOn(S3Client.prototype, 'send').mockRejectedValue({ $metadata: { httpStatusCode: 403 } });
+    await expect(service.deleteObject('pdfs/denied.pdf')).rejects.toMatchObject({ $metadata: { httpStatusCode: 403 } });
+    expect(send.mock.calls.some(([command]) => command instanceof DeleteObjectCommand)).toBe(false);
+  });
   it('cleanup requires an ETag and performs a conditional deletion of only the specified key', async () => {
     const send = vi.spyOn(S3Client.prototype, 'send').mockResolvedValue({} as never);
     await expect(service.deleteReservedPdf(attempt.objectKey, '')).rejects.toThrow('Object version');

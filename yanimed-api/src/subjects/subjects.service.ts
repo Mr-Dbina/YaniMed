@@ -1,4 +1,4 @@
-import { ConflictException, HttpException, HttpStatus, Inject, Injectable, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, HttpException, HttpStatus, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService } from '../storage/storage.service.js';
@@ -6,6 +6,8 @@ import { documentMetadata, documentMetadataSelect } from '../documents/document-
 
 @Injectable()
 export class SubjectsService {
+  private readonly logger = new Logger(SubjectsService.name);
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Optional() @Inject(StorageService) private readonly storage?: StorageService,
@@ -126,6 +128,9 @@ export class SubjectsService {
           const code = (error as { code?: string })?.code;
           const isMissing = status === 404 || name === 'NoSuchKey' || code === 'NoSuchKey';
           if (!isMissing) {
+            this.logger.error(
+              `R2 delete failed: keyPrefix=${key.slice(0, 10)} name=${(error as { name?: string })?.name} Code=${(error as { Code?: string })?.Code} status=${status}`,
+            );
             throw new HttpException({ code: 'STORAGE_ERROR', message: 'Storage error.' }, HttpStatus.SERVICE_UNAVAILABLE);
           }
         }
