@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../../../prisma/prisma.service.js';
 import { GenerationError } from '../generation.errors.js';
+import { EMBEDDING_MODEL } from '../../../embeddings/embedding.service.js';
 import {
   createBankSource,
   type BankQuestionRow,
@@ -16,26 +17,26 @@ function questionRow(
     stem: `ZZ-m5 stem ${id}`,
     leadIn: null,
     educationalObjective: `ZZ-m5 objective ${id}`,
-    topic: { key: 'zz-m5-topic' },
-    choices: [{ text: `ZZ-m5 key ${id}` }],
-    citations: [
-      {
-        documentId: 'doc-1',
-        pageNumber: 4,
-        quote: `ZZ-m5 quote ${id}`,
-      },
-    ],
+    topicKey: 'zz-m5-topic',
+    correctChoiceText: `ZZ-m5 key ${id}`,
+    documentId: 'doc-1',
+    pageNumber: 4,
+    quote: `ZZ-m5 quote ${id}`,
+    embeddingText: null,
+    embeddingModel: null,
     ...overrides,
   };
 }
 
 function makePrisma(rows: BankQuestionRow[]) {
   return {
-    mockQuestion: { findMany: vi.fn().mockResolvedValue(rows) },
+    $queryRaw: vi.fn().mockResolvedValue(rows),
+    $executeRaw: vi.fn().mockResolvedValue(1),
   };
 }
 
 const VECTOR = Array.from({ length: 768 }, (_, index) => (index === 3 ? 1 : 0));
+const VECTOR_TEXT = '[' + VECTOR.join(',') + ']';
 
 function countingEmbed() {
   return vi.fn(async () => [...VECTOR]);
@@ -89,6 +90,27 @@ describe('bank source', () => {
       jobId: 'job-1',
       text: 'ZZ-m5 stem q2\n',
     });
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses stored valid embeddings and embeds only missing ones', async () => {
+    const prisma = makePrisma([
+      questionRow('q1', { embeddingText: VECTOR_TEXT, embeddingModel: EMBEDDING_MODEL }),
+      questionRow('q2', { embeddingText: null, embeddingModel: null }),
+    ]);
+    const embed = countingEmbed();
+
+    const refs = await createBankSource(sourceFor(prisma, embed)).loadRefs();
+
+    expect(refs).toHaveLength(2);
+    expect(refs[0].embedding).toEqual(VECTOR);
+    expect(refs[1].embedding).toEqual(VECTOR);
+    expect(embed).toHaveBeenCalledTimes(1);
+    expect(embed).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      text: 'ZZ-m5 stem q2\n',
+    });
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it('memoizes the whole load so two calls embed once', async () => {
@@ -100,25 +122,8 @@ describe('bank source', () => {
     const second = await bank.loadRefs();
 
     expect(second).toBe(first);
-    expect(prisma.mockQuestion.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     expect(embed).toHaveBeenCalledTimes(2);
-  });
-
-  it('scopes the query to the subject and every job except this one', async () => {
-    const prisma = makePrisma([]);
-
-    await createBankSource(sourceFor(prisma, countingEmbed())).loadRefs();
-
-    expect(prisma.mockQuestion.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          subjectId: 'subject-1',
-          status: 'ACTIVE',
-          OR: [{ jobId: null }, { jobId: { not: 'job-1' } }],
-          citations: { some: {} },
-        },
-      }),
-    );
   });
 
   it('embeds nothing when the cap is zero', async () => {

@@ -158,7 +158,11 @@ function makeDraft(topicKey: string, index: number): DraftQuestion {
   };
 }
 
-function writtenQuestion(index: number, topicKey: string): WrittenQuestion {
+function writtenQuestion(
+  index: number,
+  topicKey: string,
+  embedding: number[] | null = null,
+): WrittenQuestion {
   return {
     questionId: `question-${index}`,
     status: 'QUARANTINED',
@@ -168,6 +172,7 @@ function writtenQuestion(index: number, topicKey: string): WrittenQuestion {
     objective: `objective ${index}`,
     keyChoiceText: 'Choice A',
     citations: [{ documentId: 'doc-1', page: 1, quote: 'quote' }],
+    embedding,
   };
 }
 
@@ -216,6 +221,10 @@ function makeHarness(
       listWritten: async () => {
         listCalls += 1;
         return [...written];
+      },
+      saveEmbedding: async (id, emb) => {
+        const item = written.find((w) => w.questionId === id);
+        if (item) item.embedding = emb;
       },
     },
     ensureTopics: async (_subjectId, planTopics) =>

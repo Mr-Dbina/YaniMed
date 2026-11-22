@@ -1,4 +1,5 @@
 import { PrismaService } from '../../../prisma/prisma.service.js';
+import { EMBEDDING_MODEL } from '../../../embeddings/embedding.service.js';
 import { GenerationError } from '../generation.errors.js';
 import type { DraftQuestion } from '../validate/types.js';
 
@@ -35,6 +36,7 @@ export interface WriteQuestionArgs {
   position?: number;
   /** Overrides the placeholder provenance when the runner supplies real values. */
   provenance?: WriteProvenance;
+  embedding?: number[];
 }
 
 export interface WriteQuestionResult {
@@ -170,6 +172,16 @@ export async function writeQuestion(
       },
       select: { id: true },
     });
+
+    if (args.embedding) {
+      const literal = '[' + args.embedding.join(',') + ']';
+      await tx.$executeRaw`
+        UPDATE "MockQuestion"
+        SET "embedding" = ${literal}::vector,
+            "embeddingModel" = ${EMBEDDING_MODEL}
+        WHERE "id" = ${question.id}
+      `;
+    }
 
     await tx.mockChoice.createMany({
       data: draft.choices.map((choice, index) => ({

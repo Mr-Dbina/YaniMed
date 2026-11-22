@@ -318,6 +318,7 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
           promptVersion: draftResult.promptVersion,
           validatorVersion: VALIDATOR_VERSION,
         },
+        embedding: checkC.embedding,
       });
 
       const ref: AcceptedQuestionRef = {

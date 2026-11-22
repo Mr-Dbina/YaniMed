@@ -178,10 +178,14 @@ async function execute(
 
   for (const question of written) {
     if (signal.aborted) return stoppedOutcome(signal);
-    const embedding = await deps.embed({
-      jobId: job.id,
-      text: `${question.stem}\n${question.leadIn ?? ''}`,
-    });
+    let embedding = question.embedding;
+    if (!embedding) {
+      embedding = await deps.embed({
+        jobId: job.id,
+        text: `${question.stem}\n${question.leadIn ?? ''}`,
+      });
+      await writtenStore.saveEmbedding(question.questionId, embedding);
+    }
     embeddings.set(question.questionId, embedding);
     accepted.push(refFromWritten(question, embedding));
   }

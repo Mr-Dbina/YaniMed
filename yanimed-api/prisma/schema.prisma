@@ -437,8 +437,10 @@ model MockQuestion {
   verifierModel        String?
   promptVersion        String
   validatorVersion     String
-  verifierResult       Json?
-  createdAt            DateTime           @default(now())
+   verifierResult       Json?
+   embeddingModel       String?
+   embedding            Unsupported("vector(768)")?
+   createdAt            DateTime           @default(now())
 
   choices          MockChoice[]
   citations        QuestionCitation[]

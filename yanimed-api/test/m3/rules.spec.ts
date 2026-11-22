@@ -810,6 +810,32 @@ describe('Deferred foreign keys still reject standalone deletes', () => {
       }),
     ).not.toBeNull();
   });
+
+  it('R7 allows updating MockQuestion embedding and embeddingModel but rejects stem changes', async () => {
+    const subject = await createSubject();
+    const question = await createQuestion({ subjectId: subject.id });
+    const vec = '[' + Array(768).fill(0.1).join(',') + ']';
+
+    await prisma.$executeRaw`
+      UPDATE "MockQuestion"
+      SET "embedding" = ${vec}::vector,
+          "embeddingModel" = 'gemini-embedding-001'
+      WHERE "id" = ${question.id}
+    `;
+
+    const rows = await prisma.$queryRaw<Array<{ embeddingModel: string }>>`
+      SELECT "embeddingModel" FROM "MockQuestion" WHERE "id" = ${question.id}
+    `;
+    expect(rows[0].embeddingModel).toBe('gemini-embedding-001');
+
+    await expectDbError(
+      prisma.mockQuestion.update({
+        where: { id: question.id },
+        data: { stem: 'changed stem' },
+      }),
+      /R7: MockQuestion content and provenance are immutable/,
+    );
+  });
 });
 
 describe('Error matcher self-check', () => {

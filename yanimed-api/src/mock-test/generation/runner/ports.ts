@@ -63,10 +63,12 @@ export interface WrittenQuestion {
   objective: string;
   keyChoiceText: string;
   citations: { documentId: string | null; page: number; quote: string }[];
+  embedding: number[] | null;
 }
 
 export interface WrittenStore {
   listWritten(jobId: string): Promise<WrittenQuestion[]>;
+  saveEmbedding(questionId: string, embedding: number[]): Promise<void>;
 }
 
 export type PlannerPort = {
