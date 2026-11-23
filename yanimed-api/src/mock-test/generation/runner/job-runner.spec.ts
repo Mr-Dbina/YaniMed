@@ -260,7 +260,7 @@ function makeHarness(
       return { ok: true, topicCount: TOPICS, maxSimilarity: 0 };
     },
     writeQuestion: async (args) => {
-      const index = writeCalls.length + 1;
+      const index = written.length + 1;
       writeCalls.push(args);
       const question = writtenQuestion(index, args.draft.topicKey);
       written.push(question);
@@ -832,6 +832,42 @@ describe('runJob', () => {
     expect(harness.embedCalls).toHaveLength(25);
     expect(harness.draftCalls).toHaveLength(0);
     expect(harness.writeCalls).toHaveLength(0);
+  });
+
+  it('resumes 22 questions that include accepted reserve slots and drafts only 3', async () => {
+    const written: WrittenQuestion[] = [];
+    let index = 0;
+    for (let topic = 1; topic <= 10; topic += 1) {
+      for (let ordinal = 0; ordinal < 2; ordinal += 1) {
+        index += 1;
+        written.push(writtenQuestion(index, `topic-${topic}`));
+      }
+    }
+    written.push(writtenQuestion(21, 'reserve-topic-1'));
+    written.push(writtenQuestion(22, 'reserve-topic-2'));
+    const harness = makeHarness({
+      written,
+      savedPlan: makePlan(QUESTIONS_PER_TEST, RESERVE_SLOTS),
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toEqual({ kind: 'COMPLETED', acceptedCount: 25 });
+    expect(harness.embedCalls).toHaveLength(22);
+    expect(harness.draftCalls).toHaveLength(3);
+    expect(harness.writeCalls).toHaveLength(3);
+    expect(harness.checkDArgs[0].questions).toHaveLength(25);
+    expect(harness.checkDArgs[0].expectedCount).toBe(25);
+
+    const draftedTopics = new Set(
+      harness.draftCalls.map((call) => call.topic.topicKey),
+    );
+    for (const topic of draftedTopics) {
+      expect(topic.startsWith('reserve-topic-')).toBe(false);
+    }
+
+    const ids = harness.written.map((question) => question.questionId);
+    expect(new Set(ids).size).toBe(25);
   });
 
   it('uses only the reserve slots that exist', async () => {

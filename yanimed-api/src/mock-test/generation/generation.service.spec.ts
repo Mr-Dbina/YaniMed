@@ -36,7 +36,11 @@ function makePrisma() {
 }
 
 function makeRepository() {
-  return { createJob: vi.fn(), requestCancel: vi.fn() };
+  return {
+    createJob: vi.fn(),
+    requestCancel: vi.fn(),
+    resumeLatestFailedJob: vi.fn().mockResolvedValue(null),
+  };
 }
 
 function serviceFor(
@@ -138,6 +142,78 @@ describe('GenerationService.createJob', () => {
 
     await expect(serviceFor(prisma, repository).createJob('subject-1')).rejects
       .toMatchObject({ code: 'GENERATION_IN_PROGRESS' });
+  });
+});
+
+describe('GenerationService.createJob resume', () => {
+  it('returns the same job with its accepted progress when resume succeeds', async () => {
+    const prisma = makePrisma();
+    const repository = makeRepository();
+    prisma.subject.findUnique.mockResolvedValue({ id: 'subject-1', status: 'ACTIVE' });
+    prisma.document.findMany.mockResolvedValue([{ id: 'doc-1' }]);
+    repository.resumeLatestFailedJob.mockResolvedValue({
+      job: snapshot({
+        id: 'job-22',
+        state: 'QUEUED',
+        acceptedCount: 22,
+        recoveryCount: 1,
+        failureReason: null,
+      }),
+      created: false,
+      resumed: true,
+      previousFailureReason: 'VALIDATION_EXHAUSTED',
+    });
+
+    await expect(
+      serviceFor(prisma, repository).createJob('subject-1', 'fresh-key'),
+    ).resolves.toEqual({
+      jobId: 'job-22',
+      state: 'QUEUED',
+      requestedCount: 25,
+      acceptedCount: 22,
+    });
+    expect(repository.resumeLatestFailedJob).toHaveBeenCalledWith('subject-1');
+    expect(repository.createJob).not.toHaveBeenCalled();
+  });
+
+  it('returns the active winner when another request already resumed', async () => {
+    const prisma = makePrisma();
+    const repository = makeRepository();
+    prisma.subject.findUnique.mockResolvedValue({ id: 'subject-1', status: 'ACTIVE' });
+    prisma.document.findMany.mockResolvedValue([{ id: 'doc-1' }]);
+    repository.resumeLatestFailedJob.mockResolvedValue({
+      job: snapshot({
+        id: 'job-22',
+        state: 'QUEUED',
+        acceptedCount: 22,
+        recoveryCount: 1,
+      }),
+      created: false,
+      resumed: false,
+      previousFailureReason: 'VALIDATION_EXHAUSTED',
+    });
+
+    await expect(
+      serviceFor(prisma, repository).createJob('subject-1'),
+    ).resolves.toMatchObject({ jobId: 'job-22', state: 'QUEUED', acceptedCount: 22 });
+    expect(repository.createJob).not.toHaveBeenCalled();
+  });
+
+  it('falls through to a new job when resume is not allowed', async () => {
+    const prisma = makePrisma();
+    const repository = makeRepository();
+    prisma.subject.findUnique.mockResolvedValue({ id: 'subject-1', status: 'ACTIVE' });
+    prisma.document.findMany.mockResolvedValue([{ id: 'doc-1' }]);
+    repository.createJob.mockResolvedValue({
+      job: snapshot({ id: 'job-new' }),
+      created: true,
+    });
+
+    await expect(
+      serviceFor(prisma, repository).createJob('subject-1'),
+    ).resolves.toMatchObject({ jobId: 'job-new', state: 'QUEUED', acceptedCount: 0 });
+    expect(repository.resumeLatestFailedJob).toHaveBeenCalledWith('subject-1');
+    expect(repository.createJob).toHaveBeenCalledOnce();
   });
 });
 

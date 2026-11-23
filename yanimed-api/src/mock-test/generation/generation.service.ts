@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { MockTestError } from '../exam.errors.js';
 import {
@@ -35,6 +35,8 @@ function toSummary(job: {
 /** Job commands for the Mock Test screen. Every read is scoped by id. */
 @Injectable()
 export class GenerationService {
+  private readonly logger = new Logger(GenerationService.name);
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(GenerationJobRepository)
@@ -44,7 +46,8 @@ export class GenerationService {
   /**
    * Snapshots the subject's READY documents. The one-active-job unique rule
    * makes a second create GENERATION_IN_PROGRESS; a repeated idempotencyKey
-   * returns the first job instead.
+   * returns the first job instead. When the latest job failed for a resumable
+   * reason it is requeued instead, so written questions and the plan survive.
    */
   async createJob(
     subjectId: string,
@@ -63,6 +66,26 @@ export class GenerationService {
     });
     if (documents.length === 0) {
       throw new GenerationError('NO_READY_DOCUMENTS');
+    }
+
+    const resumed = await this.repository.resumeLatestFailedJob(subjectId);
+    if (resumed !== null) {
+      if (resumed.resumed) {
+        this.logger.log(
+          `generation.job.resumed ${JSON.stringify({
+            jobId: resumed.job.id,
+            acceptedCount: resumed.job.acceptedCount,
+            previousReason: resumed.previousFailureReason,
+            recoveryCount: resumed.job.recoveryCount,
+          })}`,
+        );
+      }
+      return {
+        jobId: resumed.job.id,
+        state: resumed.job.state,
+        requestedCount: resumed.job.requestedCount,
+        acceptedCount: resumed.job.acceptedCount,
+      };
     }
 
     const { job } = await this.repository.createJob({

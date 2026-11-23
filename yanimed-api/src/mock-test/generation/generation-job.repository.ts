@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import type { GenerationJob } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { parsePlan } from './adapters/plan-store.js';
 import {
   MAX_RECOVERIES,
   QUESTIONS_PER_TEST,
@@ -20,6 +21,20 @@ import {
 
 const TX_OPTIONS = { maxWait: 30_000, timeout: 30_000 };
 const STALL_BATCH = 20;
+const ACTIVE_JOB_STATES: readonly GenerationJobState[] = [
+  'QUEUED',
+  'RUNNING',
+  'STALLED',
+  'CANCELLING',
+];
+
+/** Only failures that can make progress on a retry may be resumed. */
+const RESUMABLE_FAILURE_REASONS: ReadonlySet<GenerationFailureReason> = new Set([
+  'PROVIDER_UNAVAILABLE',
+  'TIMEOUT',
+  'VALIDATION_EXHAUSTED',
+  'BUDGET_EXHAUSTED',
+]);
 
 export interface CreateGenerationJobInput {
   subjectId: string;
@@ -31,6 +46,14 @@ export interface CreateGenerationJobInput {
 export interface CreateGenerationJobResult {
   job: GenerationJobSnapshot;
   created: boolean;
+}
+
+export interface ResumeFailedJobResult {
+  job: GenerationJobSnapshot;
+  created: false;
+  /** True only for the request whose guarded UPDATE won. */
+  resumed: boolean;
+  previousFailureReason: GenerationFailureReason;
 }
 
 export interface TransitionOptions {
@@ -182,6 +205,127 @@ export class GenerationJobRepository {
       throw new GenerationError('GENERATION_IN_PROGRESS', { jobId: job.id });
     }
     return { job: toSnapshot(job), created: false };
+  }
+
+  /**
+   * Resumes the subject's latest job when it failed for a reason a retry can
+   * still make progress on. Held questions, the plan and acceptedCount stay;
+   * aiCallCount resets so the retry gets a fresh budget. The guarded UPDATE is
+   * the race winner: a second request sees zero rows and returns the winner.
+   */
+  async resumeLatestFailedJob(
+    subjectId: string,
+  ): Promise<ResumeFailedJobResult | null> {
+    const latest = await this.prisma.generationJob.findFirst({
+      where: { subjectId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        state: true,
+        failureReason: true,
+        recoveryCount: true,
+        planJson: true,
+        subject: { select: { status: true } },
+        documents: {
+          select: {
+            documentId: true,
+            document: { select: { status: true } },
+          },
+        },
+      },
+    });
+    if (latest === null || latest.state !== 'FAILED') return null;
+
+    const reason = latest.failureReason as GenerationFailureReason | null;
+    if (reason === null || !RESUMABLE_FAILURE_REASONS.has(reason)) return null;
+    if (latest.recoveryCount >= MAX_RECOVERIES) return null;
+    if (latest.subject.status !== 'ACTIVE') return null;
+
+    // R2 only allows one active job per subject. A different active row must
+    // win, so this request falls through to the create path instead.
+    const active = await this.prisma.generationJob.findFirst({
+      where: { subjectId, state: { in: [...ACTIVE_JOB_STATES] } },
+      select: { id: true },
+    });
+    if (active !== null) return null;
+
+    const snapshot = latest.documents;
+    if (snapshot.length === 0) return null;
+    if (snapshot.some((link) => link.document.status !== 'READY')) return null;
+
+    if (latest.planJson !== null) {
+      const plan = parsePlan(latest.planJson);
+      if (plan === null) return null;
+      const pinned = [
+        ...new Set(
+          plan.slots
+            .map((slot) => slot.seedChunkIds[0])
+            .filter((id): id is string => id !== undefined),
+        ),
+      ];
+      if (pinned.length > 0) {
+        const found = await this.prisma.chunk.count({
+          where: { id: { in: pinned } },
+        });
+        if (found !== pinned.length) return null;
+      }
+    }
+
+    // A held question that already left QUARANTINED means the job is not in a
+    // resumable shape; never touch it.
+    const unheld = await this.prisma.mockQuestion.count({
+      where: { jobId: latest.id, status: { not: 'QUARANTINED' } },
+    });
+    if (unheld > 0) return null;
+
+    let updated = 0;
+    try {
+      const result = await this.prisma.generationJob.updateMany({
+        where: {
+          id: latest.id,
+          state: 'FAILED',
+          recoveryCount: latest.recoveryCount,
+          failureReason: { in: [...RESUMABLE_FAILURE_REASONS] },
+        },
+        data: {
+          state: 'QUEUED',
+          failureReason: null,
+          finishedAt: null,
+          heartbeatAt: null,
+          startedAt: new Date(),
+          aiCallCount: 0,
+          recoveryCount: { increment: 1 },
+        },
+      });
+      updated = result.count;
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      updated = 0;
+    }
+
+    if (updated === 0) {
+      const winner = await this.prisma.generationJob.findFirst({
+        where: { subjectId, state: { in: [...ACTIVE_JOB_STATES] } },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (winner === null) return null;
+      return {
+        job: toSnapshot(winner),
+        created: false,
+        resumed: false,
+        previousFailureReason: reason,
+      };
+    }
+
+    const job = await this.prisma.generationJob.findUniqueOrThrow({
+      where: { id: latest.id },
+    });
+    return {
+      job: toSnapshot(job),
+      created: false,
+      resumed: true,
+      previousFailureReason: reason,
+    };
   }
 
   /**
