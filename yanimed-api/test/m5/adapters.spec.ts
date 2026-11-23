@@ -365,6 +365,7 @@ describe('written store adapter (test DB)', () => {
       leadIn: firstDraft.leadIn,
       objective: firstDraft.objective,
       keyChoiceText: firstDraft.choices[firstDraft.keyIndex].text,
+      embedding: null,
       citations: [
         {
           documentId: fixture.document.id,
