@@ -16,6 +16,7 @@ import type { PlannerChunkInput } from '../plan/clustering.js';
 import type { DraftQuestion } from '../validate/types.js';
 import type { SetQuestionRef } from '../validate/check-d.js';
 import type { WriteQuestionArgs } from '../persist/question-writer.js';
+import type { AcceptedQuestionRef } from '../validate/check-c.js';
 import type {
   JobInputs,
   Progress,
@@ -1109,6 +1110,49 @@ describe('runJob', () => {
     expect(RESERVE_SLOTS).toBe(6);
   });
 
+  it('passes bank objectives to the drafter, same-page first, and keeps in-job objectives', async () => {
+    let bankCalls = 0;
+    const bankRefs: AcceptedQuestionRef[] = [
+      {
+        key: 'bank-a',
+        embedding: [],
+        topicKey: 'old-topic',
+        objective: 'Bank recent.',
+        documentId: 'doc-9',
+        page: 99,
+        quote: '',
+        keyChoiceText: '',
+      },
+      {
+        key: 'bank-b',
+        embedding: [],
+        topicKey: 'old-topic',
+        objective: 'Bank same page.',
+        documentId: 'doc-1',
+        page: 1,
+        quote: '',
+        keyChoiceText: '',
+      },
+    ];
+    const harness = makeHarness({
+      written: [writtenQuestion(1, 'topic-1')],
+      savedPlan: makePlan(),
+      deps: {
+        bank: { loadRefs: async () => { bankCalls += 1; return bankRefs; } },
+      },
+    });
+
+    await runJob(makeArgs(), harness.deps);
+
+    expect(bankCalls).toBe(1);
+    const firstTopicOne = harness.draftCalls.find(
+      (c) => c.topic.topicKey === 'topic-1',
+    );
+    expect(firstTopicOne?.bankObjectives?.[0]).toBe('Bank same page.');
+    expect(firstTopicOne?.bankObjectives).toContain('Bank recent.');
+    expect(firstTopicOne?.acceptedObjectives).toContain('objective 1');
+  });
+
   it('maps an unknown thrown value to INTERNAL with only its name', () => {
     const signal = new AbortController().signal;
     const result = mapRunnerError({ name: 'WeirdError', message: 'secret' }, signal);
@@ -1117,6 +1161,30 @@ describe('runJob', () => {
       kind: 'FAILED',
       reason: 'INTERNAL',
       detail: 'WeirdError',
+    });
+  });
+
+  it.each(['P1001', 'P1017', 'P2024', 'P2028'] as const)(
+    'treats a transient Prisma %s as a resumable failure, not INTERNAL',
+    (code) => {
+      const signal = new AbortController().signal;
+      const result = mapRunnerError(Object.assign(new Error('db down'), { code }), signal);
+
+      expect(result).toEqual({
+        kind: 'FAILED',
+        reason: 'PROVIDER_UNAVAILABLE',
+        code,
+      });
+    },
+  );
+
+  it('keeps a non-Prisma TypeError as INTERNAL', () => {
+    const result = mapRunnerError(new TypeError('boom'), new AbortController().signal);
+
+    expect(result).toMatchObject({
+      kind: 'FAILED',
+      reason: 'INTERNAL',
+      detail: 'TypeError',
     });
   });
 });

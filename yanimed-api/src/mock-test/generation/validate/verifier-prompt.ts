@@ -57,6 +57,7 @@ export class VerifierParseError extends Error {
   constructor(
     readonly bucket: VerifierParseBucket,
     readonly shape?: VerifierShapeSummary,
+    readonly parseError?: string,
   ) {
     super(`Verifier output parse failed: ${bucket}.`);
     this.name = 'VerifierParseError';
@@ -301,15 +302,23 @@ export function parseVerifierResponse(text: string): VerifierResponse {
   let object: string;
   try {
     object = extractJsonObject(text);
-  } catch {
-    throw new VerifierParseError('NO_OBJECT');
+  } catch (error) {
+    throw new VerifierParseError(
+      'NO_OBJECT',
+      undefined,
+      error instanceof Error ? error.message : String(error),
+    );
   }
 
   let body: unknown;
   try {
     body = JSON.parse(repairJson(object));
-  } catch {
-    throw new VerifierParseError('JSON');
+  } catch (error) {
+    throw new VerifierParseError(
+      'JSON',
+      undefined,
+      error instanceof Error ? error.message : String(error),
+    );
   }
 
   if (!isRecord(body)) {

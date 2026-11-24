@@ -70,6 +70,8 @@ export interface SlotRunArgs {
   signal: AbortSignal;
   accepted: AcceptedQuestionRef[];
   acceptedObjectives: string[];
+  /** Bank objectives to avoid for this slot; may be empty. */
+  bankObjectives?: readonly string[];
   /** Primaries of accepted questions in this topic and earlier seed sets. */
   usedPrimaryIds: ReadonlySet<string>;
   replacementBudgetRemaining: number;
@@ -180,7 +182,11 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
 
   let lastRejectionCode: string | undefined;
 
-  const logReject = (check: RejectionCheck, code: string | undefined): void => {
+  const logReject = (
+    check: RejectionCheck,
+    code: string | undefined,
+    detail?: string,
+  ): void => {
     args.counts[check] += 1;
     lastRejectionCode = code;
     logger?.warn('generation.slot.rejected', {
@@ -188,6 +194,7 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
       slot: slot.index,
       check,
       code,
+      ...(check === 'C' && detail !== undefined ? { detail } : {}),
     });
   };
 
@@ -247,6 +254,9 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
         topic: { topicKey: slot.topicKey, name: topicName },
         seedChunks,
         acceptedObjectives: [...args.acceptedObjectives],
+        ...(args.bankObjectives === undefined
+          ? {}
+          : { bankObjectives: [...args.bankObjectives] }),
         styleHint: inputs.styleHint,
         avoidStems: [...avoidStems],
         ...(lastRejectionCode === undefined
@@ -301,7 +311,7 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
         signal,
       });
       if (!checkC.ok) {
-        logReject('C', checkC.reasons[0]?.code);
+        logReject('C', checkC.reasons[0]?.code, checkC.reasons[0]?.detail);
         rejected(draft.stem);
         continue;
       }

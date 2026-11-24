@@ -3,11 +3,13 @@ import {
   REPLACEMENTS_PER_SLOT,
 } from '../generation.constants.js';
 import { GenerationError } from '../generation.errors.js';
+import { isPrismaTransientCode } from '../../../document-processing/processing-error.js';
 import type { GenerationPlan } from '../plan/planner.js';
 import { PlanInsufficientContentError } from '../plan/planner.js';
 import { defaultCheckDContext, type SetQuestionRef } from '../validate/check-d.js';
 import { REASON_CODES } from '../validate/types.js';
 import type { AcceptedQuestionRef } from '../validate/check-c.js';
+import { normalizeObjective } from '../text/normalize.js';
 import type {
   JobInputs,
   RunnerDeps,
@@ -16,6 +18,7 @@ import type {
   WrittenQuestion,
 } from './ports.js';
 import { runSlot, stopCauseOf, emptyRejectionCounts, type RejectionCounts, type SlotRunnerDeps } from './slot-runner.js';
+import type { WorkerLogger } from '../worker/worker.types.js';
 
 export interface RunJobArgs {
   job: { id: string; subjectId: string; requestedCount: number };
@@ -53,11 +56,28 @@ export function stoppedOutcome(signal: AbortSignal): RunOutcome {
  * One mapper for every thrown dependency error. Error messages are never
  * copied: they can carry source text or model output.
  */
-export function mapRunnerError(err: unknown, signal: AbortSignal): RunOutcome {
+export function mapRunnerError(
+  err: unknown,
+  signal: AbortSignal,
+  logger?: WorkerLogger,
+): RunOutcome {
   const name = errorName(err);
   if (signal.aborted && name === 'AbortError') return stoppedOutcome(signal);
 
   const code = errorCode(err);
+
+  // A transient Prisma fault must not end the job as INTERNAL: a resumable
+  // reason lets "Try again" and the reconciler keep the accepted questions.
+  if (isPrismaTransientCode(code)) {
+    const outcome = { kind: 'FAILED', reason: 'PROVIDER_UNAVAILABLE', code } as const;
+    logger?.warn('generation.error.provider_unavailable', {
+      errorCode: code,
+      stage: 'DATABASE',
+      role: 'TRANSIENT_ERROR',
+      message: 'Prisma transient error',
+    });
+    return outcome;
+  }
 
   if (err instanceof PlanInsufficientContentError) {
     return {
@@ -68,28 +88,67 @@ export function mapRunnerError(err: unknown, signal: AbortSignal): RunOutcome {
     };
   }
 
+  let outcome: RunOutcome;
+
   switch (code) {
     case 'GENERATION_STALE_WORKER':
-      return { kind: 'STOPPED', cause: 'STALE_WORKER' };
+      outcome = { kind: 'STOPPED', cause: 'STALE_WORKER' };
+      break;
     case 'GENERATION_BUDGET_EXHAUSTED':
-      return { kind: 'FAILED', reason: 'BUDGET_EXHAUSTED', code };
+      outcome = { kind: 'FAILED', reason: 'BUDGET_EXHAUSTED', code };
+      break;
     case 'GENERATION_PROVIDER_UNAVAILABLE':
     case 'GENERATION_AI_TIMEOUT':
-      return { kind: 'FAILED', reason: 'PROVIDER_UNAVAILABLE', code };
+      outcome = { kind: 'FAILED', reason: 'PROVIDER_UNAVAILABLE', code };
+      break;
     case 'GENERATION_NOT_FOUND':
-      return { kind: 'FAILED', reason: 'SOURCE_CHANGED', code };
+      outcome = { kind: 'FAILED', reason: 'SOURCE_CHANGED', code };
+      break;
     case 'GENERATION_VERIFIER_NOT_CONFIGURED':
-      return { kind: 'FAILED', reason: 'INTERNAL', code, detail: name };
+      outcome = { kind: 'FAILED', reason: 'INTERNAL', code, detail: name };
+      break;
     default:
+      outcome = {
+        kind: 'FAILED',
+        reason: 'INTERNAL',
+        ...(code === undefined ? {} : { code }),
+        detail: name,
+      };
       break;
   }
 
-  return {
-    kind: 'FAILED',
-    reason: 'INTERNAL',
-    ...(code === undefined ? {} : { code }),
-    detail: name,
-  };
+  if (outcome.kind === 'FAILED' && outcome.reason === 'PROVIDER_UNAVAILABLE') {
+    const details = err instanceof GenerationError ? err.details : undefined;
+    const statusCode = details?.status;
+    const breakerOpen = details?.breakerOpen;
+    const attempts = details?.attempts;
+    let stage = 'AI';
+    let role = 'UNKNOWN';
+
+    if (code === 'GENERATION_AI_TIMEOUT') {
+      stage = 'AI';
+      role = 'TIMEOUT';
+    } else if (breakerOpen) {
+      stage = 'CIRCUIT_BREAKER';
+      role = 'OPEN';
+    } else if (statusCode) {
+      stage = 'HTTP';
+      role = 'ERROR';
+    } else if (attempts) {
+      stage = 'AI';
+      role = 'MAX_ATTEMPTS';
+    }
+
+    logger?.warn('generation.error.provider_unavailable', {
+      errorCode: code,
+      statusCode,
+      stage,
+      role,
+      message: name,
+    });
+  }
+
+  return outcome;
 }
 
 function objectivesByTopic(
@@ -120,6 +179,39 @@ function refFromWritten(
     quote: citation?.quote ?? '',
     keyChoiceText: question.keyChoiceText,
   };
+}
+
+function bankObjectivesForSlot(
+  seedChunkIds: readonly string[],
+  chunkPageById: ReadonlyMap<string, string>,
+  bankRefs: readonly AcceptedQuestionRef[],
+): string[] {
+  const seedPages = new Set<string>();
+  for (const id of seedChunkIds) {
+    const page = chunkPageById.get(id);
+    if (page !== undefined) seedPages.add(page);
+  }
+
+  const samePage: string[] = [];
+  const remainder: string[] = [];
+  for (const ref of bankRefs) {
+    const objective = ref.objective.trim();
+    if (objective === '') continue;
+    const target = seedPages.has(`${ref.documentId}:${ref.page}`)
+      ? samePage
+      : remainder;
+    target.push(objective);
+  }
+
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const objective of [...samePage, ...remainder]) {
+    const key = normalizeObjective(objective);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(objective);
+  }
+  return ordered;
 }
 
 function setQuestionsOf(
@@ -216,6 +308,15 @@ async function execute(
     remainingSlots.push(slot);
   }
 
+  let bankRefs: AcceptedQuestionRef[] = [];
+  const chunkPageById = new Map<string, string>();
+  if (remainingSlots.length > 0) {
+    bankRefs = await deps.bank.loadRefs();
+    for (const chunk of inputs.chunks) {
+      chunkPageById.set(chunk.id, `${chunk.documentId}:${chunk.page}`);
+    }
+  }
+
   const slotDeps: SlotRunnerDeps = {
     draft: deps.draft,
     checkA: deps.checkA,
@@ -232,6 +333,11 @@ async function execute(
   const runOne = (slot: GenerationPlan['slots'][number]) => {
     const key = slot.topicKey.trim();
     const objectives = objectivesByTopic(accepted).get(key) ?? [];
+    const bankObjectives = bankObjectivesForSlot(
+      slot.seedChunkIds,
+      chunkPageById,
+      bankRefs,
+    );
     return runSlot({
       slot,
       plan,
@@ -243,6 +349,7 @@ async function execute(
       signal,
       accepted,
       acceptedObjectives: objectives,
+      bankObjectives,
       usedPrimaryIds: usedPrimaryIdsByTopic.get(key) ?? new Set(),
       replacementBudgetRemaining: REPLACEMENTS_PER_SLOT,
       deps: slotDeps,
@@ -359,7 +466,7 @@ export async function runJob(
     try {
       return await execute(args, deps, counts);
     } catch (err) {
-      return mapRunnerError(err, args.signal);
+      return mapRunnerError(err, args.signal, deps.logger);
     }
   } finally {
     deps.logger?.warn('generation.job.rejections', {

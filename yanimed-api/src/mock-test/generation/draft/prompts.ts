@@ -17,6 +17,8 @@ export interface DraftPromptInput {
   topic: { topicKey: string; name: string };
   seedChunks: readonly SeedChunk[];
   acceptedObjectives?: readonly string[];
+  /** Bank objectives already covered; label warns the model not to repeat. */
+  bankObjectives?: readonly string[];
   avoidStems?: readonly string[];
   styleHint?: DraftStyleHint;
   lastRejectionCode?: string;
@@ -91,7 +93,7 @@ const CLINICAL_STEM_RULES = [
 
 /** Matches any data tag, open or close, in any case. */
 const DATA_TAG =
-  /<\s*\/?\s*(SOURCE_CHUNK|SOURCE_CHUNKS|TOPIC|SUBJECT|ACCEPTED_OBJECTIVES|AVOID_STEMS)\b[^>]*>/gi;
+  /<\s*\/?\s*(SOURCE_CHUNK|SOURCE_CHUNKS|TOPIC|SUBJECT|ACCEPTED_OBJECTIVES|AVOID_STEMS|BANK_OBJECTIVES)\b[^>]*>/gi;
 
 /** Matches role-like tags and role-prefixed lines inside untrusted text. */
 const ROLE_TAG = /<\s*\/?\s*(SYSTEM|USER|ASSISTANT|DEVELOPER)\b[^>]*>/gi;
@@ -150,6 +152,18 @@ export function buildDraftMessages(input: DraftPromptInput): AiMessage[] {
     .map((objective) => `- ${neutralize(objective.slice(0, ACCEPTED_OBJECTIVE_MAX_CHARS))}`);
   if (objectives.length > 0) {
     user.push('<ACCEPTED_OBJECTIVES>', ...objectives, '</ACCEPTED_OBJECTIVES>');
+  }
+
+  const bank = (input.bankObjectives ?? [])
+    .slice(0, ACCEPTED_OBJECTIVES_MAX)
+    .map((objective) => `- ${neutralize(objective.slice(0, ACCEPTED_OBJECTIVE_MAX_CHARS))}`);
+  if (bank.length > 0) {
+    user.push(
+      '<BANK_OBJECTIVES>',
+      'These facts are already covered in the question bank, do not repeat these facts.',
+      ...bank,
+      '</BANK_OBJECTIVES>',
+    );
   }
 
   const avoid = (input.avoidStems ?? [])

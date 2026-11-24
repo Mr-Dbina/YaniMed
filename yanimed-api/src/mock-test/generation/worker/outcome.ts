@@ -1,4 +1,5 @@
 import { GenerationError } from '../generation.errors.js';
+import { isPrismaTransientCode } from '../../../document-processing/processing-error.js';
 import type { GenerationFailureReason } from '../generation-job.types.js';
 import type { RunOutcome } from '../runner/ports.js';
 
@@ -57,9 +58,14 @@ export function actionForOutcome(outcome: RunOutcome): OutcomeAction {
 export function actionForThrow(
   error: unknown,
 ): Extract<OutcomeAction, { kind: 'FAIL' }> {
+  const code = errorCode(error);
+  // A transient Prisma fault is resumable, not a terminal internal error.
+  if (isPrismaTransientCode(code)) {
+    return failed('PROVIDER_UNAVAILABLE', { code, detail: errorName(error) });
+  }
   return failed('INTERNAL', {
     detail: errorName(error),
-    ...(errorCode(error) === undefined ? {} : { code: errorCode(error) }),
+    ...(code === undefined ? {} : { code }),
   });
 }
 

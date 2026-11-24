@@ -75,6 +75,21 @@ describe('outcome to action', () => {
     expect(JSON.stringify(action)).not.toContain(SENTINEL);
   });
 
+  it.each(['P1001', 'P1017', 'P2024', 'P2028'] as const)(
+    'maps a transient Prisma %s throw to a resumable failure',
+    (code) => {
+      const action = actionForThrow(Object.assign(new Error(SENTINEL), { code }));
+
+      expect(action).toEqual({
+        kind: 'FAIL',
+        failureReason: 'PROVIDER_UNAVAILABLE',
+        detail: 'Error',
+        code,
+      });
+      expect(JSON.stringify(action)).not.toContain(SENTINEL);
+    },
+  );
+
   it('keeps the code of a GenerationError and drops its message', () => {
     const action = actionForThrow(
       new GenerationError('GENERATION_VERIFIER_NOT_CONFIGURED'),

@@ -453,6 +453,7 @@ describe('verifyDraft output parsing', () => {
 
     expect(result.ok).toBe(true);
     expect(calls).toHaveLength(2);
+    const cleanReply = reply.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
     expect(warns).toEqual([
       {
         event: 'generation.verifier.parse_failed',
@@ -461,10 +462,15 @@ describe('verifyDraft output parsing', () => {
           bucket: 'NO_OBJECT',
           replyLength: reply.length,
           hasFence: 1,
+          parseError: 'No JSON object found in model response.',
+          replyHead: cleanReply.slice(0, 160),
+          replyTail: cleanReply.slice(-160),
         },
       },
     ]);
-    expect(JSON.stringify(warns)).not.toContain(sentinel);
+    // Head/tail contain part of the reply; full reply is not logged
+    expect(warns[0].fields?.replyHead).toBeDefined();
+    expect(warns[0].fields?.replyTail).toBeDefined();
   });
 
   it('logs the reply shape for a FLAGS failure without any reply text', async () => {
@@ -521,7 +527,11 @@ describe('verifyDraft output parsing', () => {
           '["SUPPORTED","NOT_ADDRESSED","NOT_ADDRESSED","NOT_ADDRESSED"]',
       },
     });
-    expect(JSON.stringify(warns)).not.toContain(sentinel);
+    // Head/tail contain part of the reply; full reply is not logged
+    const parseFailed = warns.find((w) => w.event === 'generation.verifier.parse_failed');
+    expect(parseFailed).toBeDefined();
+    expect(parseFailed!.fields?.replyHead).toBeDefined();
+    expect(parseFailed!.fields?.replyTail).toBeDefined();
   });
 
   it('ignores extra fields and tolerates a JSON fence', async () => {
@@ -626,5 +636,144 @@ describe('verifyDraft provider contract', () => {
 
     await verify(draft, ai);
     expect(draft).toEqual(snapshot);
+  });
+
+  it('first verifier request is byte-identical to base messages', async () => {
+    const { ai, calls } = fakeAi(
+      response([
+        ['SUPPORTED', Q_MET],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+      ]),
+    );
+
+    await verify(makeDraft(), ai);
+
+    expect(calls).toHaveLength(1);
+    const baseMessages = calls[0].messages;
+    expect(baseMessages).toHaveLength(2);
+    expect(baseMessages[0].role).toBe('system');
+    expect(baseMessages[1].role).toBe('user');
+  });
+
+  it('retry request differs from first and contains the instruction line', async () => {
+    const { ai, calls } = fakeAi(
+      'not json at all',
+      response([
+        ['SUPPORTED', Q_MET],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+      ]),
+    );
+
+    await verify(makeDraft(), ai);
+
+    expect(calls).toHaveLength(2);
+    const firstContent = calls[0].messages[1].content;
+    const secondContent = calls[1].messages[1].content;
+    expect(secondContent).not.toBe(firstContent);
+    expect(secondContent).toContain(
+      'Return exactly one JSON object and nothing else: no code fence, no commentary, escape every double quote inside strings.',
+    );
+    expect(secondContent).toContain(firstContent);
+  });
+
+  it('parse_failed log fields: replyHead and replyTail capped at 160 chars, control chars stripped', async () => {
+    const warns: Array<{
+      event: string;
+      fields?: Record<string, string | number | undefined>;
+    }> = [];
+    const longReply = 'x'.repeat(500);
+    const { ai } = fakeAi(
+      longReply,
+      response([
+        ['SUPPORTED', Q_MET],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+      ]),
+    );
+
+    await verifyDraft(makeDraft(), PAGE, ai, {
+      jobId: 'job-1',
+      logger: {
+        info: () => {},
+        warn: (event, fields) => warns.push({ event, fields }),
+        error: () => {},
+      },
+    });
+
+    const parseFailed = warns.find((w) => w.event === 'generation.verifier.parse_failed');
+    expect(parseFailed).toBeDefined();
+    expect(parseFailed!.fields!.replyHead).toHaveLength(160);
+    expect(parseFailed!.fields!.replyTail).toHaveLength(160);
+    expect(parseFailed!.fields!.replyHead).not.toMatch(/[\x00-\x1F\x7F-\x9F]/);
+    expect(parseFailed!.fields!.replyTail).not.toMatch(/[\x00-\x1F\x7F-\x9F]/);
+  });
+
+  it('parse_failed log fields: short reply head and tail may overlap', async () => {
+    const warns: Array<{
+      event: string;
+      fields?: Record<string, string | number | undefined>;
+    }> = [];
+    const shortReply = 'short';
+    const { ai } = fakeAi(
+      shortReply,
+      response([
+        ['SUPPORTED', Q_MET],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+      ]),
+    );
+
+    await verifyDraft(makeDraft(), PAGE, ai, {
+      jobId: 'job-1',
+      logger: {
+        info: () => {},
+        warn: (event, fields) => warns.push({ event, fields }),
+        error: () => {},
+      },
+    });
+
+    const parseFailed = warns.find((w) => w.event === 'generation.verifier.parse_failed');
+    expect(parseFailed).toBeDefined();
+    expect(parseFailed!.fields!.replyHead).toBe('short');
+    expect(parseFailed!.fields!.replyTail).toBe('short');
+  });
+
+  it('parse_failed log includes parseError with position for JSON bucket', async () => {
+    const warns: Array<{
+      event: string;
+      fields?: Record<string, string | number | undefined>;
+    }> = [];
+    const invalidJson = '{"verdicts": [{"index": 0, "verdict": "SUPPORTED", "quote": "x"},}]}';
+    const { ai } = fakeAi(
+      invalidJson,
+      response([
+        ['SUPPORTED', Q_MET],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+        ['NOT_ADDRESSED', ''],
+      ]),
+    );
+
+    await verifyDraft(makeDraft(), PAGE, ai, {
+      jobId: 'job-1',
+      logger: {
+        info: () => {},
+        warn: (event, fields) => warns.push({ event, fields }),
+        error: () => {},
+      },
+    });
+
+    const parseFailed = warns.find((w) => w.event === 'generation.verifier.parse_failed');
+    expect(parseFailed).toBeDefined();
+    expect(parseFailed!.fields!.bucket).toBe('JSON');
+    expect(parseFailed!.fields!.parseError).toBeDefined();
+    expect(typeof parseFailed!.fields!.parseError).toBe('string');
+    expect((parseFailed!.fields!.parseError as string).length).toBeGreaterThan(0);
   });
 });

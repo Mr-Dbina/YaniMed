@@ -91,6 +91,11 @@ describe('classifyProcessingError', () => {
       expected: expected('DB_TRANSIENT', 'AUTO_RETRY'),
     },
     {
+      name: 'rule d: Prisma P2028 is DB_TRANSIENT',
+      error: coded('P2028', 'transaction expired'),
+      expected: expected('DB_TRANSIENT', 'AUTO_RETRY'),
+    },
+    {
       name: 'rule d: Prisma P2034 is DB_TRANSIENT',
       error: coded('P2034', 'write conflict'),
       expected: expected('DB_TRANSIENT', 'AUTO_RETRY'),

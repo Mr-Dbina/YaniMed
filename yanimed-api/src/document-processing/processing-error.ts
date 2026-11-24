@@ -30,8 +30,14 @@ const PRISMA_RETRY_CODES = new Set([
   'P1008',
   'P1017',
   'P2024',
+  'P2028',
   'P2034',
 ]);
+
+/** True for Prisma error codes that a retry can recover from. */
+export function isPrismaTransientCode(code: string | undefined): boolean {
+  return code !== undefined && PRISMA_RETRY_CODES.has(code);
+}
 
 export const TRANSIENT_NETWORK_CODES = new Set([
   'ECONNRESET',

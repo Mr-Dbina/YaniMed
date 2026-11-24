@@ -25,6 +25,8 @@ export interface DraftQuestionArgs {
   topic: { topicKey: string; name: string };
   seedChunks: SeedChunk[];
   acceptedObjectives: string[];
+  /** Bank objectives already covered; kept separate from in-job objectives. */
+  bankObjectives?: string[];
   styleHint?: DraftStyleHint;
   avoidStems?: string[];
   lastRejectionCode?: string;
@@ -192,6 +194,7 @@ export async function draftQuestion(
     topic: args.topic,
     seedChunks: args.seedChunks,
     acceptedObjectives: args.acceptedObjectives,
+    bankObjectives: args.bankObjectives,
     avoidStems: args.avoidStems,
     styleHint: args.styleHint,
     lastRejectionCode: args.lastRejectionCode,

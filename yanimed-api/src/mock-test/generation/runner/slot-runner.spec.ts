@@ -785,4 +785,38 @@ describe('runSlot rejection logging', () => {
       fields: { jobId: 'job-1', slot: 0 },
     });
   });
+
+  it('logs the Check C match key and similarity but no stem text', async () => {
+    const { logger, warns } = fakeLogger();
+    const checkC = vi
+      .fn<SlotRunnerDeps['checkC']>()
+      .mockResolvedValueOnce({
+        ok: false,
+        embedding: null,
+        reasons: [
+          { code: 'DUPLICATE_IN_BANK', detail: 'bank-question-7 0.9123' },
+        ],
+        skippedBankRefs: 0,
+      })
+      .mockResolvedValue({
+        ok: true,
+        embedding: basis(1),
+        maxSimilarity: 0,
+        skippedBankRefs: 0,
+      });
+
+    await runSlot(makeArgs({ deps: fakeDeps({ checkC, logger }) }));
+
+    expect(warns).toContainEqual({
+      event: 'generation.slot.rejected',
+      fields: {
+        jobId: 'job-1',
+        slot: 0,
+        check: 'C',
+        code: 'DUPLICATE_IN_BANK',
+        detail: 'bank-question-7 0.9123',
+      },
+    });
+    expect(JSON.stringify(warns)).not.toContain('Stem one.');
+  });
 });

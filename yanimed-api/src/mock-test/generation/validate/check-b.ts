@@ -85,7 +85,7 @@ export async function verifyDraft(
   opts: VerifyDraftOptions,
 ): Promise<CheckBResult> {
   const polarity = detectPolarity(draft.stem, draft.leadIn);
-  const messages = buildVerifierMessages({
+  const baseMessages = buildVerifierMessages({
     stem: draft.stem,
     leadIn: draft.leadIn,
     choices: draft.choices.map((choice) => choice.text),
@@ -94,6 +94,19 @@ export async function verifyDraft(
 
   let parsed: VerifierResponse | null = null;
   for (let attempt = 0; attempt < MAX_VERIFIER_CALLS && parsed === null; attempt += 1) {
+    const messages =
+      attempt === 0
+        ? baseMessages
+        : [
+            baseMessages[0],
+            {
+              role: baseMessages[1].role,
+              content:
+                baseMessages[1].content +
+                '\nReturn exactly one JSON object and nothing else: no code fence, no commentary, escape every double quote inside strings.',
+            },
+          ];
+
     const result = await ai.complete({
       purpose: 'VERIFY',
       jobId: opts.jobId,
@@ -108,11 +121,15 @@ export async function verifyDraft(
     } catch (error) {
       parsed = null;
       if (error instanceof VerifierParseError) {
+        const cleanText = result.text.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
         opts.logger?.warn('generation.verifier.parse_failed', {
           jobId: opts.jobId,
           bucket: error.bucket,
           replyLength: result.text.length,
           hasFence: /```/.test(result.text) ? 1 : 0,
+          parseError: error.parseError ?? error.message,
+          replyHead: cleanText.slice(0, 160),
+          replyTail: cleanText.slice(-160),
         });
         if (error.shape !== undefined) {
           opts.logger?.warn('generation.verifier.shape', {
