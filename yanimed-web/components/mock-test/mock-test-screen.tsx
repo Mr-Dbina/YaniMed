@@ -17,6 +17,7 @@ import {
   skipQuestion,
   startAttempt,
   submitAttempt,
+  reportQuestion,
   type ExamResult,
   type ExamReview,
   type GenerationJobSummary,
@@ -800,6 +801,11 @@ function MockTestSession({
     }
   };
 
+  const handleReport = async (reason: string, details: string) => {
+    if (!question || !attemptId) return;
+    await reportQuestion(question.attemptId, { reason: reason as any, details });
+  };
+
   const saveEdit = async (position: number, choiceId: string, key: string) => {
     if (!attemptId || sessionVersion === null) return;
     const epoch = epochRef.current;
@@ -970,6 +976,7 @@ function MockTestSession({
         onRetryAnswer={handleRetryAnswer}
         onSkip={() => void handleSkip()}
         onExit={handleExit}
+        onReport={handleReport}
       />
     );
   } else if (phase === "review") {
@@ -988,6 +995,7 @@ function MockTestSession({
         onRetryEdit={handleRetryEdit}
         onRequestSubmit={() => setConfirmSubmitOpen(true)}
         onExit={handleExit}
+        onReport={handleReport}
       />
     );
   } else if (phase === "result" && result) {

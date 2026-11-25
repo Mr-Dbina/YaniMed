@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { Flag } from "lucide-react";
 import type { NavigatorItem } from "@/lib/mock-test-api";
+import { ReportQuestionModal } from "@/components/mock-test/report-question-modal";
 
 interface PendingEdit {
   position: number;
@@ -22,6 +24,7 @@ interface MockTestReviewProps {
   onRetryEdit: () => void;
   onRequestSubmit: () => void;
   onExit: () => void;
+  onReport: (reason: string, details: string) => Promise<void>;
 }
 
 export function MockTestReview({
@@ -38,8 +41,25 @@ export function MockTestReview({
   onRetryEdit,
   onRequestSubmit,
   onExit,
+  onReport,
 }: MockTestReviewProps) {
   const [currentPosition, setCurrentPosition] = useState<number | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
+
+  const handleReportSubmit = async (reason: string, details: string) => {
+    setReportBusy(true);
+    setReportError(null);
+    try {
+      await onReport(reason, details);
+      setReportOpen(false);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "Failed to submit report");
+    } finally {
+      setReportBusy(false);
+    }
+  };
 
   const ordered = items ? [...items].sort((a, b) => a.position - b.position) : [];
   const current =
@@ -170,6 +190,17 @@ export function MockTestReview({
             <div className="mock-test__actions">
               <button
                 type="button"
+                className="mock-test__btn mock-test__btn--ghost mock-test__report-btn"
+                onClick={() => setReportOpen(true)}
+                disabled={disabled}
+                aria-label="Report a problem with this question"
+                title="Report question"
+              >
+                <Flag size={18} aria-hidden="true" />
+                <span className="mock-test__report-label">Report</span>
+              </button>
+              <button
+                type="button"
                 className="mock-test__btn mock-test__btn--ghost"
                 disabled={index <= 0}
                 onClick={() => setCurrentPosition(ordered[index - 1].position)}
@@ -257,6 +288,15 @@ export function MockTestReview({
           )}
         </div>
       </div>
+
+      <ReportQuestionModal
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        onSubmit={handleReportSubmit}
+        busy={reportBusy}
+        error={reportError}
+        questionPosition={activePosition}
+      />
     </section>
   );
 }

@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowLeft, ArrowRight, SkipForward } from "lucide-react";
+import { ArrowLeft, ArrowRight, SkipForward, Flag } from "lucide-react";
 import type { MockQuestion } from "@/lib/mock-test-api";
+import { ReportQuestionModal } from "@/components/mock-test/report-question-modal";
 
 interface MockTestQuestionProps {
   question: MockQuestion;
@@ -19,6 +20,7 @@ interface MockTestQuestionProps {
   onRetryAnswer: () => void;
   onSkip: () => void;
   onExit: () => void;
+  onReport: (reason: string, details: string) => Promise<void>;
 }
 
 export function MockTestQuestion({
@@ -35,13 +37,30 @@ export function MockTestQuestion({
   onRetryAnswer,
   onSkip,
   onExit,
+  onReport,
 }: MockTestQuestionProps) {
   const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
   const disabled = busy || readOnly;
   const progressPercent =
     answeredCount === null
       ? 0
       : Math.min(100, Math.round((answeredCount / question.total) * 100));
+
+  const handleReportSubmit = async (reason: string, details: string) => {
+    setReportBusy(true);
+    setReportError(null);
+    try {
+      await onReport(reason, details);
+      setReportOpen(false);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "Failed to submit report");
+    } finally {
+      setReportBusy(false);
+    }
+  };
 
   return (
     <section className="mock-test" aria-labelledby="mock-test-question-heading">
@@ -58,6 +77,17 @@ export function MockTestQuestion({
         <p className="mock-test__step" id="mock-test-question-heading">
           Question {question.position} of {question.total}
         </p>
+        <button
+          type="button"
+          className="mock-test__btn mock-test__btn--ghost mock-test__report-btn"
+          onClick={() => setReportOpen(true)}
+          disabled={disabled}
+          aria-label="Report a problem with this question"
+          title="Report question"
+        >
+          <Flag size={18} aria-hidden="true" />
+          <span className="mock-test__report-label">Report</span>
+        </button>
       </header>
 
       {answeredCount !== null && (
@@ -174,6 +204,15 @@ export function MockTestQuestion({
           </div>
         </form>
       </div>
+
+      <ReportQuestionModal
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        onSubmit={handleReportSubmit}
+        busy={reportBusy}
+        error={reportError}
+        questionPosition={question.position}
+      />
     </section>
   );
 }

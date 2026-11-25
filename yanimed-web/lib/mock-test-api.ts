@@ -180,6 +180,66 @@ export interface DiscardAttemptResponse {
   status: "ABANDONED";
 }
 
+export type QuestionReportReason =
+  | "ANSWER_KEY"
+  | "AMBIGUITY"
+  | "CITATION"
+  | "EXPLANATION"
+  | "OTHER";
+
+export type QuestionReportStatus = "OPEN" | "ACCEPTED" | "DISMISSED";
+
+export interface QuestionReport {
+  id: string;
+  attemptId: string;
+  questionId: string;
+  reason: QuestionReportReason;
+  details: string | null;
+  status: QuestionReportStatus;
+  resolutionNote: string | null;
+  createdAt: string;
+}
+
+export interface QuarantinedQuestion {
+  questionId: string;
+  stem: string;
+  leadIn: string | null;
+  choices: {
+    id: string;
+    position: number;
+    text: string;
+    isCorrect: boolean;
+    explanation: string;
+  }[];
+  citations: {
+    documentTitleSnapshot: string;
+    pageNumber: number;
+    quote: string;
+  }[];
+  educationalObjective: string;
+  status: "QUARANTINED" | "RETIRED" | "ACTIVE";
+  reports: QuestionReport[];
+}
+
+export interface ReportQuestionInput {
+  reason: QuestionReportReason;
+  details?: string;
+}
+
+export interface ResolveReportInput {
+  action: "RESTORE" | "RETIRE";
+  resolutionNote?: string;
+  stem?: string;
+  leadIn?: string | null;
+  educationalObjective?: string;
+  choices?: {
+    position: number;
+    text: string;
+    isCorrect: boolean;
+    explanation: string;
+  }[];
+}
+
 export interface MockTestErrorBody {
   code?: string;
   message?: string;
@@ -407,5 +467,36 @@ export async function cancelGenerationJob(
   return request<{ jobId: string; state: "CANCELLING" }>(
     `${generationJobPath(jobId)}/cancel`,
     { method: "POST" },
+  );
+}
+
+function questionsPath(): string {
+  return `/mock-test/questions`;
+}
+
+export async function reportQuestion(
+  questionId: string,
+  input: ReportQuestionInput,
+): Promise<QuestionReport> {
+  return request<QuestionReport>(`${questionsPath()}/${encodeURIComponent(questionId)}/report`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getQuarantinedQuestions(): Promise<QuarantinedQuestion[]> {
+  return request<QuarantinedQuestion[]>(`${questionsPath()}/quarantined`);
+}
+
+export async function resolveReport(
+  questionId: string,
+  input: ResolveReportInput,
+): Promise<{ questionId: string; status: "ACTIVE" | "RETIRED" }> {
+  return request<{ questionId: string; status: "ACTIVE" | "RETIRED" }>(
+    `${questionsPath()}/${encodeURIComponent(questionId)}/resolve-report`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
   );
 }

@@ -1,4 +1,4 @@
-import { Bell, CircleGauge, Folder, Mic, Settings } from "lucide-react";
+import { Bell, CircleGauge, Folder, Flag, Mic, Settings } from "lucide-react";
 import { SunSlashIcon } from "@/components/icons/sun-slash-icon";
 
 export interface MenuIconProps {
@@ -28,4 +28,5 @@ export const settingsItems: SettingsItem[] = [
   { label: "Voice", icon: Mic, href: "/settings/voice" },
   { label: "Storage", icon: Folder, href: "/settings/storage" },
   { label: "Personalization", icon: CircleGauge, href: "/settings/personalization" },
+  { label: "Quarantined Questions", icon: Flag, href: "/settings/quarantined-questions" },
 ];
