@@ -14,15 +14,15 @@ import {
   type Type,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { QuestionsService, type QuarantinedQuestionResponse } from './questions.service.js';
+import { QuestionsService } from './questions.service.js';
 import { MockTestErrorFilter } from './mock-test-error.filter.js';
 import { MockTestGuard } from './mock-test.guard.js';
 import {
   QuestionReportDto,
   QuarantinedQuestionDto,
   ReportQuestionBody,
-  ResolveReportBody,
   ResolveReportBodyDto,
+  type ResolveReportBody,
 } from './exam.dto.js';
 
 function validated(expectedType: Type<unknown>): ValidationPipe {

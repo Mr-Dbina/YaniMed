@@ -18,6 +18,7 @@ import { DocumentProcessingModule } from './document-processing/document-process
 import { RetrievalModule } from './retrieval/retrieval.module.js';
 import { SubjectsModule } from './subjects/subjects.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
+import { AnalyticsModule } from './analytics/analytics.module.js';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { DashboardModule } from './dashboard/dashboard.module.js';
     DocumentProcessingModule,
     RetrievalModule,
     DashboardModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
