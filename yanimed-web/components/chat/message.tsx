@@ -144,6 +144,116 @@ function deduplicateCitations(citations: ChatCitation[]): ChatCitation[] {
   });
 }
 
+function normalizeMarkdownTables(content: string): string {
+  if (!content.includes('|')) return content;
+  
+  // First, split collapsed "| |" row boundaries onto separate lines
+  let processed = content.replace(/\|\s*\|\s*(?=\S)/g, '|\n|');
+  
+  // Split mid-paragraph tables: insert blank line before table that starts after prose
+  // Matches: text ending with word + space + | at start of table row
+  processed = processed.replace(/(\S)\s+\|(?=\s*\S)/g, '$1\n\n|');
+  
+  const lines = processed.split('\n');
+  const result: string[] = [];
+  let inTable = false;
+  let tableBuffer: string[] = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    const isTableRow = trimmed.startsWith('|') || 
+      (trimmed.includes('|') && (trimmed.match(/\|/g) || []).length >= 2);
+    const isSeparatorRow = trimmed.startsWith('|') && /^[\s\|\-\:]+$/.test(trimmed);
+    
+    if (isTableRow) {
+      if (!inTable) {
+        inTable = true;
+        tableBuffer = [];
+        if (result.length > 0 && result[result.length - 1].trim() !== '') {
+          result.push('');
+        }
+      }
+      let normalized = line.replace(/\|\|+/g, '|');
+      if (!normalized.trim().startsWith('|')) {
+        normalized = '| ' + normalized.trim();
+      }
+      if (!normalized.trim().endsWith('|')) {
+        normalized = normalized.trim() + ' |';
+      }
+      tableBuffer.push(normalized);
+    } else {
+      if (inTable && tableBuffer.length > 0) {
+        if (tableBuffer.length >= 2) {
+          const firstRow = tableBuffer[0];
+          const secondRow = tableBuffer[1];
+          const isHeaderSeparator = secondRow.trim().startsWith('|') && /^[\s\|\-\:]+$/.test(secondRow.trim());
+          if (!isHeaderSeparator) {
+            const colCount = (firstRow.match(/\|/g) || []).length;
+            const separator = '|' + ' --- |'.repeat(colCount - 1);
+            tableBuffer.splice(1, 0, separator);
+          }
+        }
+        result.push(...tableBuffer);
+        tableBuffer = [];
+        inTable = false;
+      }
+      result.push(line);
+    }
+  }
+  
+  if (inTable && tableBuffer.length > 0) {
+    if (tableBuffer.length >= 2) {
+      const firstRow = tableBuffer[0];
+      const secondRow = tableBuffer[1];
+      const isHeaderSeparator = secondRow.trim().startsWith('|') && /^[\s\|\-\:]+$/.test(secondRow.trim());
+      if (!isHeaderSeparator) {
+        const colCount = (firstRow.match(/\|/g) || []).length;
+        const separator = '|' + ' --- |'.repeat(colCount - 1);
+        tableBuffer.splice(1, 0, separator);
+      }
+    }
+    result.push(...tableBuffer);
+  }
+  
+  return result.join('\n');
+}
+
+function stripUnmappedSourceMarkers(content: string, citations: ChatCitation[]): string {
+  if (!content.includes('[')) return content;
+  
+  const validIndices = new Set(citations.map((_, i) => i + 1));
+  const validSourceIds = new Set(citations.filter(c => c.sourceId).map(c => c.sourceId));
+  
+  return content.replace(/\[S(\d+)\]/g, (match, numStr) => {
+    const num = parseInt(numStr, 10);
+    if (validIndices.has(num)) {
+      return `[${num}]`;
+    }
+    if (validSourceIds.has(`S${numStr}`)) {
+      return match;
+    }
+    return '';
+  });
+}
+
+// Apply stripUnmappedSourceMarkers to table cell content as well
+function stripUnmappedSourceMarkersInTable(content: string, citations: ChatCitation[]): string {
+  const validIndices = new Set(citations.map((_, i) => i + 1));
+  const validSourceIds = new Set(citations.filter(c => c.sourceId).map(c => c.sourceId));
+  
+  return content.replace(/\[S(\d+)\]/g, (match, numStr) => {
+    const num = parseInt(numStr, 10);
+    if (validIndices.has(num)) {
+      return `[${num}]`;
+    }
+    if (validSourceIds.has(`S${numStr}`)) {
+      return match;
+    }
+    return '';
+  });
+}
+
 function parseContentWithCitations(content: string, citations: ChatCitation[], onCitationClick: (citation: ChatCitation, index: number) => void): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   let lastIndex = 0;
@@ -352,6 +462,12 @@ export function Message({
                       <table>{children}</table>
                     </div>
                   ),
+                  td: ({ children }) => (
+                    <td>{stripUnmappedSourceMarkersInTable(String(children), citations)}</td>
+                  ),
+                  th: ({ children }) => (
+                    <th>{stripUnmappedSourceMarkersInTable(String(children), citations)}</th>
+                  ),
                   pre: ({ children }) => (
                     <pre className="chat-markdown__scroll" tabIndex={0} aria-label="Scrollable code block">
                       {children}
@@ -365,9 +481,9 @@ export function Message({
                   ),
                 }}
               >
-                {message.content}
+                {normalizeMarkdownTables(stripUnmappedSourceMarkers(message.content, citations))}
               </ReactMarkdown>
-              <CitationMarkers content={message.content} citations={citations} onCitationClick={handleCitationClick} />
+              <CitationMarkers content={stripUnmappedSourceMarkers(message.content, citations)} citations={citations} onCitationClick={handleCitationClick} />
             </div>
             {showCitations && (
               <div className="subject-chat__sources" role="list" aria-label="Sources">

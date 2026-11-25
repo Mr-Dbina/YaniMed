@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from "react";
 import { ChevronLeft, ChevronRight, Minimize2, Maximize2, X, BookOpen, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import type { ChatCitation } from "@/lib/types";
+import { getSubjectDocuments } from "@/lib/backend-api";
 import * as pdfjsLib from "pdfjs-dist";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
@@ -19,6 +20,7 @@ interface PDFViewerProps {
   zoom: number;
   onZoomChange: (zoom: number) => void;
   documentId: string;
+  subjectId?: string;
 }
 
 export interface PDFViewerRef {
@@ -37,6 +39,7 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
   zoom,
   onZoomChange,
   documentId,
+  subjectId,
 }, ref) => {
   const [isLoading, setIsLoading] = useState(true);
   const [pageImageSrc, setPageImageSrc] = useState<string | null>(null);
@@ -44,17 +47,19 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
   const [sourceUnavailable, setSourceUnavailable] = useState(false);
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [actualTotalPages, setActualTotalPages] = useState(totalPages);
+  const [fallbackAttempted, setFallbackAttempted] = useState(false);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const activeCitation = citations[activeCitationIndex];
+  const targetPageRef = useRef(currentPage);
 
-  const fetchPdfDoc = useCallback(async () => {
+  const fetchPdfDoc = useCallback(async (docId: string) => {
     try {
-      const response = await fetch(`/api/documents/${documentId}/file`);
+      const response = await fetch(`/api/documents/${docId}/file`);
       if (!response.ok) {
         if (response.status === 404) {
-          setSourceUnavailable(true);
-          return;
+          return false;
         }
         throw new Error("Failed to load PDF");
       }
@@ -63,10 +68,49 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
       setPdfDoc(pdf);
       setActualTotalPages(pdf.numPages);
       setSourceUnavailable(false);
+      return true;
     } catch {
-      setSourceUnavailable(true);
+      return false;
     }
-  }, [documentId]);
+  }, []);
+
+  const fetchWithFallback = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    const success = await fetchPdfDoc(documentId);
+    const targetPageExceedsPages = targetPageRef.current > actualTotalPages && actualTotalPages > 0;
+    
+    // Treat as failure if: load failed, OR PDF has 1 page but target page > 1
+    if (success && !targetPageExceedsPages) {
+      setIsLoading(false);
+      return;
+    }
+
+    if (subjectId && !fallbackAttempted) {
+      setFallbackAttempted(true);
+      setFallbackLoading(true);
+      try {
+        const documents = await getSubjectDocuments(subjectId);
+        const readyDocs = documents.filter(d => d.status === 'READY' && (d.pageCount ?? 0) > 0);
+        if (readyDocs.length > 0) {
+          readyDocs.sort((a, b) => (b.pageCount ?? 0) - (a.pageCount ?? 0));
+          for (const doc of readyDocs) {
+            const fallbackSuccess = await fetchPdfDoc(doc.documentId);
+            if (fallbackSuccess) {
+              setFallbackLoading(false);
+              setIsLoading(false);
+              return;
+            }
+          }
+        }
+      } catch {
+        // Fallback failed, will show source unavailable
+      }
+      setFallbackLoading(false);
+    }
+    setSourceUnavailable(true);
+    setIsLoading(false);
+  }, [documentId, subjectId, fallbackAttempted, fetchPdfDoc, pdfDoc, actualTotalPages]);
 
   const renderPage = useCallback(async (page: number) => {
     if (!pdfDoc || page < 1 || page > actualTotalPages) {
@@ -106,20 +150,43 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
 
   useEffect(() => {
     if (!pdfDoc) {
-      fetchPdfDoc();
+      fetchWithFallback();
     }
     return () => {
       if (pageImageSrc) {
         setPageImageSrc(null);
       }
     };
-  }, [fetchPdfDoc]);
+  }, [fetchWithFallback]);
 
   useEffect(() => {
     if (pdfDoc && currentPage > 0) {
-      renderPage(currentPage);
+      const clampedPage = Math.min(Math.max(1, currentPage), actualTotalPages);
+      if (clampedPage !== currentPage) {
+        onPageChange(clampedPage);
+      } else {
+        renderPage(currentPage);
+      }
     }
-  }, [currentPage, pdfDoc, zoom, renderPage]);
+    // Trigger fallback if we have a PDF but it has <= 1 page and target page > 1
+    if (pdfDoc && actualTotalPages <= 1 && targetPageRef.current > 1 && subjectId && !fallbackAttempted) {
+      fetchWithFallback();
+    }
+  }, [currentPage, pdfDoc, zoom, renderPage, actualTotalPages, onPageChange, subjectId, fallbackAttempted, fetchWithFallback]);
+
+  useEffect(() => {
+    if (actualTotalPages > 0 && targetPageRef.current > actualTotalPages) {
+      onPageChange(actualTotalPages);
+    }
+    targetPageRef.current = currentPage;
+  }, [actualTotalPages, currentPage, onPageChange]);
+
+  // Clamp current page when total pages changes (e.g., after fallback loads multi-page PDF)
+  useEffect(() => {
+    if (pdfDoc && actualTotalPages > 0 && currentPage > actualTotalPages) {
+      onPageChange(actualTotalPages);
+    }
+  }, [actualTotalPages, currentPage, onPageChange, pdfDoc]);
 
   useEffect(() => {
     if (activeCitation && activeCitation.page !== currentPage) {
@@ -141,7 +208,8 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
 
   const handleRetry = () => {
     setSourceUnavailable(false);
-    fetchPdfDoc();
+    setFallbackAttempted(false);
+    fetchWithFallback();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -234,7 +302,7 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
       </div>
 
       <div className="pdf-viewer__canvas" role="img" aria-label={`PDF page ${currentPage} of ${actualTotalPages}`}>
-        {sourceUnavailable && (
+        {sourceUnavailable && !fallbackLoading && (
           <div className="pdf-viewer__error" role="alert" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "16px", padding: "24px" }}>
             <AlertCircle size={48} style={{ color: "hsl(var(--destructive))" }} aria-hidden="true" />
             <div style={{ textAlign: "center" }}>
@@ -266,10 +334,10 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
         )}
         {!sourceUnavailable && (
           <>
-            {isLoading && (
+            {(isLoading || fallbackLoading) && (
               <div className="pdf-viewer__loader" aria-live="polite">
                 <Loader2 size={32} className="animate-spin" aria-hidden="true" />
-                <span className="sr-only">Loading page {currentPage}...</span>
+                <span className="sr-only">{fallbackLoading ? "Finding alternate source..." : `Loading page ${currentPage}...`}</span>
               </div>
             )}
             {error && (

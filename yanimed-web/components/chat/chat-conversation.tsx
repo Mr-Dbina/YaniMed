@@ -56,6 +56,7 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
   const [documentId, setDocumentId] = useState<string | null>(null);
   const pdfContainerRef = useRef<PDFViewerRef>(null);
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 860;
+  const savedScrollTopRef = useRef<number | null>(null);
 
   const canSend = draft.trim().length > 0 && !isPending && !disabledReason;
 
@@ -221,18 +222,31 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
       setDocumentId(citation.documentId);
     }
     if (!pdfOpen) {
+      const viewport = viewportRef.current;
+      if (viewport) savedScrollTopRef.current = viewport.scrollTop;
       setPdfOpen(true);
       setPdfExpanded(false);
     }
   };
 
   const handleClosePdf = () => {
+    const viewport = viewportRef.current;
+    if (viewport && savedScrollTopRef.current !== null) {
+      requestAnimationFrame(() => {
+        viewport.scrollTop = savedScrollTopRef.current!;
+      });
+    }
+    savedScrollTopRef.current = null;
     setPdfOpen(false);
     setPdfExpanded(false);
     setActiveCitationIndex(0);
   };
 
   const handleToggleExpand = () => {
+    const viewport = viewportRef.current;
+    if (viewport) {
+      savedScrollTopRef.current = viewport.scrollTop;
+    }
     setPdfExpanded(prev => !prev);
   };
 
@@ -293,7 +307,8 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
           {disabledReason ? "PDF not indexed · chat unavailable" : "Development preview · ungrounded · not for studying"}
         </p>
       )}
-      <div className="subject-chat__viewport" ref={viewportRef} onScroll={(event) => {
+      <div className="subject-chat__left">
+        <div className="subject-chat__viewport" ref={viewportRef} onScroll={(event) => {
         const element = event.currentTarget;
         const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
         followLatest.current = isAtBottom;
@@ -391,8 +406,9 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
       </form>
       <p className="subject-chat__disclaimer">YaniMed is AI and can make mistakes.</p>
       {disabledReason && <p id="chat-disabled-reason" className="subject-chat__notice">{disabledReason}</p>}
+      </div>
 
-      {pdfOpen && documentId && (
+      {pdfOpen && subjectId && (
         <PDFViewer
           ref={pdfContainerRef}
           citations={citationsToShow}
@@ -405,7 +421,8 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
           currentPage={currentPdfPage}
           zoom={pdfZoom}
           onZoomChange={setPdfZoom}
-          documentId={documentId}
+          documentId={documentId ?? ''}
+          subjectId={subjectId}
         />
       )}
 
