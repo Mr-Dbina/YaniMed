@@ -260,3 +260,82 @@ export class SubmitBody {
 }
 
 export { QUESTIONS_PER_TEST };
+
+/** Question report reasons matching the Prisma enum. */
+export type QuestionReportReason =
+  | 'ANSWER_KEY'
+  | 'AMBIGUITY'
+  | 'CITATION'
+  | 'EXPLANATION'
+  | 'OTHER';
+
+export type QuestionReportStatus = 'OPEN' | 'ACCEPTED' | 'DISMISSED';
+
+export interface QuestionReportDto {
+  id: string;
+  attemptId: string;
+  questionId: string;
+  reason: QuestionReportReason;
+  details: string | null;
+  status: QuestionReportStatus;
+  resolutionNote: string | null;
+  createdAt: Date;
+}
+
+export interface QuarantinedQuestionDto {
+  questionId: string;
+  stem: string;
+  leadIn: string | null;
+  choices: { id: string; position: number; text: string; isCorrect: boolean; explanation: string }[];
+  citations: { documentTitleSnapshot: string; pageNumber: number; quote: string }[];
+  educationalObjective: string;
+  status: 'QUARANTINED' | 'RETIRED';
+  reports: QuestionReportDto[];
+}
+
+export interface ResolveReportBody {
+  action: 'RESTORE' | 'RETIRE';
+  resolutionNote?: string;
+  stem?: string;
+  leadIn?: string | null;
+  choices?: { position: number; text: string; isCorrect: boolean; explanation: string }[];
+  educationalObjective?: string;
+}
+
+export class ReportQuestionBody {
+  @ApiProperty({ enum: ['ANSWER_KEY', 'AMBIGUITY', 'CITATION', 'EXPLANATION', 'OTHER'] })
+  @IsString()
+  reason!: QuestionReportReason;
+
+  @ApiProperty({ required: false, maxLength: 2000 })
+  @IsString()
+  @MaxLength(2000)
+  @MinLength(1)
+  details?: string;
+}
+
+export class ResolveReportBodyDto {
+  @ApiProperty({ enum: ['RESTORE', 'RETIRE'] })
+  @IsString()
+  action!: 'RESTORE' | 'RETIRE';
+
+  @ApiProperty({ required: false, maxLength: 2000 })
+  @IsString()
+  @MaxLength(2000)
+  resolutionNote?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  stem?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  leadIn?: string | null;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  educationalObjective?: string;
+
+  @ApiProperty({ required: false, type: 'array', items: { type: 'object' } })
+  choices?: { position: number; text: string; isCorrect: boolean; explanation: string }[];
+}
