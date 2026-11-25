@@ -30,6 +30,7 @@ function makeFake() {
     generationJob: {
       findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       create: vi.fn(),
       updateMany: vi.fn(),
@@ -38,8 +39,27 @@ function makeFake() {
       async (callback: (tx: unknown) => unknown) => callback(fake),
     ),
     $queryRaw: vi.fn(),
+    chunk: { count: vi.fn() },
+    mockQuestion: { count: vi.fn() },
   };
   return fake;
+}
+
+function makeLatest(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'job-1',
+    state: 'FAILED',
+    acceptedCount: 10,
+    requestedCount: 25,
+    failureReason: 'VALIDATION_EXHAUSTED',
+    recoveryCount: 0,
+    planJson: null,
+    subject: { status: 'ACTIVE' },
+    documents: [
+      { documentId: 'doc-1', document: { status: 'READY' } },
+    ],
+    ...overrides,
+  };
 }
 
 function repoFor(fake: ReturnType<typeof makeFake>): GenerationJobRepository {
@@ -152,6 +172,96 @@ describe('GenerationJobRepository.createJob', () => {
     });
 
     expect(result.created).toBe(false);
+  });
+});
+
+describe('GenerationJobRepository.resumeLatestFailedJob', () => {
+  function prepareResume(fake: ReturnType<typeof makeFake>, latest: unknown): void {
+    fake.generationJob.findFirst
+      .mockResolvedValueOnce(latest)
+      .mockResolvedValueOnce(null);
+    fake.generationJob.updateMany.mockResolvedValue({ count: 1 });
+    fake.generationJob.findUniqueOrThrow.mockResolvedValue(
+      makeRow({ state: 'QUEUED', acceptedCount: 10, recoveryCount: 6 }),
+    );
+  }
+
+  it('resumes a partial job above the recovery cap and for any reason', async () => {
+    const fake = makeFake();
+    prepareResume(
+      fake,
+      makeLatest({
+        state: 'FAILED',
+        failureReason: 'INTERNAL',
+        recoveryCount: 5,
+        acceptedCount: 10,
+      }),
+    );
+
+    const result = await repoFor(fake).resumeLatestFailedJob('subject-1');
+
+    expect(result).toMatchObject({
+      resumed: true,
+      created: false,
+      previousFailureReason: 'INTERNAL',
+    });
+    expect(result?.job.acceptedCount).toBe(10);
+    expect(fake.generationJob.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'job-1',
+        state: { in: ['FAILED', 'CANCELLED'] },
+        recoveryCount: 5,
+      },
+      data: expect.objectContaining({ state: 'QUEUED' }),
+    });
+    expect(fake.generationJob.updateMany.mock.calls[0][0].data)
+      .not.toHaveProperty('acceptedCount');
+  });
+
+  it('resumes a WORKER_LOST partial job from its acceptedCount', async () => {
+    const fake = makeFake();
+    prepareResume(
+      fake,
+      makeLatest({ state: 'FAILED', failureReason: 'WORKER_LOST', recoveryCount: 3 }),
+    );
+
+    const result = await repoFor(fake).resumeLatestFailedJob('subject-1');
+
+    expect(result?.resumed).toBe(true);
+    expect(result?.job.acceptedCount).toBe(10);
+  });
+
+  it('resumes a CANCELLED partial job from its acceptedCount', async () => {
+    const fake = makeFake();
+    prepareResume(
+      fake,
+      makeLatest({
+        state: 'CANCELLED',
+        failureReason: null,
+        recoveryCount: 4,
+        acceptedCount: 7,
+      }),
+    );
+
+    const result = await repoFor(fake).resumeLatestFailedJob('subject-1');
+
+    expect(result).toMatchObject({
+      resumed: true,
+      previousFailureReason: null,
+    });
+    expect(result?.job.acceptedCount).toBe(10);
+  });
+
+  it('does not resume a CANCELLED job with no accepted questions', async () => {
+    const fake = makeFake();
+    fake.generationJob.findFirst.mockResolvedValueOnce(
+      makeLatest({ state: 'CANCELLED', failureReason: null, acceptedCount: 0 }),
+    );
+
+    await expect(
+      repoFor(fake).resumeLatestFailedJob('subject-1'),
+    ).resolves.toBeNull();
+    expect(fake.generationJob.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -353,15 +463,15 @@ describe('GenerationJobRepository.markStalled', () => {
   it('returns the stalled job ids and epochs', async () => {
     const fake = makeFake();
     fake.$queryRaw.mockResolvedValue([
-      { jobId: 'a', recoveryCount: 0 },
-      { jobId: 'b', recoveryCount: 2 },
+      { jobId: 'a', recoveryCount: 0, acceptedCount: 0 },
+      { jobId: 'b', recoveryCount: 2, acceptedCount: 5 },
     ]);
 
     await expect(
       repoFor(fake).markStalled(new Date('2026-01-01T00:02:00.000Z')),
     ).resolves.toEqual([
-      { jobId: 'a', recoveryCount: 0 },
-      { jobId: 'b', recoveryCount: 2 },
+      { jobId: 'a', recoveryCount: 0, acceptedCount: 0 },
+      { jobId: 'b', recoveryCount: 2, acceptedCount: 5 },
     ]);
   });
 });
@@ -370,17 +480,17 @@ describe('GenerationJobRepository.listStalled', () => {
   it('returns STALLED rows with their epochs', async () => {
     const fake = makeFake();
     fake.generationJob.findMany.mockResolvedValue([
-      { id: 'a', recoveryCount: 3 },
+      { id: 'a', recoveryCount: 3, acceptedCount: 0 },
     ]);
 
     await expect(repoFor(fake).listStalled(5)).resolves.toEqual([
-      { jobId: 'a', recoveryCount: 3 },
+      { jobId: 'a', recoveryCount: 3, acceptedCount: 0 },
     ]);
     expect(fake.generationJob.findMany).toHaveBeenCalledWith({
       where: { state: 'STALLED', subject: { status: 'ACTIVE' } },
       orderBy: [{ recoveryCount: 'desc' }, { createdAt: 'asc' }],
       take: 5,
-      select: { id: true, recoveryCount: true },
+      select: { id: true, recoveryCount: true, acceptedCount: true },
     });
   });
 });

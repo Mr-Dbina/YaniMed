@@ -16,6 +16,7 @@ import { GenerationError } from '../generation.errors.js';
 import { GenerationJobRepository } from '../generation-job.repository.js';
 import { AiCallLogRepository, manilaDayStart } from './ai-call-log.repository.js';
 import { CircuitBreaker } from './circuit-breaker.js';
+import type { WorkerLogger } from '../worker/worker.types.js';
 
 export const GENERATION_AI_OPTIONS = 'GENERATION_AI_OPTIONS';
 
@@ -86,6 +87,7 @@ export interface GenerationAiOptions {
   breaker?: CircuitBreaker;
   /** Test hook; production uses AI_CALL_TIMEOUT_MS. */
   timeoutMs?: number;
+  logger?: WorkerLogger;
 }
 
 export function readGenerationAiConfig(
@@ -152,6 +154,7 @@ export class GenerationAiService {
   private readonly random: () => number;
   private readonly timeoutMs: number;
   private readonly breaker: CircuitBreaker;
+  private readonly logger?: WorkerLogger;
 
   constructor(
     private readonly jobRepository: GenerationJobRepository,
@@ -172,6 +175,7 @@ export class GenerationAiService {
     this.timeoutMs = options.timeoutMs ?? AI_CALL_TIMEOUT_MS;
     this.breaker =
       options.breaker ?? new CircuitBreaker(this.now);
+    this.logger = options.logger;
   }
 
   /**
@@ -195,6 +199,13 @@ export class GenerationAiService {
         ? this.resolveVerifier()
         : this.config.drafterModel;
     if (!this.config.baseUrl || !this.config.apiKey || !model) {
+      this.logger?.warn('generation.ai.provider_unavailable', {
+        stage: 'complete',
+        model,
+        jobId: input.jobId,
+        reason: 'MISSING_CONFIG',
+        attempt: 0,
+      });
       throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
         jobId: input.jobId,
       });
@@ -214,6 +225,13 @@ export class GenerationAiService {
 
       const gate = this.breaker.gate();
       if (!gate.allowed) {
+        this.logger?.warn('generation.ai.provider_unavailable', {
+          stage: 'complete',
+          model,
+          jobId: input.jobId,
+          reason: 'CIRCUIT_BREAKER_OPEN',
+          attempt: attempt + 1,
+        });
         throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
           jobId: input.jobId,
           details: { breakerOpen: 1 },
@@ -246,10 +264,18 @@ export class GenerationAiService {
         await this.log(input.jobId, input.purpose, model, null, null, latencyMs, errorCode, errorCode);
         this.breaker.recordFailure();
         if (attempt === MAX_ATTEMPTS - 1) {
-          throw new GenerationError(
-            timedOut ? 'GENERATION_AI_TIMEOUT' : 'GENERATION_PROVIDER_UNAVAILABLE',
-            { jobId: input.jobId, details: { attempts: attempt + 1 } },
-          );
+          const code = timedOut ? 'GENERATION_AI_TIMEOUT' : 'GENERATION_PROVIDER_UNAVAILABLE';
+          this.logger?.warn('generation.ai.provider_unavailable', {
+            stage: 'complete',
+            model,
+            jobId: input.jobId,
+            reason: timedOut ? 'TIMEOUT' : 'NETWORK_ERROR',
+            attempt: attempt + 1,
+          });
+          throw new GenerationError(code, {
+            jobId: input.jobId,
+            details: { attempts: attempt + 1 },
+          });
         }
         await this.sleep(this.backoff(attempt));
         continue;
@@ -272,6 +298,14 @@ export class GenerationAiService {
         this.breaker.recordFailure();
 
         if (!isRetryableStatus(response.status) || attempt === MAX_ATTEMPTS - 1) {
+          this.logger?.warn('generation.ai.provider_unavailable', {
+            stage: 'complete',
+            model,
+            jobId: input.jobId,
+            reason: 'HTTP_ERROR',
+            statusCode: response.status,
+            attempt: attempt + 1,
+          });
           throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
             jobId: input.jobId,
             details: { status: response.status },
@@ -313,6 +347,13 @@ export class GenerationAiService {
           'INVALID_RESPONSE',
         );
         this.breaker.recordFailure();
+        this.logger?.warn('generation.ai.provider_unavailable', {
+          stage: 'complete',
+          model,
+          jobId: input.jobId,
+          reason: 'INVALID_RESPONSE',
+          attempt: attempt + 1,
+        });
         throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
           jobId: input.jobId,
         });
@@ -344,6 +385,13 @@ export class GenerationAiService {
       };
     }
 
+    this.logger?.warn('generation.ai.provider_unavailable', {
+      stage: 'complete',
+      model,
+      jobId: input.jobId,
+      reason: 'MAX_ATTEMPTS_EXHAUSTED',
+      attempt: MAX_ATTEMPTS,
+    });
     throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
       jobId: input.jobId,
       details: { attempts: MAX_ATTEMPTS },
@@ -352,6 +400,13 @@ export class GenerationAiService {
 
   async embed(input: EmbedInput): Promise<number[]> {
     if (!this.embeddings) {
+      this.logger?.warn('generation.ai.provider_unavailable', {
+        stage: 'embed',
+        model: EMBEDDING_MODEL,
+        jobId: input.jobId,
+        reason: 'NO_EMBEDDING_SERVICE',
+        attempt: 0,
+      });
       throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
         jobId: input.jobId,
       });
@@ -359,6 +414,13 @@ export class GenerationAiService {
 
     const gate = this.breaker.gate();
     if (!gate.allowed) {
+      this.logger?.warn('generation.ai.provider_unavailable', {
+        stage: 'embed',
+        model: EMBEDDING_MODEL,
+        jobId: input.jobId,
+        reason: 'CIRCUIT_BREAKER_OPEN',
+        attempt: 0,
+      });
       throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
         jobId: input.jobId,
         details: { breakerOpen: 1 },
@@ -395,6 +457,13 @@ export class GenerationAiService {
         'EMBEDDING_FAILED',
       );
       this.breaker.recordFailure();
+      this.logger?.warn('generation.ai.provider_unavailable', {
+        stage: 'embed',
+        model: EMBEDDING_MODEL,
+        jobId: input.jobId,
+        reason: 'EMBEDDING_FAILED',
+        attempt: 0,
+      });
       throw new GenerationError('GENERATION_PROVIDER_UNAVAILABLE', {
         jobId: input.jobId,
       });

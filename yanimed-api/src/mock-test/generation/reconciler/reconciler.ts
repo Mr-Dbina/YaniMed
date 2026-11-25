@@ -69,7 +69,8 @@ export function createReconciler(deps: ReconcilerDeps): Reconciler {
       if (recovered.has(row.jobId)) continue;
       recovered.add(row.jobId);
 
-      if (row.recoveryCount < config.maxRecoveries) {
+      // A job with accepted questions must never be discarded by the cap.
+      if (row.recoveryCount < config.maxRecoveries || (row.acceptedCount ?? 0) > 0) {
         // claimNext claims it and advances recoveryCount.
         summary.requeued.push(row.jobId);
         continue;

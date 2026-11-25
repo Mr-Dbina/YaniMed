@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EMBEDDING_MODEL, type EmbeddingService } from '../../../embeddings/embedding.service.js';
 import {
+  AI_CALL_TIMEOUT_MS,
   AI_CALLS_PER_JOB,
   AI_DAILY_BUDGET,
 } from '../generation.constants.js';
@@ -300,7 +301,7 @@ describe('GenerationAiService retries', () => {
     expect(logs.rows[0].errorCode).toBe(`HTTP_${status}`);
   });
 
-  it('times out every attempt at exactly 60 s', async () => {
+  it('times out every attempt at exactly AI_CALL_TIMEOUT_MS', async () => {
     vi.useFakeTimers();
     try {
       const fetchImpl = vi.fn(
@@ -319,11 +320,11 @@ describe('GenerationAiService retries', () => {
       const settled = vi.fn();
       promise.then(settled, settled);
 
-      await vi.advanceTimersByTimeAsync(59_999);
+      await vi.advanceTimersByTimeAsync(AI_CALL_TIMEOUT_MS - 1);
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(settled).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(60_000 * 4);
+      await vi.advanceTimersByTimeAsync(AI_CALL_TIMEOUT_MS * 4);
       await expect(promise).rejects.toMatchObject({
         code: 'GENERATION_AI_TIMEOUT',
       });

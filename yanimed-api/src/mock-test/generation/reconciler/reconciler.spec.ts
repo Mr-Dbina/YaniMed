@@ -76,8 +76,8 @@ describe('generation reconciler', () => {
     const harness = makeHarness();
     harness.repository.markStalled
       .mockResolvedValueOnce([
-        { jobId: 'job-a', recoveryCount: 0 },
-        { jobId: 'job-b', recoveryCount: 2 },
+        { jobId: 'job-a', recoveryCount: 0, acceptedCount: 0 },
+        { jobId: 'job-b', recoveryCount: 2, acceptedCount: 0 },
       ])
       .mockResolvedValueOnce([]);
 
@@ -112,10 +112,10 @@ describe('generation reconciler', () => {
   it('requeues recovery counts 0, 1 and 2 and fails count 3 as INTERNAL', async () => {
     const harness = makeHarness();
     harness.repository.listStalled.mockResolvedValueOnce([
-      { jobId: 'job-a', recoveryCount: 0 },
-      { jobId: 'job-b', recoveryCount: 1 },
-      { jobId: 'job-c', recoveryCount: 2 },
-      { jobId: 'job-d', recoveryCount: 3 },
+      { jobId: 'job-a', recoveryCount: 0, acceptedCount: 0 },
+      { jobId: 'job-b', recoveryCount: 1, acceptedCount: 0 },
+      { jobId: 'job-c', recoveryCount: 2, acceptedCount: 0 },
+      { jobId: 'job-d', recoveryCount: 3, acceptedCount: 0 },
     ]);
 
     const summary = await harness.reconciler.sweep();
@@ -128,6 +128,19 @@ describe('generation reconciler', () => {
       'FAILED',
       { failureReason: 'INTERNAL' },
     );
+  });
+
+  it('requeues a partial STALLED job at the cap instead of failing it', async () => {
+    const harness = makeHarness();
+    harness.repository.listStalled.mockResolvedValueOnce([
+      { jobId: 'job-e', recoveryCount: 5, acceptedCount: 12 },
+    ]);
+
+    const summary = await harness.reconciler.sweep();
+
+    expect(summary.requeued).toEqual(['job-e']);
+    expect(summary.failed).toEqual([]);
+    expect(harness.repository.transition).not.toHaveBeenCalled();
   });
 
   it('swallows a lost race on a fenced failure', async () => {
@@ -189,8 +202,8 @@ describe('generation reconciler', () => {
     const harness = makeHarness({ batchSize: 2 });
     harness.repository.markStalled
       .mockResolvedValueOnce([
-        { jobId: 'job-a', recoveryCount: 0 },
-        { jobId: 'job-b', recoveryCount: 0 },
+        { jobId: 'job-a', recoveryCount: 0, acceptedCount: 0 },
+        { jobId: 'job-b', recoveryCount: 0, acceptedCount: 0 },
       ])
       .mockResolvedValueOnce([]);
 
@@ -203,8 +216,8 @@ describe('generation reconciler', () => {
   it('finishes orphaned CANCELLING rows through a fenced transition', async () => {
     const harness = makeHarness();
     harness.repository.listOrphanedCancels.mockResolvedValueOnce([
-      { jobId: 'job-a', recoveryCount: 0 },
-      { jobId: 'job-b', recoveryCount: 2 },
+      { jobId: 'job-a', recoveryCount: 0, acceptedCount: 0 },
+      { jobId: 'job-b', recoveryCount: 2, acceptedCount: 0 },
     ]);
 
     const summary = await harness.reconciler.sweep();
@@ -229,7 +242,7 @@ describe('generation reconciler', () => {
   it('treats every CANCELLING row as orphaned at boot', async () => {
     const harness = makeHarness();
     harness.repository.listOrphanedCancels.mockResolvedValueOnce([
-      { jobId: 'job-a', recoveryCount: 1 },
+      { jobId: 'job-a', recoveryCount: 1, acceptedCount: 0 },
     ]);
 
     const summary = await harness.reconciler.recoverOnBoot();
@@ -245,7 +258,7 @@ describe('generation reconciler', () => {
   it('swallows a lost race on an orphan cancel', async () => {
     const harness = makeHarness();
     harness.repository.listOrphanedCancels.mockResolvedValueOnce([
-      { jobId: 'job-a', recoveryCount: 0 },
+      { jobId: 'job-a', recoveryCount: 0, acceptedCount: 0 },
     ]);
     harness.repository.transition.mockRejectedValueOnce(
       new GenerationError('GENERATION_STALE_WORKER'),
@@ -260,8 +273,8 @@ describe('generation reconciler', () => {
   it('keeps going when an orphan cancel write throws', async () => {
     const harness = makeHarness();
     harness.repository.listOrphanedCancels.mockResolvedValueOnce([
-      { jobId: 'job-a', recoveryCount: 0 },
-      { jobId: 'job-b', recoveryCount: 0 },
+      { jobId: 'job-a', recoveryCount: 0, acceptedCount: 0 },
+      { jobId: 'job-b', recoveryCount: 0, acceptedCount: 0 },
     ]);
     harness.repository.transition
       .mockRejectedValueOnce(new Error('ZZ-m5-secret-text'))

@@ -333,6 +333,39 @@ describe('runSlot', () => {
     expect(checkC).toHaveBeenCalledTimes(1);
   });
 
+  it('rotates to a different chunk after DUPLICATE_IN_BANK instead of re-drafting the same chunk', async () => {
+    const draft = vi.fn(fakeDeps().draft);
+    const checkC = vi
+      .fn<SlotRunnerDeps['checkC']>()
+      .mockResolvedValueOnce({
+        ok: false,
+        embedding: basis(1),
+        reasons: [{ code: 'DUPLICATE_IN_BANK', detail: 'bank-1 0.9' }],
+        skippedBankRefs: 0,
+      })
+      .mockResolvedValue({
+        ok: true,
+        embedding: basis(2),
+        maxSimilarity: 0,
+        skippedBankRefs: 0,
+      });
+    const rejectedChunkIds = new Set<string>();
+
+    const result = await runSlot(
+      makeArgs({
+        deps: fakeDeps({ draft, checkC }),
+        rejectedChunkIds,
+      }),
+    );
+
+    expect(result.kind).toBe('ACCEPTED');
+    expect(draft).toHaveBeenCalledTimes(2);
+    expect(draft.mock.calls[0][0].seedChunks[0].chunkId).toBe('chunk-1-0');
+    expect(draft.mock.calls[1][0].seedChunks[0].chunkId).not.toBe('chunk-1-0');
+    expect(draft.mock.calls[1][0].seedChunks[0].chunkId).toBe('chunk-1-1');
+    expect(rejectedChunkIds.has('chunk-1-0')).toBe(true);
+  });
+
   it('retries after Check C fails', async () => {
     const checkC = vi
       .fn<SlotRunnerDeps['checkC']>()

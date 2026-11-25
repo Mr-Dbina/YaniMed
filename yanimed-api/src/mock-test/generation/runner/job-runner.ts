@@ -17,8 +17,11 @@ import type {
   RunOutcome,
   WrittenQuestion,
 } from './ports.js';
-import { runSlot, stopCauseOf, emptyRejectionCounts, type RejectionCounts, type SlotRunnerDeps } from './slot-runner.js';
+import { runSlot, stopCauseOf, emptyRejectionCounts, type RejectionCounts, type SlotOutcome, type SlotRunnerDeps } from './slot-runner.js';
 import type { WorkerLogger } from '../worker/worker.types.js';
+
+/** A run of slot AI timeouts this long means the provider is down. */
+const MAX_CONSECUTIVE_SLOT_TIMEOUTS = 3;
 
 export interface RunJobArgs {
   job: { id: string; subjectId: string; requestedCount: number };
@@ -310,10 +313,27 @@ async function execute(
 
   let bankRefs: AcceptedQuestionRef[] = [];
   const chunkPageById = new Map<string, string>();
+  const bankPages = new Set<string>();
+  const bankChunkIds = new Set<string>();
+  const usedChunkIds = new Set<string>();
+  const rejectedChunkIds = new Set<string>();
   if (remainingSlots.length > 0) {
     bankRefs = await deps.bank.loadRefs();
+    const chunkIdsByPage = new Map<string, string[]>();
     for (const chunk of inputs.chunks) {
-      chunkPageById.set(chunk.id, `${chunk.documentId}:${chunk.page}`);
+      const page = `${chunk.documentId}:${chunk.page}`;
+      chunkPageById.set(chunk.id, page);
+      const list = chunkIdsByPage.get(page);
+      if (list === undefined) chunkIdsByPage.set(page, [chunk.id]);
+      else list.push(chunk.id);
+    }
+    for (const ref of bankRefs) {
+      if (ref.documentId !== '' && ref.page > 0) {
+        bankPages.add(`${ref.documentId}:${ref.page}`);
+      }
+    }
+    for (const page of bankPages) {
+      for (const id of chunkIdsByPage.get(page) ?? []) bankChunkIds.add(id);
     }
   }
 
@@ -351,6 +371,15 @@ async function execute(
       acceptedObjectives: objectives,
       bankObjectives,
       usedPrimaryIds: usedPrimaryIdsByTopic.get(key) ?? new Set(),
+      seedExclusions: {
+        chunkIds: new Set([
+          ...bankChunkIds,
+          ...usedChunkIds,
+          ...rejectedChunkIds,
+        ]),
+        pages: bankPages,
+      },
+      rejectedChunkIds,
       replacementBudgetRemaining: REPLACEMENTS_PER_SLOT,
       deps: slotDeps,
       onProgress: deps.onProgress,
@@ -365,6 +394,7 @@ async function execute(
     const key = outcome.ref.topicKey.trim();
     accepted.push(outcome.ref);
     embeddings.set(outcome.ref.key, outcome.ref.embedding);
+    usedChunkIds.add(outcome.primaryChunkId);
 
     const used = usedPrimaryIdsByTopic.get(key) ?? new Set<string>();
     used.add(outcome.primaryChunkId);
@@ -372,6 +402,30 @@ async function execute(
 
     acceptedCount += 1;
     deps.onProgress?.({ phase: 'DRAFTING', acceptedCount });
+  };
+
+  // A slot timeout is worth one more try on the same slot; three in a row means
+  // the provider is down, so let the job runner fail the whole job.
+  let consecutiveTimeouts = 0;
+  const runOneRecovering = async (
+    slot: GenerationPlan['slots'][number],
+  ): Promise<SlotOutcome> => {
+    for (;;) {
+      try {
+        const outcome = await runOne(slot);
+        consecutiveTimeouts = 0;
+        return outcome;
+      } catch (err) {
+        if (errorCode(err) !== 'GENERATION_AI_TIMEOUT') throw err;
+        consecutiveTimeouts += 1;
+        if (consecutiveTimeouts >= MAX_CONSECUTIVE_SLOT_TIMEOUTS) throw err;
+        deps.logger?.warn('generation.slot.timeout_skipped', {
+          jobId: job.id,
+          slot: slot.index,
+          consecutiveTimeouts,
+        });
+      }
+    }
   };
 
   const primarySlots = remainingSlots.filter((slot) => slot.reserve !== true);
@@ -382,7 +436,7 @@ async function execute(
 
   for (const slot of primarySlots) {
     if (acceptedCount >= QUESTIONS_PER_TEST) break;
-    const outcome = await runOne(slot);
+    const outcome = await runOneRecovering(slot);
     if (outcome.kind === 'STOPPED') return outcome;
     if (outcome.kind === 'EXHAUSTED') {
       skippedPrimaries += 1;
@@ -400,7 +454,7 @@ async function execute(
     if (acceptedCount >= QUESTIONS_PER_TEST) break;
     if (reservesAccepted >= skippedPrimaries) break;
     reserveAttempts += 1;
-    const outcome = await runOne(slot);
+    const outcome = await runOneRecovering(slot);
     if (outcome.kind === 'STOPPED') return outcome;
     if (outcome.kind === 'EXHAUSTED') continue;
     accept(outcome);

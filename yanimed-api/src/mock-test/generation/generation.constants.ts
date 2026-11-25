@@ -47,7 +47,7 @@ export const MIN_DISTINCT_PAGES = 25;
 export const AI_CALLS_PER_JOB = 400;
 export const AI_DAILY_BUDGET = 1_500;
 export const AI_DAILY_TIME_ZONE = 'Asia/Manila';
-export const AI_CALL_TIMEOUT_MS = 60_000;
+export const AI_CALL_TIMEOUT_MS = 90_000;
 export const AI_CALL_RETRIES = 3;
 /** Wait before retry N+1. Jitter is added on top. */
 export const AI_RETRY_BACKOFF_MS = [2_000, 4_000, 8_000] as const;

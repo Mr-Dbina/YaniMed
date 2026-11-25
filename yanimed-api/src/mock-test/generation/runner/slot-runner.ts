@@ -8,6 +8,7 @@ import type {
   AcceptedQuestionRef,
   BankSource,
 } from '../validate/check-c.js';
+import { REASON_CODES } from '../validate/types.js';
 import type {
   DraftPort,
   CheckAPort,
@@ -52,6 +53,19 @@ export interface SlotRunnerDeps {
 
 export type RejectionCheck = 'DRAFT' | 'A' | 'B' | 'C';
 
+/** Chunks and pages to avoid first; used only when no fresher seed is left. */
+export interface SeedExclusions {
+  chunkIds?: ReadonlySet<string>;
+  /** Key is documentId + ':' + page. */
+  pages?: ReadonlySet<string>;
+}
+
+/** Rejections that forced a slot to move off its current chunk. */
+const ROTATE_CODES: ReadonlySet<string> = new Set([
+  REASON_CODES.DUPLICATE_IN_BANK,
+  REASON_CODES.SAME_PAGE_SAME_FACT,
+]);
+
 /** Per-check rejection totals for one job. */
 export type RejectionCounts = Record<RejectionCheck, number>;
 
@@ -74,6 +88,10 @@ export interface SlotRunArgs {
   bankObjectives?: readonly string[];
   /** Primaries of accepted questions in this topic and earlier seed sets. */
   usedPrimaryIds: ReadonlySet<string>;
+  /** Bank-cited chunks/pages to avoid before falling back to any seed. */
+  seedExclusions?: SeedExclusions;
+  /** Shared job set of chunks that produced a duplicate/same-page rejection. */
+  rejectedChunkIds?: Set<string>;
   replacementBudgetRemaining: number;
   deps: SlotRunnerDeps;
   onProgress?: (progress: Progress) => void;
@@ -144,22 +162,97 @@ function reservedPrimaries(plan: GenerationPlan, topicKey: string): Set<string> 
   return primaries;
 }
 
+function isFreshChunk(
+  id: string,
+  pageByChunkId: ReadonlyMap<string, string>,
+  exclusions: { chunkIds: ReadonlySet<string>; pages: ReadonlySet<string> },
+): boolean {
+  if (exclusions.chunkIds.has(id)) return false;
+  const page = pageByChunkId.get(id);
+  return page === undefined || !exclusions.pages.has(page);
+}
+
+function pickFresh(
+  available: readonly string[],
+  pageByChunkId: ReadonlyMap<string, string>,
+  exclusions: { chunkIds: ReadonlySet<string>; pages: ReadonlySet<string> },
+): string {
+  return (
+    available.find((id) => isFreshChunk(id, pageByChunkId, exclusions)) ??
+    available.find((id) => !exclusions.chunkIds.has(id)) ??
+    available[0]
+  );
+}
+
 function alternativeSeed(
   plan: GenerationPlan,
   topicKey: string,
   used: ReadonlySet<string>,
   chunkIds: ReadonlySet<string>,
+  pageByChunkId: ReadonlyMap<string, string>,
+  exclusions: {
+    chunkIds: ReadonlySet<string>;
+    pages: ReadonlySet<string>;
+  },
 ): SeedSet | null {
-  const candidates = plan.candidates[topicKey] ?? [];
+  const candidates = (plan.candidates[topicKey] ?? []).filter(
+    (id) => chunkIds.has(id) && !used.has(id),
+  );
   const reserved = reservedPrimaries(plan, topicKey);
-  const primary = candidates.find(
+  const available = candidates.filter((id) => !reserved.has(id));
+  if (available.length === 0) return null;
+
+  const primary = pickFresh(available, pageByChunkId, exclusions);
+  const companions = available
+    .filter((id) => id !== primary)
+    .sort(
+      (a, b) =>
+        Number(isFreshChunk(b, pageByChunkId, exclusions)) -
+        Number(isFreshChunk(a, pageByChunkId, exclusions)),
+    )
+    .slice(0, 2);
+  return { primary, ids: [primary, ...companions] };
+}
+
+/**
+ * The plan's primary unless the bank already cites its chunk or page. In that
+ * case pick the freshest candidate the other slots have not reserved.
+ */
+function initialSeed(
+  plan: GenerationPlan,
+  slot: PlannedSlot,
+  basePrimary: string,
+  used: ReadonlySet<string>,
+  chunkIds: ReadonlySet<string>,
+  pageByChunkId: ReadonlyMap<string, string>,
+  exclusions: {
+    chunkIds: ReadonlySet<string>;
+    pages: ReadonlySet<string>;
+  },
+): SeedSet {
+  const base: SeedSet = {
+    primary: basePrimary,
+    ids: [...slot.seedChunkIds],
+  };
+  if (isFreshChunk(basePrimary, pageByChunkId, exclusions)) return base;
+
+  const reserved = reservedPrimaries(plan, slot.topicKey);
+  reserved.delete(basePrimary);
+  const available = (plan.candidates[slot.topicKey] ?? []).filter(
     (id) =>
       chunkIds.has(id) && !used.has(id) && !reserved.has(id),
   );
-  if (primary === undefined) return null;
+  if (available.length === 0) return base;
 
-  const companions = candidates
-    .filter((id) => id !== primary && chunkIds.has(id) && !used.has(id))
+  const primary = pickFresh(available, pageByChunkId, exclusions);
+  const companions = slot.seedChunkIds
+    .filter(
+      (id) =>
+        id !== basePrimary &&
+        chunkIds.has(id) &&
+        !used.has(id) &&
+        isFreshChunk(id, pageByChunkId, exclusions),
+    )
     .slice(0, 2);
   return { primary, ids: [primary, ...companions] };
 }
@@ -219,11 +312,18 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
   }
 
   const chunkIds = new Set(inputs.chunks.map((chunk) => chunk.id));
+  const pageByChunkId = new Map(
+    inputs.chunks.map((chunk) => [
+      chunk.id,
+      `${chunk.documentId}:${chunk.page}`,
+    ]),
+  );
+  const excludedChunkIds = new Set(args.seedExclusions?.chunkIds ?? []);
+  const excludedPages = new Set(args.seedExclusions?.pages ?? []);
   const topicName =
     args.plan.topics.find((topic) => topic.topicKey === slot.topicKey)?.name ??
     slot.topicKey;
   const used = new Set(args.usedPrimaryIds);
-  used.add(basePrimary);
 
   const checkAContext: CheckAContext = {
     topicKeys: new Set(args.plan.topics.map((topic) => topic.topicKey)),
@@ -237,7 +337,16 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
     if (avoidStems.length < DRAFT_ATTEMPTS_PER_SLOT) avoidStems.push(stem);
   };
 
-  let seed: SeedSet = { primary: basePrimary, ids: [...slot.seedChunkIds] };
+  let seed: SeedSet = initialSeed(
+    args.plan,
+    slot,
+    basePrimary,
+    used,
+    chunkIds,
+    pageByChunkId,
+    { chunkIds: excludedChunkIds, pages: excludedPages },
+  );
+  used.add(seed.primary);
   let replacements = 0;
   let attempts = 0;
 
@@ -311,8 +420,19 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
         signal,
       });
       if (!checkC.ok) {
-        logReject('C', checkC.reasons[0]?.code, checkC.reasons[0]?.detail);
+        const code = checkC.reasons[0]?.code;
+        logReject('C', code, checkC.reasons[0]?.detail);
         rejected(draft.stem);
+        if (code !== undefined && ROTATE_CODES.has(code)) {
+          // The same chunk will keep producing the same duplicate or same-page
+          // fact. Record it and leave the inner loop so the seed rotates.
+          args.rejectedChunkIds?.add(seed.primary);
+          used.add(seed.primary);
+          excludedChunkIds.add(seed.primary);
+          const page = pageByChunkId.get(seed.primary);
+          if (page !== undefined) excludedPages.add(page);
+          break;
+        }
         continue;
       }
 
@@ -354,7 +474,14 @@ export async function runSlot(args: SlotRunArgs): Promise<SlotOutcome> {
       return exhausted(attempts, replacements);
     }
 
-    const next = alternativeSeed(args.plan, slot.topicKey, used, chunkIds);
+    const next = alternativeSeed(
+      args.plan,
+      slot.topicKey,
+      used,
+      chunkIds,
+      pageByChunkId,
+      { chunkIds: excludedChunkIds, pages: excludedPages },
+    );
     if (next === null) {
       return exhausted(attempts, replacements);
     }

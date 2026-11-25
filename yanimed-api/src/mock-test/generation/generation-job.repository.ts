@@ -28,12 +28,14 @@ const ACTIVE_JOB_STATES: readonly GenerationJobState[] = [
   'CANCELLING',
 ];
 
-/** Only failures that can make progress on a retry may be resumed. */
+/** Failures with no accepted progress that a retry may still resume. */
 const RESUMABLE_FAILURE_REASONS: ReadonlySet<GenerationFailureReason> = new Set([
   'PROVIDER_UNAVAILABLE',
   'TIMEOUT',
   'VALIDATION_EXHAUSTED',
   'BUDGET_EXHAUSTED',
+  'WORKER_LOST',
+  'STALLED',
 ]);
 
 export interface CreateGenerationJobInput {
@@ -53,7 +55,7 @@ export interface ResumeFailedJobResult {
   created: false;
   /** True only for the request whose guarded UPDATE won. */
   resumed: boolean;
-  previousFailureReason: GenerationFailureReason;
+  previousFailureReason: GenerationFailureReason | null;
 }
 
 export interface TransitionOptions {
@@ -208,10 +210,13 @@ export class GenerationJobRepository {
   }
 
   /**
-   * Resumes the subject's latest job when it failed for a reason a retry can
-   * still make progress on. Held questions, the plan and acceptedCount stay;
-   * aiCallCount resets so the retry gets a fresh budget. The guarded UPDATE is
-   * the race winner: a second request sees zero rows and returns the winner.
+   * Resumes the subject's latest stopped job. A partial job (acceptedCount > 0
+   * and below requestedCount) in FAILED or CANCELLED always resumes from its
+   * accepted questions, whatever the failure reason or recovery count. A job
+   * with no progress resumes only for a retryable failure, still under the
+   * recovery cap. Held questions, the plan and acceptedCount stay; aiCallCount
+   * resets so the retry gets a fresh budget. The guarded UPDATE is the race
+   * winner: a second request sees zero rows and returns the winner.
    */
   async resumeLatestFailedJob(
     subjectId: string,
@@ -222,6 +227,8 @@ export class GenerationJobRepository {
       select: {
         id: true,
         state: true,
+        acceptedCount: true,
+        requestedCount: true,
         failureReason: true,
         recoveryCount: true,
         planJson: true,
@@ -234,11 +241,20 @@ export class GenerationJobRepository {
         },
       },
     });
-    if (latest === null || latest.state !== 'FAILED') return null;
+    if (
+      latest === null ||
+      (latest.state !== 'FAILED' && latest.state !== 'CANCELLED')
+    ) {
+      return null;
+    }
 
     const reason = latest.failureReason as GenerationFailureReason | null;
-    if (reason === null || !RESUMABLE_FAILURE_REASONS.has(reason)) return null;
-    if (latest.recoveryCount >= MAX_RECOVERIES) return null;
+    const partial =
+      latest.acceptedCount > 0 && latest.acceptedCount < latest.requestedCount;
+    if (!partial) {
+      if (reason === null || !RESUMABLE_FAILURE_REASONS.has(reason)) return null;
+      if (latest.recoveryCount >= MAX_RECOVERIES) return null;
+    }
     if (latest.subject.status !== 'ACTIVE') return null;
 
     // R2 only allows one active job per subject. A different active row must
@@ -283,9 +299,8 @@ export class GenerationJobRepository {
       const result = await this.prisma.generationJob.updateMany({
         where: {
           id: latest.id,
-          state: 'FAILED',
+          state: { in: ['FAILED', 'CANCELLED'] },
           recoveryCount: latest.recoveryCount,
-          failureReason: { in: [...RESUMABLE_FAILURE_REASONS] },
         },
         data: {
           state: 'QUEUED',
@@ -330,7 +345,8 @@ export class GenerationJobRepository {
 
   /**
    * Single claim path. Claims the oldest QUEUED job, or a STALLED job that
-   * still has recoveries left. A STALLED claim advances recoveryCount, so the
+   * still has recoveries left or has accepted questions (progress is never
+   * discarded by the cap). A STALLED claim advances recoveryCount, so the
    * dead worker's fence no longer matches. The candidate is locked until the
    * update commits, so two claimers cannot take the same row.
    */
@@ -342,7 +358,9 @@ export class GenerationJobRepository {
           JOIN "Subject" s ON s."id" = j."subjectId"
          WHERE s."status" = 'ACTIVE'
            AND (j."state" = 'QUEUED'
-             OR (j."state" = 'STALLED' AND j."recoveryCount" < ${MAX_RECOVERIES}))
+             OR (j."state" = 'STALLED'
+               AND (j."recoveryCount" < ${MAX_RECOVERIES}
+                 OR j."acceptedCount" > 0)))
          ORDER BY j."createdAt" ASC
          LIMIT 1
          FOR UPDATE OF j SKIP LOCKED
@@ -361,7 +379,9 @@ export class GenerationJobRepository {
             END
         WHERE j."id" = ${candidate.id}
           AND j."state" IN ('QUEUED', 'STALLED')
-          AND (j."state" = 'QUEUED' OR j."recoveryCount" < ${MAX_RECOVERIES})
+          AND (j."state" = 'QUEUED'
+            OR j."recoveryCount" < ${MAX_RECOVERIES}
+            OR j."acceptedCount" > 0)
         RETURNING j."id" AS "jobId",
                   j."subjectId" AS "subjectId",
                   j."requestedCount" AS "requestedCount",
@@ -525,7 +545,9 @@ export class GenerationJobRepository {
         AND j."state" = 'RUNNING'
         AND (${options.includeFresh ?? false}::boolean
              OR COALESCE(j."heartbeatAt", j."startedAt") < ${staleBefore})
-      RETURNING j."id" AS "jobId", j."recoveryCount" AS "recoveryCount"
+      RETURNING j."id" AS "jobId",
+                j."recoveryCount" AS "recoveryCount",
+                j."acceptedCount" AS "acceptedCount"
     `;
   }
 
@@ -534,11 +556,12 @@ export class GenerationJobRepository {
       where: { state: 'STALLED', subject: { status: 'ACTIVE' } },
       orderBy: [{ recoveryCount: 'desc' }, { createdAt: 'asc' }],
       take: limit,
-      select: { id: true, recoveryCount: true },
+      select: { id: true, recoveryCount: true, acceptedCount: true },
     });
     return rows.map((row) => ({
       jobId: row.id,
       recoveryCount: row.recoveryCount,
+      acceptedCount: row.acceptedCount,
     }));
   }
 

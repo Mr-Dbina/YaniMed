@@ -225,6 +225,39 @@ describe('parseVerifierResponse', () => {
     expect(response.verdicts).toHaveLength(4);
   });
 
+  it('lifts a trailing flags object out of a five-element verdicts array', () => {
+    const body = JSON.parse(validResponse()) as {
+      verdicts: Array<Record<string, unknown>>;
+      needsOutsideKnowledge?: unknown;
+      ambiguous?: unknown;
+    };
+    delete body.needsOutsideKnowledge;
+    delete body.ambiguous;
+    body.verdicts.push({ needsOutsideKnowledge: true, ambiguous: false });
+
+    const response = parseVerifierResponse(JSON.stringify(body));
+
+    expect(response.verdicts).toHaveLength(4);
+    expect(response.verdicts.map((entry) => entry.index)).toEqual([
+      0, 1, 2, 3,
+    ]);
+    expect(response.needsOutsideKnowledge).toBe(true);
+    expect(response.ambiguous).toBe(false);
+  });
+
+  it('rejects a fifth verdict entry that is a real verdict, not trailing flags', () => {
+    const body = JSON.parse(validResponse()) as {
+      verdicts: Array<Record<string, unknown>>;
+    };
+    body.verdicts.push({
+      index: 4,
+      verdict: 'NOT_ADDRESSED',
+      quote: '',
+    });
+
+    expect(bucketOf(JSON.stringify(body))).toBe('COUNT');
+  });
+
   it('tolerates a fenced JSON response', () => {
     const response = parseVerifierResponse(
       `\`\`\`json\n${validResponse()}\n\`\`\``,

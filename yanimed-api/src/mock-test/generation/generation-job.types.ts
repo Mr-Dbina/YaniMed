@@ -15,6 +15,8 @@ export type GenerationFailureReason =
   | 'VALIDATION_EXHAUSTED'
   | 'SOURCE_CHANGED'
   | 'TIMEOUT'
+  | 'WORKER_LOST'
+  | 'STALLED'
   | 'INTERNAL';
 
 const TRANSITIONS: Record<
@@ -75,6 +77,8 @@ export interface ClaimedGenerationJob {
 export interface StalledGenerationJob {
   jobId: string;
   recoveryCount: number;
+  /** Omitted by callers that do not need the progress-aware recovery rule. */
+  acceptedCount?: number;
 }
 
 /**

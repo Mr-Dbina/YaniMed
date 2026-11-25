@@ -324,19 +324,48 @@ export function parseVerifierResponse(text: string): VerifierResponse {
   if (!isRecord(body)) {
     throw new VerifierParseError('NOT_OBJECT');
   }
-  if (!Array.isArray(body.verdicts) || body.verdicts.length !== 4) {
+
+  // Some replies put a trailing flags object inside the verdicts array, e.g.
+  // [entry, entry, entry, entry, { needsOutsideKnowledge, ambiguous }]. Lift
+  // those booleans onto the top-level flags and drop the extra element.
+  let rawVerdicts = body.verdicts;
+  let trailingFlags: Record<string, unknown> | null = null;
+  if (Array.isArray(rawVerdicts) && rawVerdicts.length === 5) {
+    const extra = rawVerdicts[4];
+    if (
+      isRecord(extra) &&
+      !Object.hasOwn(extra, 'verdict') &&
+      !Object.hasOwn(extra, 'index') &&
+      (Object.hasOwn(extra, 'needsOutsideKnowledge') ||
+        Object.hasOwn(extra, 'ambiguous'))
+    ) {
+      trailingFlags = extra;
+      rawVerdicts = rawVerdicts.slice(0, 4);
+    }
+  }
+
+  if (!Array.isArray(rawVerdicts) || rawVerdicts.length !== 4) {
     throw shapeError('COUNT', body);
   }
+
+  const needsOutsideKnowledge =
+    typeof body.needsOutsideKnowledge === 'boolean'
+      ? body.needsOutsideKnowledge
+      : trailingFlags?.needsOutsideKnowledge;
+  const ambiguous =
+    typeof body.ambiguous === 'boolean'
+      ? body.ambiguous
+      : trailingFlags?.ambiguous;
   if (
-    typeof body.needsOutsideKnowledge !== 'boolean' ||
-    typeof body.ambiguous !== 'boolean'
+    typeof needsOutsideKnowledge !== 'boolean' ||
+    typeof ambiguous !== 'boolean'
   ) {
     throw shapeError('FLAGS', body);
   }
 
   const seen = new Set<number>();
   const verdicts: VerifierVerdictEntry[] = [];
-  for (const entry of body.verdicts) {
+  for (const entry of rawVerdicts) {
     if (!isRecord(entry)) {
       throw shapeError('ENTRY', body);
     }
@@ -370,7 +399,7 @@ export function parseVerifierResponse(text: string): VerifierResponse {
   verdicts.sort((a, b) => a.index - b.index);
   return {
     verdicts,
-    needsOutsideKnowledge: body.needsOutsideKnowledge,
-    ambiguous: body.ambiguous,
+    needsOutsideKnowledge,
+    ambiguous,
   };
 }

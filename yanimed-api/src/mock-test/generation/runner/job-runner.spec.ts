@@ -923,6 +923,72 @@ describe('runJob', () => {
     expect(result).toMatchObject({ kind: 'FAILED', reason, code });
   });
 
+  it('retries the same slot after a single AI timeout and completes', async () => {
+    const warns: Array<{
+      event: string;
+      fields?: Record<string, string | number | undefined>;
+    }> = [];
+    let timedOut = false;
+    const drafts: string[] = [];
+    const harness = makeHarness({
+      savedPlan: makePlan(),
+      deps: {
+        logger: {
+          info: () => {},
+          warn: (event, fields) => warns.push({ event, fields }),
+          error: () => {},
+        },
+        draft: async (args) => {
+          drafts.push(args.topic.topicKey);
+          if (args.topic.topicKey === 'topic-1' && !timedOut) {
+            timedOut = true;
+            throw new GenerationError('GENERATION_AI_TIMEOUT', {
+              jobId: 'job-1',
+            });
+          }
+          return {
+            ok: true,
+            draft: makeDraft(args.topic.topicKey, drafts.length),
+            model: 'draft-model-1',
+            promptVersion: 'prompt-v1',
+          };
+        },
+      },
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toEqual({ kind: 'COMPLETED', acceptedCount: 25 });
+    expect(drafts.filter((topic) => topic === 'topic-1')).toHaveLength(3);
+    expect(warns).toContainEqual({
+      event: 'generation.slot.timeout_skipped',
+      fields: { jobId: 'job-1', slot: 0, consecutiveTimeouts: 1 },
+    });
+  });
+
+  it('fails PROVIDER_UNAVAILABLE after three consecutive AI timeouts', async () => {
+    let calls = 0;
+    const harness = makeHarness({
+      savedPlan: makePlan(),
+      deps: {
+        draft: async () => {
+          calls += 1;
+          throw new GenerationError('GENERATION_AI_TIMEOUT', { jobId: 'job-1' });
+        },
+      },
+    });
+
+    const result = await runJob(makeArgs(), harness.deps);
+
+    expect(result).toMatchObject({
+      kind: 'FAILED',
+      reason: 'PROVIDER_UNAVAILABLE',
+      code: 'GENERATION_AI_TIMEOUT',
+    });
+    expect(calls).toBe(3);
+    expect(harness.writeCalls).toHaveLength(0);
+  });
+
   it('maps a verifier configuration error to INTERNAL and keeps the code', async () => {
     const harness = makeHarness();
     harness.deps.draft = interruptedDraft(
