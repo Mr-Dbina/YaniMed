@@ -178,7 +178,7 @@ export function SettingsMenu() {
       <Link
         id={`${menuId}-trigger`}
         ref={triggerRef}
-        href="/settings/general"
+        href="/settings"
         className="sidebar__row settings-menu__trigger nav-item"
         data-active={pathname.startsWith("/settings")}
         aria-haspopup="menu"

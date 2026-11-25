@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, type ReactNode, Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -14,7 +14,7 @@ import { SettingsNav } from "@/components/settings/settings-nav";
  * Below 768px the nav becomes the menu page and each section is a full-width
  * page with its own back link. At 768px and up the nav is a fixed left column.
  */
-export default function SettingsLayout({ children }: { children: ReactNode }) {
+function SettingsLayoutInner({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isIndex = pathname === "/settings";
@@ -40,5 +40,13 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
         {children}
       </main>
     </div>
+  );
+}
+
+export default function SettingsLayout({ children }: { children: ReactNode }) {
+  return (
+    <Suspense fallback={null}>
+      <SettingsLayoutInner>{children}</SettingsLayoutInner>
+    </Suspense>
   );
 }

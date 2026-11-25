@@ -172,6 +172,11 @@ export function MockTestStart({
   const notEnough =
     selectedOverview !== null && needsGeneration(unseen, required);
 
+  // Check if the selected subject has an unfinished attempt
+  const selectedHasUnfinished =
+    selectedOverview?.unfinishedAttempt !== null &&
+    selectedOverview?.unfinishedAttempt !== undefined;
+
   const query = search.trim().toLowerCase();
   const ordered = (() => {
     const list = [...syncedSubjects];
@@ -407,6 +412,49 @@ export function MockTestStart({
         </div>
       )}
 
+      {/* Show unfinished attempt for any subject, not just the selected one */}
+      {!unfinished && !loading && (
+        <div className="mock-test__unfinished">
+          {Object.entries(overviewBySubject).map(([backendId, subjectOverview]) => {
+            const attempt = subjectOverview?.unfinishedAttempt;
+            if (!attempt) return null;
+            const subject = syncedSubjects.find((s) => s.backendId === backendId);
+            if (!subject) return null;
+            return (
+              <div key={backendId} className="mock-test__unfinished">
+                <p>
+                  <strong>Unfinished attempt — {subject.name}</strong>
+                  <span className="mock-test__muted">
+                    {" "}
+                    — {UNFINISHED_LABEL[attempt.status] ?? attempt.status}
+                  </span>
+                </p>
+                <div className="mock-test__actions">
+                  {attempt.status !== "GENERATING" && (
+                    <button
+                      type="button"
+                      className="mock-test__btn mock-test__btn--primary"
+                      disabled={busy}
+                      onClick={() => onResume(attempt.id)}
+                    >
+                      Resume test
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="mock-test__btn mock-test__btn--danger"
+                    disabled={busy}
+                    onClick={() => onRequestDiscard(attempt.id)}
+                  >
+                    Discard attempt
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {actionError && (
         <p role="alert" className="mock-test__error">
           {actionError}
@@ -422,12 +470,18 @@ export function MockTestStart({
             <span className="mock-test__selected-pill">Selected Subject</span>
             <span
               className={`mock-test__badge ${
-                notEnough
+                selectedHasUnfinished
+                  ? "mock-test__badge--warning"
+                  : notEnough
                   ? "mock-test__badge--warning"
                   : "mock-test__badge--ready"
               }`}
             >
-              {notEnough ? "Not enough questions" : "Ready"}
+              {selectedHasUnfinished
+                ? "Unfinished test"
+                : notEnough
+                ? "Not enough questions"
+                : "Ready"}
             </span>
           </div>
 

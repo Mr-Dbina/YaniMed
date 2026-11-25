@@ -269,7 +269,6 @@ function MockTestSession({
   /** Set when the app starts a job itself because too few questions are unseen. */
   const [generationNote, setGenerationNote] = useState<string | null>(null);
 
-  const autoResumedRef = useRef(false);
   const epochRef = useRef(0);
   const bootRequestRef = useRef(0);
   const navigatorRequestRef = useRef(0);
@@ -332,7 +331,6 @@ function MockTestSession({
     ) => {
       const started = await startAttempt(id);
       if (!shouldApply()) return;
-      autoResumedRef.current = true;
       setAttemptId(id);
       setSessionVersion(started.sessionVersion);
       setQuestion(started.question);
@@ -524,99 +522,72 @@ function MockTestSession({
         setOverview(data);
         setOverviewLoading(false);
 
-        const unfinished = data.unfinishedAttempt;
-        const canAutoResume =
-          unfinished !== null &&
-          !autoResumedRef.current &&
-          (unfinished.status === "READY" ||
-            unfinished.status === "IN_PROGRESS" ||
-            unfinished.status === "AWAITING_SUBMISSION");
-
-        if (!canAutoResume || !unfinished) {
-          // Reload safety: a job already running on the server wins.
-          if (
-            data.generationJob &&
-            isActiveGenerationState(data.generationJob.state)
-          ) {
-            showGeneration(data.generationJob);
-            if (pendingStart) onPendingStartConsumed();
-            if (applies()) setBooting(false);
-            return;
-          }
-          if (pendingStart) {
-            if (
-              !data.unfinishedAttempt &&
-              !needsGeneration(
-                data.unseenEligibleCount,
-                data.questionsPerTest,
-              )
-            ) {
-              try {
-                const created = await createAttempt(subjectId);
-                if (!applies()) return;
-                await beginAttempt(created.attemptId, "READY", applies);
-              } catch (error) {
-                if (!applies()) return;
-                const api = toApiError(error);
-                if (api.code === "ATTEMPT_EXISTS" && api.body?.attemptId) {
-                  try {
-                    await beginAttempt(api.body.attemptId, undefined, applies);
-                  } catch (inner) {
-                    if (!applies()) return;
-                    const innerApi = toApiError(inner);
-                    if (innerApi.code === "SESSION_SUPERSEDED") setSuperseded(true);
-                    else setActionError(messageFor(innerApi));
-                  }
-                } else if (api.code === "SESSION_SUPERSEDED") {
-                  setSuperseded(true);
-                } else {
-                  setActionError(messageFor(api));
-                }
-              }
-            } else if (!data.unfinishedAttempt) {
-              try {
-                const job = await requestGenerationJob(subjectId);
-                if (!applies()) return;
-                setGenerationNote(
-                  generationNeededMessage(data.questionsPerTest),
-                );
-                showGeneration(job);
-              } catch (error) {
-                if (!applies()) return;
-                const api = toApiError(error);
-                if (
-                  api.code === "NO_READY_DOCUMENTS" ||
-                  api.code === "INSUFFICIENT_CONTENT"
-                ) {
-                  setGenerationNotice(messageFor(api));
-                  setPhase("generation-notice");
-                } else {
-                  setActionError(messageFor(api));
-                }
-              }
-            }
-            if (!applies()) return;
-            onPendingStartConsumed();
-          }
+        // Reload safety: a job already running on the server wins.
+        if (
+          data.generationJob &&
+          isActiveGenerationState(data.generationJob.state)
+        ) {
+          showGeneration(data.generationJob);
+          if (pendingStart) onPendingStartConsumed();
           if (applies()) setBooting(false);
           return;
         }
-
-        autoResumedRef.current = true;
-        setBooting(true);
-        try {
-          await beginAttempt(unfinished.id, unfinished.status, applies);
+        if (pendingStart) {
+          if (
+            !data.unfinishedAttempt &&
+            !needsGeneration(
+              data.unseenEligibleCount,
+              data.questionsPerTest,
+            )
+          ) {
+            try {
+              const created = await createAttempt(subjectId);
+              if (!applies()) return;
+              await beginAttempt(created.attemptId, "READY", applies);
+            } catch (error) {
+              if (!applies()) return;
+              const api = toApiError(error);
+              if (api.code === "ATTEMPT_EXISTS" && api.body?.attemptId) {
+                try {
+                  await beginAttempt(api.body.attemptId, undefined, applies);
+                } catch (inner) {
+                  if (!applies()) return;
+                  const innerApi = toApiError(inner);
+                  if (innerApi.code === "SESSION_SUPERSEDED") setSuperseded(true);
+                  else setActionError(messageFor(innerApi));
+                }
+              } else if (api.code === "SESSION_SUPERSEDED") {
+                setSuperseded(true);
+              } else {
+                setActionError(messageFor(api));
+              }
+            }
+          } else if (!data.unfinishedAttempt) {
+            try {
+              const job = await requestGenerationJob(subjectId);
+              if (!applies()) return;
+              setGenerationNote(
+                generationNeededMessage(data.questionsPerTest),
+              );
+              showGeneration(job);
+            } catch (error) {
+              if (!applies()) return;
+              const api = toApiError(error);
+              if (
+                api.code === "NO_READY_DOCUMENTS" ||
+                api.code === "INSUFFICIENT_CONTENT"
+              ) {
+                setGenerationNotice(messageFor(api));
+                setPhase("generation-notice");
+              } else {
+                setActionError(messageFor(api));
+              }
+            }
+          }
           if (!applies()) return;
-          if (pendingStart) onPendingStartConsumed();
-          setBooting(false);
-        } catch (error) {
-          if (!applies()) return;
-          // Let the Retry button try the resume again.
-          autoResumedRef.current = false;
-          setOverviewError(toApiError(error));
-          setBooting(false);
-          setPhase("start");
+          onPendingStartConsumed();
         }
+        if (applies()) setBooting(false);
       } catch (error) {
         if (!applies()) return;
         setOverviewError(toApiError(error));

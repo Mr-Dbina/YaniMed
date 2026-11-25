@@ -1,5 +1,7 @@
 import { SettingsNotFoundCard } from "@/components/settings/settings-not-found";
 
+export const instant = false;
+
 /**
  * Catch-all for unknown /settings paths. Without it Next falls back to the
  * root 404, which drops the settings layout and nav entirely.

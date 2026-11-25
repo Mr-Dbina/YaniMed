@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { MessageActions } from "@/components/chat/message-actions";
 import type { MessageAction } from "@/components/chat/message-actions";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, ChatCitation } from "@/lib/types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { BookOpen } from "lucide-react";
 
 interface MessageProps {
   id?: string;
@@ -16,6 +17,9 @@ interface MessageProps {
   onReadAloud?: (message: ChatMessage) => void;
   onRegenerate?: (message: ChatMessage) => void;
   actionsDisabled?: boolean;
+  onCitationClick?: (citation: ChatCitation, index: number) => void;
+  allCitations?: ChatCitation[];
+  activeCitationIndex?: number;
 }
 
 const COPY_FEEDBACK_MS = 1500;
@@ -100,6 +104,86 @@ function useCopyFeedback(onCopy?: () => void | Promise<void>) {
   return { copied, copyFailed, trigger };
 }
 
+function CitationMarker({ index, isActive, onClick }: { index: number; isActive: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`citation-marker ${isActive ? "citation-marker--active" : ""}`}
+      onClick={onClick}
+      aria-label={`Open citation ${index + 1}`}
+      aria-pressed={isActive}
+    >
+      [{index + 1}]
+    </button>
+  );
+}
+
+function SourceChip({ citation, index, isActive, onClick }: { citation: ChatCitation; index: number; isActive: boolean; onClick: () => void }) {
+  const label = citation.chapter ? `${citation.chapter} · Page ${citation.page}` : `Page ${citation.page}`;
+  return (
+    <button
+      type="button"
+      className={`source-chip ${isActive ? "source-chip--active" : ""}`}
+      onClick={onClick}
+      aria-label={`Open ${label}`}
+      aria-pressed={isActive}
+    >
+      <BookOpen size={12} aria-hidden="true" />
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function deduplicateCitations(citations: ChatCitation[]): ChatCitation[] {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    const key = `${citation.documentId ?? citation.sourceId}:${citation.page}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseContentWithCitations(content: string, citations: ChatCitation[], onCitationClick: (citation: ChatCitation, index: number) => void): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  const citationRegex = /\[(?:S)?(\d+)\]/g;
+  let match;
+
+  while ((match = citationRegex.exec(content)) !== null) {
+    const beforeText = content.slice(lastIndex, match.index);
+    if (beforeText) {
+      nodes.push(beforeText);
+    }
+    const citationIndex = parseInt(match[1], 10) - 1;
+    if (citationIndex >= 0 && citationIndex < citations.length) {
+      nodes.push(
+        <CitationMarker
+          key={`citation-${citationIndex}`}
+          index={citationIndex}
+          isActive={false}
+          onClick={() => onCitationClick(citations[citationIndex], citationIndex)}
+        />
+      );
+    } else {
+      nodes.push(match[0]);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  const remainingText = content.slice(lastIndex);
+  if (remainingText) {
+    nodes.push(remainingText);
+  }
+
+  return nodes.length > 0 ? nodes : [content];
+}
+
+function CitationMarkers({ content, citations, onCitationClick }: { content: string; citations: ChatCitation[]; onCitationClick: (citation: ChatCitation, index: number) => void }) {
+  const nodes = parseContentWithCitations(content, citations, onCitationClick);
+  return <span>{nodes}</span>;
+}
+
 export function Message({
   id,
   message,
@@ -109,6 +193,9 @@ export function Message({
   onReadAloud,
   onRegenerate,
   actionsDisabled = false,
+  onCitationClick,
+  allCitations = [],
+  activeCitationIndex = 0,
 }: MessageProps) {
   const isUser = message.role === "user";
   const { copied, copyFailed, trigger: triggerCopy } = useCopyFeedback(
@@ -210,6 +297,13 @@ export function Message({
     </div>
   );
 
+  const handleCitationClick = (citation: ChatCitation, index: number) => {
+    onCitationClick?.(citation, index);
+  };
+
+  const citations = message.citations ?? [];
+  const showCitations = citations.length > 0 && !isUser;
+
   return (
     <div id={id} className={`subject-chat__message group/message flex flex-col ${isUser ? "items-end" : "items-start"}`}>
       {isUser ? (
@@ -237,7 +331,7 @@ export function Message({
           </div>
         ) : (
           <>
-            <p className="subject-chat__user-text max-w-md rounded-lg border border-border bg-card px-3.5 py-2 text-foreground">
+            <p className="subject-chat__user-text">
               {message.content}
             </p>
             {actions.length > 0 && (
@@ -247,26 +341,54 @@ export function Message({
         )
       ) : (
         <>
-          <div className="subject-chat__answer max-w-2xl">
+          <div className="subject-chat__answer">
             <div className="chat-markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{
-                table: ({ children }) => <div className="chat-markdown__scroll" tabIndex={0} role="region" aria-label="Scrollable table"><table>{children}</table></div>,
-                pre: ({ children }) => <pre className="chat-markdown__scroll" tabIndex={0} aria-label="Scrollable code block">{children}</pre>,
-                img: ({ alt }) => <span>{alt}</span>,
-              }}>{message.content}</ReactMarkdown>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                skipHtml
+                components={{
+                  table: ({ children }) => (
+                    <div className="chat-markdown__scroll" tabIndex={0} role="region" aria-label="Scrollable table">
+                      <table>{children}</table>
+                    </div>
+                  ),
+                  pre: ({ children }) => (
+                    <pre className="chat-markdown__scroll" tabIndex={0} aria-label="Scrollable code block">
+                      {children}
+                    </pre>
+                  ),
+                  img: ({ alt }) => <span>{alt}</span>,
+                  p: ({ children }) => (
+                    <p style={{ lineHeight: 1.7, fontSize: "15.5px", marginBlock: 12 }}>
+                      {children}
+                    </p>
+                  ),
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
+              <CitationMarkers content={message.content} citations={citations} onCitationClick={handleCitationClick} />
             </div>
-            {message.citations?.map((citation) => (
-              <div key={JSON.stringify([citation.sourceId, citation.page, citation.chapter, citation.snippet])} className="mt-2 text-foreground">
-                <p className="font-bold">
-                  {citation.sourceId}: {citation.chapter ? `${citation.chapter}, ` : ""}Page {citation.page}
-                </p>
-                {citation.snippet && <blockquote className="mt-1 text-sm text-muted-foreground">{citation.snippet}</blockquote>}
+            {showCitations && (
+              <div className="subject-chat__sources" role="list" aria-label="Sources">
+                {deduplicateCitations(citations).map((citation, index) => {
+                  const originalIndex = citations.findIndex(c => c.sourceId === citation.sourceId && c.page === citation.page);
+                  return (
+                    <SourceChip
+                      key={`${citation.sourceId}-${citation.page}`}
+                      citation={citation}
+                      index={originalIndex}
+                      isActive={originalIndex === activeCitationIndex}
+                      onClick={() => handleCitationClick(citation, originalIndex)}
+                    />
+                  );
+                })}
               </div>
-            ))}
+            )}
+            {actions.length > 0 && (
+              <MessageActions actions={actions} visibility={visibility} align={align} />
+            )}
           </div>
-          {actions.length > 0 && (
-            <MessageActions actions={actions} visibility={visibility} align={align} />
-          )}
         </>
       )}
     </div>

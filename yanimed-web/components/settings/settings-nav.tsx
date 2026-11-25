@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, ChevronRight, Info, Search } from "lucide-react";
+import { ArrowLeft, ChevronRight, Search } from "lucide-react";
 import { settingsItems } from "@/components/settings/settings-items";
 
 export function SettingsNav() {
@@ -27,20 +27,13 @@ export function SettingsNav() {
         Back
       </Link>
 
-      {/* Mobile menu header: round back, centered title, round info. */}
+      {/* Mobile menu header: round back, centered title, matching spacer. */}
       <div className="settings-nav__mobile-top">
         <Link href="/" className="settings-nav__icon-btn" aria-label="Back">
           <ArrowLeft size={18} strokeWidth={1.7} aria-hidden="true" />
         </Link>
         <span className="settings-nav__title">Settings</span>
-        <button
-          type="button"
-          className="settings-nav__icon-btn"
-          aria-label="Settings information"
-          data-todo="no-destination"
-        >
-          <Info size={18} strokeWidth={1.7} aria-hidden="true" />
-        </button>
+        <span className="settings-nav__spacer" aria-hidden="true" />
       </div>
 
       <div className="settings-nav__search">
@@ -61,11 +54,7 @@ export function SettingsNav() {
           <p className="settings-nav__empty">No results</p>
         ) : (
           filtered.map((item) => {
-            // On the mobile menu (/settings) General is the default section, so
-            // it keeps the active treatment there too.
-            const active =
-              pathname === item.href ||
-              (pathname === "/settings" && item.href === "/settings/general");
+            const active = pathname === item.href;
             const Icon = item.icon;
             return (
               <Link
@@ -76,7 +65,7 @@ export function SettingsNav() {
                 data-active={active}
               >
                 <span className="nav-icon">
-                  <Icon size={17} strokeWidth={1.7} className="sidebar__icon" aria-hidden="true" />
+                  <Icon size={20} strokeWidth={1.7} className="sidebar__icon" aria-hidden="true" />
                 </span>
                 <span className="settings-nav__label">{item.label}</span>
                 <ChevronRight

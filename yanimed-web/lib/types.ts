@@ -2,6 +2,7 @@ export type MessageRole = "user" | "assistant";
 
 export interface ChatCitation {
   sourceId: string;
+  documentId?: string;
   chapter: string | null;
   /** Physical, 1-based PDF page index. */
   page: number;
