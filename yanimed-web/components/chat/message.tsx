@@ -159,7 +159,7 @@ function parseContentWithCitations(content: string, citations: ChatCitation[], o
     if (citationIndex >= 0 && citationIndex < citations.length) {
       nodes.push(
         <CitationMarker
-          key={`citation-${citationIndex}`}
+          key={`citation-${citationIndex}-${match.index}`}
           index={citationIndex}
           isActive={false}
           onClick={() => onCitationClick(citations[citationIndex], citationIndex)}

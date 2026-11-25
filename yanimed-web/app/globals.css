@@ -2886,11 +2886,6 @@ html.dark .empty-state__button img {
   max-width: min(100%, 42rem);
 }
 
-.subject-chat__user-text {
-  min-width: 0;
-  max-width: min(100%, 28rem);
-}
-
 .subject-chat__notice,
 .subject-chat__error {
   width: 100%;
@@ -3549,10 +3544,11 @@ html.dark .empty-state__button img {
 
 .mock-test__unfinished {
   display: flex;
+  width: 100%;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
   border: 1px solid hsl(var(--border));
   border-radius: 14px;
   background: hsl(var(--card));
@@ -3565,9 +3561,10 @@ html.dark .empty-state__button img {
 
 .mock-test__actions {
   display: flex;
+  margin-left: auto;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
 
 .mock-test__btn {
@@ -5322,16 +5319,18 @@ html.dark .empty-state__button img {
 
 /* Chat Message Styles */
 .subject-chat__user-text {
-  max-width: 80%;
+  width: fit-content;
+  max-width: 82%;
   padding: 14px 20px;
-  background: #f3f4f6;
-  border-radius: 24px;
+  background: #fde4f1;
+  border-radius: 14px;
   font-size: 15px;
   line-height: 1.55;
   color: #1f1f2b;
+  text-align: left;
   word-wrap: break-word;
   margin-left: auto;
-  margin-right: 14px;
+  margin-right: 0;
 }
 
 .subject-chat__answer {

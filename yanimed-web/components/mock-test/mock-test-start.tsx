@@ -414,7 +414,7 @@ export function MockTestStart({
 
       {/* Show unfinished attempt for any subject, not just the selected one */}
       {!unfinished && !loading && (
-        <div className="mock-test__unfinished">
+        <>
           {Object.entries(overviewBySubject).map(([backendId, subjectOverview]) => {
             const attempt = subjectOverview?.unfinishedAttempt;
             if (!attempt) return null;
@@ -452,7 +452,7 @@ export function MockTestStart({
               </div>
             );
           })}
-        </div>
+        </>
       )}
 
       {actionError && (
