@@ -55,12 +55,6 @@ export function SubjectDetail({
     if (isRenaming) renameInputRef.current?.focus();
   }, [isRenaming]);
 
-  useEffect(() => {
-    if (pdfOpen) {
-      setIsMenuOpen(false);
-    }
-  }, [pdfOpen]);
-
   const startRename = () => {
     setRenameValue(subject.name);
     setIsRenaming(true);
@@ -277,7 +271,10 @@ export function SubjectDetail({
               : "Chat unavailable until this PDF is processed and its index is verified."}
             onAsked={(prompt) => onUpdateSubject(subject.id, { lastMessage: prompt })}
             pdfOpen={pdfOpen}
-            onPdfOpenChange={setPdfOpen}
+            onPdfOpenChange={(open) => {
+              setPdfOpen(open);
+              if (open) setIsMenuOpen(false);
+            }}
             leftHeader={null}
           />
         </>

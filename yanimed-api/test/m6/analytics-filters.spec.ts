@@ -35,6 +35,7 @@ describe('M6 Analytics Filters', () => {
     const topic1 = await createTopic(subject1.id);
     topic1Key = topic1.key;
     const topic1b = await createTopic(subject1.id);
+    const topic1bKey = topic1b.key;
     
     // Create Subject 2 with topics
     const subject2 = await createSubject();
@@ -65,11 +66,6 @@ describe('M6 Analytics Filters', () => {
       await createCitation(q.id, doc2.id);
     }
 
-    // Store topic IDs for later use in snapshots
-    const topic1Id = topic1.id;
-    const topic1bId = topic1b.id;
-    const topic2Id = topic2.id;
-
     // Create COMPLETED attempts with answers
     // Subject 1, Topic 1: 2 attempts (one perfect, one 50%)
     const attempt1 = await createAttempt(subject1Id);
@@ -98,10 +94,10 @@ describe('M6 Analytics Filters', () => {
         position: i + 1,
         selectedChoiceId: q.choices.find(c => c.isCorrect)!.id,
         correctChoiceId: q.choices.find(c => c.isCorrect)!.id,
-        topicKey: q.topicId,
+        topicKey: topic1Key,
         isCorrect: true,
       })),
-      perTopic: [{ topicKey: topic1Id, correct: 25, total: 25 }],
+      perTopic: [{ topicKey: topic1Key, correct: 25, total: 25 }],
     };
     await prisma.attemptResult.create({
       data: { attemptId: attempt1.id, score: 25, total: 25, snapshot: snapshot1 },
@@ -137,10 +133,10 @@ describe('M6 Analytics Filters', () => {
         position: i + 1,
         selectedChoiceId: q.choices[i < 12 ? 0 : 1].id,
         correctChoiceId: q.choices.find(c => c.isCorrect)!.id,
-        topicKey: q.topicId,
+        topicKey: topic1Key,
         isCorrect: i < 12,
       })),
-      perTopic: [{ topicKey: topic1Id, correct: 12, total: 25 }],
+      perTopic: [{ topicKey: topic1Key, correct: 12, total: 25 }],
     };
     await prisma.attemptResult.create({
       data: { attemptId: attempt2.id, score: 12, total: 25, snapshot: snapshot2 },
@@ -176,12 +172,12 @@ describe('M6 Analytics Filters', () => {
         position: i + 1,
         selectedChoiceId: q.choices.find(c => c.isCorrect)!.id,
         correctChoiceId: q.choices.find(c => c.isCorrect)!.id,
-        topicKey: q.topicId,
+        topicKey: i < 5 ? topic1bKey : topic1Key,
         isCorrect: true,
       })),
       perTopic: [
-        { topicKey: topic1bId, correct: 5, total: 5 },
-        { topicKey: topic1Id, correct: 20, total: 20 },
+        { topicKey: topic1bKey, correct: 5, total: 5 },
+        { topicKey: topic1Key, correct: 20, total: 20 },
       ],
     };
     await prisma.attemptResult.create({
@@ -218,10 +214,10 @@ describe('M6 Analytics Filters', () => {
         position: i + 1,
         selectedChoiceId: q.choices[i < 20 ? 0 : 1].id,
         correctChoiceId: q.choices.find(c => c.isCorrect)!.id,
-        topicKey: q.topicId,
+        topicKey: topic2Key,
         isCorrect: i < 20,
       })),
-      perTopic: [{ topicKey: topic2Id, correct: 20, total: 25 }],
+      perTopic: [{ topicKey: topic2Key, correct: 20, total: 25 }],
     };
     await prisma.attemptResult.create({
       data: { attemptId: attempt4.id, score: 20, total: 25, snapshot: snapshot4 },
@@ -280,18 +276,21 @@ describe('M6 Analytics Filters', () => {
       const result = await analyticsService.getSummary(query);
 
       expect(result.topic).toBe(topic1Key);
-      // Overall metrics may include all data when no subject filter
-      expect(result.overall.totalAnswered).toBeGreaterThanOrEqual(0);
-      expect(result.overall.correctCount).toBeGreaterThanOrEqual(0);
+      expect(result.overall.totalAnswered).toBe(70);
+      expect(result.overall.correctCount).toBe(57);
+      expect(result.overall.completedTestsCount).toBe(3);
+      expect(result.bySubject).toHaveLength(1);
+      expect(result.bySubject[0].subjectId).toBe(subject1Id);
+      expect(result.bySubject[0].totalAnswered).toBe(70);
     });
 
     it('returns byTopic array filtered to the topic', async () => {
       const query: AnalyticsQueryDto = { topic: topic1Key };
       const result = await analyticsService.getSummary(query);
 
-      // byTopic should only include the filtered topic
-      // When no subject filter, byTopic may be empty (topic filter only works with subject)
-      expect(Array.isArray(result.byTopic)).toBe(true);
+      expect(result.byTopic).toHaveLength(1);
+      expect(result.byTopic[0].topicKey).toBe(topic1Key);
+      expect(result.byTopic[0].subjectId).toBe(subject1Id);
     });
 
     it('combines subject and topic filters', async () => {
@@ -300,8 +299,12 @@ describe('M6 Analytics Filters', () => {
 
       expect(result.subjectId).toBe(subject1Id);
       expect(result.topic).toBe(topic1Key);
-      expect(result.overall.totalAnswered).toBeGreaterThan(0);
-      expect(result.overall.correctCount).toBeGreaterThanOrEqual(0);
+      expect(result.overall.totalAnswered).toBe(70);
+      expect(result.overall.correctCount).toBe(57);
+      expect(result.bySubject).toHaveLength(1);
+      expect(result.bySubject[0].totalAnswered).toBe(70);
+      expect(result.byTopic).toHaveLength(1);
+      expect(result.byTopic[0].topicKey).toBe(topic1Key);
     });
   });
 

@@ -123,6 +123,44 @@ describe('M6 Report Lifecycle', () => {
 
       expect(report.attemptId).toBe(attempt3.id);
     });
+
+    it('resolves attemptId + position to the real questionId (not attemptId)', async () => {
+      const subject4 = await createSubject();
+      const topic4 = await createTopic(subject4.id);
+      const question4a = await createQuestion({
+        subjectId: subject4.id,
+        topicId: topic4.id,
+      });
+      const question4b = await createQuestion({
+        subjectId: subject4.id,
+        topicId: topic4.id,
+      });
+      const attempt4 = await createAttempt(subject4.id);
+      await addAttemptQuestions(attempt4.id, [question4a.id, question4b.id]);
+
+      const report = await questionsService.reportAttemptQuestion(
+        attempt4.id,
+        2,
+        'ANSWER_KEY',
+        'Second question key wrong',
+      );
+
+      expect(report.attemptId).toBe(attempt4.id);
+      expect(report.questionId).toBe(question4b.id);
+      expect(report.questionId).not.toBe(attempt4.id);
+
+      const q4b = await prisma.mockQuestion.findUniqueOrThrow({
+        where: { id: question4b.id },
+        select: { status: true },
+      });
+      expect(q4b.status).toBe('QUARANTINED');
+
+      const q4a = await prisma.mockQuestion.findUniqueOrThrow({
+        where: { id: question4a.id },
+        select: { status: true },
+      });
+      expect(q4a.status).toBe('ACTIVE');
+    });
   });
 
   describe('GET /mock-test/questions/quarantined', () => {

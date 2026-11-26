@@ -49,11 +49,8 @@ export class AnalyticsService {
     const subjectId = query.subjectId ?? null;
     const topicKey = query.topic ?? null;
 
-    // loadOverall cannot filter by topic without a subjectId (no SubjectTopic join)
-    const overallTopicKey = subjectId ? topicKey : null;
-
     const [overall, bySubject, byTopic, availableTopics] = await Promise.all([
-      this.loadOverall(days, subjectId, overallTopicKey),
+      this.loadOverall(days, subjectId, topicKey),
       this.loadBySubject(days, subjectId, topicKey),
       this.loadByTopic(days, subjectId, topicKey),
       this.loadAvailableTopics(subjectId),
@@ -133,7 +130,29 @@ export class AnalyticsService {
     subjectId: string | null,
     topicKey: string | null,
   ): Promise<OverallRow> {
-    // loadOverall never has SubjectTopic join, so topicKey filter is applied in JS if needed
+    if (topicKey) {
+      const filter = this.buildBaseFilter(days, subjectId, topicKey, true);
+      const rows = await this.prisma.$queryRaw<OverallRow[]>(Prisma.sql`
+        SELECT
+          COALESCE(SUM(t."total"), 0)::int AS "totalAnswered",
+          COALESCE(SUM(t."correct"), 0)::int AS "correctCount",
+          COUNT(DISTINCT ar."attemptId")::int AS "completedTestsCount"
+        FROM "AttemptResult" ar
+        JOIN "MockAttempt" a ON a."id" = ar."attemptId"
+        JOIN "Subject" s ON s."id" = a."subjectId"
+        CROSS JOIN LATERAL jsonb_to_recordset(
+          CASE WHEN jsonb_typeof(ar."snapshot"->'perTopic') = 'array'
+            THEN ar."snapshot"->'perTopic'
+            ELSE '[]'::jsonb END
+        ) AS t("topicKey" text, "correct" int, "total" int)
+        JOIN "SubjectTopic" st
+          ON st."subjectId" = a."subjectId" AND st."key" = t."topicKey"
+        ${filter}
+      `);
+
+      return rows[0] ?? { totalAnswered: 0, correctCount: 0, completedTestsCount: 0 };
+    }
+
     const filter = this.buildBaseFilter(days, subjectId, null, false);
 
     const rows = await this.prisma.$queryRaw<OverallRow[]>(Prisma.sql`
@@ -174,7 +193,35 @@ export class AnalyticsService {
     subjectId: string | null,
     topicKey: string | null,
   ): Promise<SubjectMetricRow[]> {
-    // loadBySubject doesn't have SubjectTopic join
+    if (topicKey) {
+      const filter = this.buildBaseFilter(days, subjectId, topicKey, true);
+      return this.prisma.$queryRaw<SubjectMetricRow[]>(Prisma.sql`
+        SELECT
+          s."id" AS "subjectId",
+          s."name" AS "subject",
+          COALESCE(SUM(t."total"), 0)::int AS "totalAnswered",
+          COALESCE(SUM(t."correct"), 0)::int AS "correctCount",
+          CASE
+            WHEN COALESCE(SUM(t."total"), 0) > 0
+            THEN ROUND(COALESCE(SUM(t."correct"), 0)::numeric / NULLIF(COALESCE(SUM(t."total"), 0), 0) * 100)::int
+            ELSE NULL
+          END AS "accuracyPercent"
+        FROM "AttemptResult" ar
+        JOIN "MockAttempt" a ON a."id" = ar."attemptId"
+        JOIN "Subject" s ON s."id" = a."subjectId"
+        CROSS JOIN LATERAL jsonb_to_recordset(
+          CASE WHEN jsonb_typeof(ar."snapshot"->'perTopic') = 'array'
+            THEN ar."snapshot"->'perTopic'
+            ELSE '[]'::jsonb END
+        ) AS t("topicKey" text, "correct" int, "total" int)
+        JOIN "SubjectTopic" st
+          ON st."subjectId" = a."subjectId" AND st."key" = t."topicKey"
+        ${filter}
+        GROUP BY s."id", s."name"
+        ORDER BY s."name" ASC
+      `);
+    }
+
     const filter = this.buildBaseFilter(days, subjectId, null, false);
 
     return this.prisma.$queryRaw<SubjectMetricRow[]>(Prisma.sql`

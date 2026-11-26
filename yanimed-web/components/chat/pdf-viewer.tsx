@@ -1,11 +1,68 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from "react";
-import { ChevronLeft, ChevronRight, Minimize2, Maximize2, X, BookOpen, Loader2, AlertCircle, RefreshCw, Minus, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Minimize2, Maximize2, X, Loader2, AlertCircle, RefreshCw, Minus, Plus } from "lucide-react";
 import type { ChatCitation } from "@/lib/types";
 import * as pdfjsLib from "pdfjs-dist";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+
+export const MIN_ZOOM = 10;
+export const MAX_ZOOM = 400;
+export const ZOOM_STEP = 10;
+const MAX_CANVAS_DIMENSION = 4096;
+const MAX_CANVAS_PIXELS = 16_777_216;
+
+export interface PdfPageLayout {
+  cssWidth: number;
+  cssHeight: number;
+  renderScale: number;
+  canvasWidth: number;
+  canvasHeight: number;
+}
+
+export function computePdfPageLayout({
+  pageWidth,
+  pageHeight,
+  availableWidth,
+  zoom,
+  dpr = 1,
+}: {
+  pageWidth: number;
+  pageHeight: number;
+  availableWidth: number;
+  zoom: number;
+  dpr?: number;
+}): PdfPageLayout {
+  const safePageWidth = Math.max(1, pageWidth);
+  const safePageHeight = Math.max(1, pageHeight);
+  const safeAvailableWidth = Math.max(100, availableWidth);
+  const safeZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+  const safeDpr = Math.max(1, dpr);
+
+  const fitScale = safeAvailableWidth / safePageWidth;
+  const displayScale = fitScale * (safeZoom / 100);
+  const cssWidth = safePageWidth * displayScale;
+  const cssHeight = safePageHeight * displayScale;
+
+  const idealRenderScale = displayScale * safeDpr;
+  const maxScaleByDimension = Math.min(
+    MAX_CANVAS_DIMENSION / safePageWidth,
+    MAX_CANVAS_DIMENSION / safePageHeight,
+  );
+  const maxScaleByPixels = Math.sqrt(
+    MAX_CANVAS_PIXELS / (safePageWidth * safePageHeight),
+  );
+  const renderScale = Math.min(idealRenderScale, maxScaleByDimension, maxScaleByPixels);
+
+  return {
+    cssWidth,
+    cssHeight,
+    renderScale,
+    canvasWidth: Math.max(1, Math.round(safePageWidth * renderScale)),
+    canvasHeight: Math.max(1, Math.round(safePageHeight * renderScale)),
+  };
+}
 
 interface PDFViewerProps {
   citations: ChatCitation[];
@@ -37,7 +94,7 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
   documentId,
 }, ref) => {
   const [isLoading, setIsLoading] = useState(true);
-  const [pageImageSrc, setPageImageSrc] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sourceUnavailable, setSourceUnavailable] = useState(false);
   const [noDocumentId, setNoDocumentId] = useState(false);
@@ -50,38 +107,58 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
   const userNavigatingRef = useRef(false);
 
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
+  const renderIdRef = useRef(0);
+  const lastRenderedWidthRef = useRef(0);
 
   const renderPage = useCallback(async (page: number) => {
     if (!pdfDoc || page < 1 || page > actualTotalPages) {
       setError("Page out of range");
       return;
     }
-    if (renderTaskRef.current) {
-      try { renderTaskRef.current.cancel(); } catch {}
-      renderTaskRef.current = null;
-    }
+
+    const renderId = ++renderIdRef.current;
     setIsLoading(true);
     setError(null);
+
     try {
+      const activeTask = renderTaskRef.current;
+      if (activeTask) {
+        try {
+          activeTask.cancel();
+          await activeTask.promise;
+        } catch {}
+        if (renderTaskRef.current === activeTask) {
+          renderTaskRef.current = null;
+        }
+        if (renderId !== renderIdRef.current) return;
+      }
+
       const pdfPage = await pdfDoc.getPage(page);
-      const dpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
-      const baseScale = zoom / 100;
+      if (renderId !== renderIdRef.current) return;
+
       const canvas = canvasRef.current;
-      if (!canvas) return;
-
       const container = containerRef.current;
-      if (!container) return;
+      if (!canvas || !container || container.clientWidth <= 0) return;
 
-      const containerWidth = container.clientWidth - 48;
+      lastRenderedWidthRef.current = container.clientWidth;
+
+      const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
       const viewportAt100 = pdfPage.getViewport({ scale: 1 });
-      const fitScaleAt100 = containerWidth / viewportAt100.width;
-      const finalScale = Math.min(baseScale, fitScaleAt100) * dpr;
-      const finalViewport = pdfPage.getViewport({ scale: finalScale });
+      const layout = computePdfPageLayout({
+        pageWidth: viewportAt100.width,
+        pageHeight: viewportAt100.height,
+        availableWidth: container.clientWidth - 48,
+        zoom,
+        dpr,
+      });
 
-      canvas.width = finalViewport.width;
-      canvas.height = finalViewport.height;
-      canvas.style.width = `${finalViewport.width / dpr}px`;
-      canvas.style.height = `${finalViewport.height / dpr}px`;
+      const finalViewport = pdfPage.getViewport({ scale: layout.renderScale });
+
+      canvas.width = layout.canvasWidth;
+      canvas.height = layout.canvasHeight;
+      canvas.style.width = `${layout.cssWidth}px`;
+      canvas.style.height = `${layout.cssHeight}px`;
+      setPageSize({ width: layout.cssWidth, height: layout.cssHeight });
 
       const context = canvas.getContext("2d");
       if (!context) return;
@@ -89,21 +166,24 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, canvas.width, canvas.height);
 
-      renderTaskRef.current = pdfPage.render({
+      const task = pdfPage.render({
         canvas,
         viewport: finalViewport,
       });
-      await renderTaskRef.current.promise;
-
-      setPageImageSrc(canvas.toDataURL());
+      renderTaskRef.current = task;
+      await task.promise;
     } catch (e) {
       if (e instanceof Error && e.name === "RenderingCancelledException") {
         return;
       }
-      setError("Could not render PDF page");
+      if (renderId === renderIdRef.current) {
+        setError("Could not render PDF page");
+      }
     } finally {
-      setIsLoading(false);
-      renderTaskRef.current = null;
+      if (renderId === renderIdRef.current) {
+        setIsLoading(false);
+        renderTaskRef.current = null;
+      }
     }
   }, [pdfDoc, actualTotalPages, zoom]);
 
@@ -146,11 +226,20 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
     }
   }, [documentId, fetchPdfDoc]);
 
+  const renderPageRef = useRef(renderPage);
+  renderPageRef.current = renderPage;
+  const currentPageRef = useRef(currentPage);
+  currentPageRef.current = currentPage;
+
   useEffect(() => {
     loadDocument();
     return () => {
-      if (pageImageSrc) {
-        setPageImageSrc(null);
+      renderIdRef.current += 1;
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch {}
+        renderTaskRef.current = null;
       }
     };
   }, [loadDocument]);
@@ -164,7 +253,7 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
         renderPage(currentPage);
       }
     }
-  }, [currentPage, pdfDoc, zoom, renderPage, actualTotalPages, onPageChange]);
+  }, [currentPage, pdfDoc, zoom, isExpanded, renderPage, actualTotalPages, onPageChange]);
 
   useEffect(() => {
     if (actualTotalPages > 0 && targetPageRef.current > actualTotalPages) {
@@ -183,17 +272,20 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
   useEffect(() => {
     if (!pdfDoc || !containerRef.current) return;
     let resizeTimer: ReturnType<typeof setTimeout>;
-    const handleResize = () => {
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.target.clientWidth ?? containerRef.current?.clientWidth ?? 0;
+      if (width <= 0 || width === lastRenderedWidthRef.current) return;
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => renderPage(currentPage), 100);
-    };
-    const observer = new ResizeObserver(handleResize);
+      resizeTimer = setTimeout(() => {
+        void renderPageRef.current(currentPageRef.current);
+      }, 100);
+    });
     observer.observe(containerRef.current);
     return () => {
       observer.disconnect();
       clearTimeout(resizeTimer);
     };
-  }, [pdfDoc, currentPage, renderPage]);
+  }, [pdfDoc]);
 
   const handlePrevPage = () => {
     if (currentPage > 1) {
@@ -209,95 +301,12 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
     }
   };
 
-  const handleZoomChange = (newZoom: number) => {
-    onZoomChange(newZoom);
-  };
-
   const handleZoomOut = () => {
-    handleZoomChange(Math.max(10, zoom - 10));
+    onZoomChange(Math.max(MIN_ZOOM, zoom - ZOOM_STEP));
   };
 
   const handleZoomIn = () => {
-    handleZoomChange(Math.min(400, zoom + 10));
-  };
-
-  const zoomInputRef = useRef<HTMLInputElement>(null);
-  const zoomInputValueRef = useRef<string | number>(zoom);
-  const isEditingZoomRef = useRef(false);
-
-  const pageInputRef = useRef<HTMLInputElement>(null);
-  const pageInputValueRef = useRef<string | number>(currentPage);
-  const isEditingPageRef = useRef(false);
-
-  const handleZoomInputFocus = () => {
-    isEditingZoomRef.current = true;
-    zoomInputValueRef.current = zoom;
-    setTimeout(() => zoomInputRef.current?.select(), 0);
-  };
-
-  const handleZoomInputBlur = () => {
-    isEditingZoomRef.current = false;
-    const value = parseInt(zoomInputValueRef.current.toString().replace('%', ''), 10);
-    if (!isNaN(value)) {
-      handleZoomChange(Math.min(400, Math.max(10, value)));
-    } else {
-      zoomInputRef.current?.focus();
-    }
-  };
-
-  const handleZoomInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      handleZoomInputBlur();
-      e.currentTarget.blur();
-    } else if (e.key === "Escape") {
-      e.stopPropagation();
-      zoomInputValueRef.current = zoom;
-      e.currentTarget.value = `${zoom}%`;
-      e.currentTarget.blur();
-    } else if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
-      e.stopPropagation();
-    }
-  };
-
-  const handleZoomInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    zoomInputValueRef.current = e.target.value;
-  };
-
-  const handlePageInputFocus = () => {
-    isEditingPageRef.current = true;
-    pageInputValueRef.current = currentPage;
-    pageInputRef.current?.select();
-  };
-
-  const handlePageInputBlur = () => {
-    isEditingPageRef.current = false;
-    const value = parseInt(pageInputValueRef.current.toString(), 10);
-    if (!isNaN(value) && actualTotalPages > 0) {
-      const clamped = Math.min(Math.max(1, value), actualTotalPages);
-      onPageChange(clamped);
-    } else if (!isNaN(value)) {
-      onPageChange(Math.max(1, value));
-    } else {
-      pageInputRef.current?.focus();
-    }
-  };
-
-  const handlePageInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      handlePageInputBlur();
-      e.currentTarget.blur();
-    } else if (e.key === "Escape") {
-      e.stopPropagation();
-      pageInputValueRef.current = currentPage;
-      e.currentTarget.value = String(currentPage);
-      e.currentTarget.blur();
-    } else if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
-      e.stopPropagation();
-    }
-  };
-
-  const handlePageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    pageInputValueRef.current = e.target.value;
+    onZoomChange(Math.min(MAX_ZOOM, zoom + ZOOM_STEP));
   };
 
   const handleRetry = () => {
@@ -317,6 +326,8 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
     refresh: handleRetry,
   }));
 
+  const pageLabel = actualTotalPages > 0 ? `${currentPage} of ${actualTotalPages}` : `Page ${currentPage}`;
+
   return (
     <div
       ref={containerRef}
@@ -328,46 +339,31 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
     >
       <div className="pdf-viewer__toolbar" role="toolbar" aria-label="PDF viewer controls">
         <div className="pdf-viewer__toolbar-left">
-          <button
-            type="button"
-            className="pdf-viewer__nav-btn"
-            onClick={handlePrevPage}
-            disabled={currentPage <= 1}
-            aria-label="Previous page"
-            aria-disabled={currentPage <= 1}
-          >
-            <ChevronLeft size={20} strokeWidth={2.5} aria-hidden="true" />
-          </button>
           <div className="pdf-viewer__page-control" role="group" aria-label="Page navigation">
-            <input
-              ref={pageInputRef}
-              type="text"
-              className="pdf-viewer__page-input"
-              value={isEditingPageRef.current ? pageInputValueRef.current : currentPage}
-              onChange={handlePageInputChange}
-              onFocus={handlePageInputFocus}
-              onBlur={handlePageInputBlur}
-              onKeyDown={handlePageInputKeyDown}
-              aria-label="Page number"
-              aria-valuemin={1}
-              aria-valuemax={actualTotalPages || 1}
-              aria-valuenow={currentPage}
-              spellCheck={false}
-              inputMode="numeric"
-              disabled={actualTotalPages === 0}
-            />
-            <span className="pdf-viewer__page-sep" aria-hidden="true">of {actualTotalPages}</span>
+            <button
+              type="button"
+              className="pdf-viewer__nav-btn"
+              onClick={handlePrevPage}
+              disabled={currentPage <= 1}
+              aria-label="Previous page"
+              aria-disabled={currentPage <= 1}
+            >
+              <ChevronLeft size={20} strokeWidth={2.5} aria-hidden="true" />
+            </button>
+            <span className="pdf-viewer__page-text" aria-live="polite">
+              {pageLabel}
+            </span>
+            <button
+              type="button"
+              className="pdf-viewer__nav-btn"
+              onClick={handleNextPage}
+              disabled={currentPage >= actualTotalPages}
+              aria-label="Next page"
+              aria-disabled={currentPage >= actualTotalPages}
+            >
+              <ChevronRight size={20} strokeWidth={2.5} aria-hidden="true" />
+            </button>
           </div>
-          <button
-            type="button"
-            className="pdf-viewer__nav-btn"
-            onClick={handleNextPage}
-            disabled={currentPage >= actualTotalPages}
-            aria-label="Next page"
-            aria-disabled={currentPage >= actualTotalPages}
-          >
-            <ChevronRight size={20} strokeWidth={2.5} aria-hidden="true" />
-          </button>
         </div>
 
         <div className="pdf-viewer__toolbar-center">
@@ -376,35 +372,22 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
               type="button"
               className="pdf-viewer__zoom-btn"
               onClick={handleZoomOut}
-              disabled={zoom <= 10}
+              disabled={zoom <= MIN_ZOOM}
               aria-label="Zoom out"
-              aria-disabled={zoom <= 10}
+              aria-disabled={zoom <= MIN_ZOOM}
             >
               <Minus size={18} strokeWidth={2.5} aria-hidden="true" />
             </button>
-            <input
-              ref={zoomInputRef}
-              type="text"
-              className="pdf-viewer__zoom-input"
-              value={`${zoom}%`}
-              onChange={handleZoomInputChange}
-              onFocus={handleZoomInputFocus}
-              onBlur={handleZoomInputBlur}
-              onKeyDown={handleZoomInputKeyDown}
-              aria-label="Zoom percentage"
-              aria-valuemin={10}
-              aria-valuemax={400}
-              aria-valuenow={zoom}
-              spellCheck={false}
-              inputMode="numeric"
-            />
+            <span className="pdf-viewer__zoom-text" aria-live="polite">
+              {zoom}%
+            </span>
             <button
               type="button"
               className="pdf-viewer__zoom-btn"
               onClick={handleZoomIn}
-              disabled={zoom >= 400}
+              disabled={zoom >= MAX_ZOOM}
               aria-label="Zoom in"
-              aria-disabled={zoom >= 400}
+              aria-disabled={zoom >= MAX_ZOOM}
             >
               <Plus size={18} strokeWidth={2.5} aria-hidden="true" />
             </button>
@@ -438,7 +421,11 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
         </div>
       </div>
 
-      <div className="pdf-viewer__canvas" role="img" aria-label={`PDF page ${currentPage} of ${actualTotalPages}`}>
+      <div
+        className="pdf-viewer__canvas"
+        role="img"
+        aria-label={actualTotalPages > 0 ? `PDF page ${currentPage} of ${actualTotalPages}` : `PDF page ${currentPage}`}
+      >
         {(sourceUnavailable || noDocumentId) && !isLoading && (
           <div className="pdf-viewer__error" role="alert" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "16px", padding: "24px" }}>
             <AlertCircle size={48} style={{ color: "hsl(var(--destructive))" }} aria-hidden="true" />
@@ -489,7 +476,7 @@ export const PDFViewer = forwardRef<PDFViewerRef, PDFViewerProps>(({
             <canvas
               ref={canvasRef}
               className="pdf-viewer__page"
-              style={{ maxWidth: "none", width: "auto", height: "auto" }}
+              style={pageSize ? { width: `${pageSize.width}px`, height: `${pageSize.height}px` } : undefined}
             />
             {activeCitation && (
               <div
