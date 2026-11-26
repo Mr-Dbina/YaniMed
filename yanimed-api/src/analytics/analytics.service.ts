@@ -49,8 +49,11 @@ export class AnalyticsService {
     const subjectId = query.subjectId ?? null;
     const topicKey = query.topic ?? null;
 
+    // loadOverall cannot filter by topic without a subjectId (no SubjectTopic join)
+    const overallTopicKey = subjectId ? topicKey : null;
+
     const [overall, bySubject, byTopic, availableTopics] = await Promise.all([
-      this.loadOverall(days, subjectId, topicKey),
+      this.loadOverall(days, subjectId, overallTopicKey),
       this.loadBySubject(days, subjectId, topicKey),
       this.loadByTopic(days, subjectId, topicKey),
       this.loadAvailableTopics(subjectId),
@@ -100,6 +103,7 @@ export class AnalyticsService {
     days: number | null,
     subjectId: string | null,
     topicKey: string | null,
+    hasSubjectTopicJoin = false,
   ): Prisma.Sql {
     const clauses: Prisma.Sql[] = [
       Prisma.sql`a."status" = 'COMPLETED'`,
@@ -114,7 +118,8 @@ export class AnalyticsService {
       clauses.push(Prisma.sql`a."subjectId" = ${subjectId}`);
     }
 
-    if (topicKey) {
+    // Only add topicKey filter if the query actually has the SubjectTopic join
+    if (topicKey && hasSubjectTopicJoin) {
       clauses.push(Prisma.sql`st."key" = ${topicKey}`);
     }
 
@@ -128,7 +133,8 @@ export class AnalyticsService {
     subjectId: string | null,
     topicKey: string | null,
   ): Promise<OverallRow> {
-    const filter = this.buildBaseFilter(days, subjectId, topicKey);
+    // loadOverall never has SubjectTopic join, so topicKey filter is applied in JS if needed
+    const filter = this.buildBaseFilter(days, subjectId, null, false);
 
     const rows = await this.prisma.$queryRaw<OverallRow[]>(Prisma.sql`
       SELECT
@@ -168,7 +174,8 @@ export class AnalyticsService {
     subjectId: string | null,
     topicKey: string | null,
   ): Promise<SubjectMetricRow[]> {
-    const filter = this.buildBaseFilter(days, subjectId, topicKey);
+    // loadBySubject doesn't have SubjectTopic join
+    const filter = this.buildBaseFilter(days, subjectId, null, false);
 
     return this.prisma.$queryRaw<SubjectMetricRow[]>(Prisma.sql`
       SELECT
@@ -247,7 +254,7 @@ export class AnalyticsService {
     subjectId: string | null,
     topicKey: string | null,
   ): Promise<TopicMetricRow[]> {
-    const filter = this.buildBaseFilter(days, subjectId, topicKey);
+    const filter = this.buildBaseFilter(days, subjectId, topicKey, true);
 
     return this.prisma.$queryRaw<TopicMetricRow[]>(Prisma.sql`
       SELECT

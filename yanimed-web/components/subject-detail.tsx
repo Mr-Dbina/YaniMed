@@ -43,6 +43,7 @@ export function SubjectDetail({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(subject.name);
+  const [pdfOpen, setPdfOpen] = useState(false);
   const [documentsRefreshToken, setDocumentsRefreshToken] = useState(0);
   const [documentsSummary, setDocumentsSummary] = useState<{
     subjectId: string;
@@ -53,6 +54,12 @@ export function SubjectDetail({
   useEffect(() => {
     if (isRenaming) renameInputRef.current?.focus();
   }, [isRenaming]);
+
+  useEffect(() => {
+    if (pdfOpen) {
+      setIsMenuOpen(false);
+    }
+  }, [pdfOpen]);
 
   const startRename = () => {
     setRenameValue(subject.name);
@@ -140,7 +147,7 @@ export function SubjectDetail({
     </nav>
   );
 
-  const menu = (
+  const menu = !pdfOpen ? (
     <div className="subject-detail__menu-wrap">
       <button
         type="button"
@@ -150,7 +157,7 @@ export function SubjectDetail({
         aria-expanded={isMenuOpen}
         onClick={() => setIsMenuOpen((value) => !value)}
       >
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+        <svg viewBox="0 0 24 24" width="22" height={22} fill="currentColor">
           <circle cx="12" cy="5" r="1.8" />
           <circle cx="12" cy="12" r="1.8" />
           <circle cx="12" cy="19" r="1.8" />
@@ -205,7 +212,14 @@ export function SubjectDetail({
         </>
       )}
     </div>
-  );
+  ) : null;
+
+  const headerRow = isChat ? (
+    <div className="subject-detail__header-row">
+      {breadcrumb}
+      {menu}
+    </div>
+  ) : null;
 
   const className = [
     "subject-detail",
@@ -219,10 +233,7 @@ export function SubjectDetail({
     <div className={className}>
       {isChat ? (
         <>
-          <div className="subject-detail__topbar">
-            {breadcrumb}
-            {menu}
-          </div>
+          {headerRow}
 
           {showDropzone && (
             <div className="subject-detail__card">
@@ -265,6 +276,9 @@ export function SubjectDetail({
               ? backendChatDisabledReason
               : "Chat unavailable until this PDF is processed and its index is verified."}
             onAsked={(prompt) => onUpdateSubject(subject.id, { lastMessage: prompt })}
+            pdfOpen={pdfOpen}
+            onPdfOpenChange={setPdfOpen}
+            leftHeader={null}
           />
         </>
       ) : (

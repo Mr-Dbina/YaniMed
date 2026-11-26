@@ -1,9 +1,10 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { PdfObjectService } from '../pdf-objects/pdf-object.service.js';
+import { StorageService } from '../storage/storage.service.js';
 import { DocumentController } from './documents.controller.js';
 import request from 'supertest';
 
@@ -32,6 +33,7 @@ function prismaMock() {
   return {
     subject: { findUnique: vi.fn().mockResolvedValue({ id: 'subject-1', status: 'ACTIVE' }) },
     document: {
+      findUnique: vi.fn(),
       create: vi.fn().mockImplementation(async ({ data }: any) => ({ id: 'doc-new', ...data })),
       findUniqueOrThrow: vi.fn().mockResolvedValue({
         id: 'doc-existing',
@@ -53,15 +55,23 @@ function pdfObjectsMock(duplicate: unknown) {
   };
 }
 
+function storageMock() {
+  return {
+    getObject: vi.fn().mockResolvedValue(Buffer.from('%PDF-1.4')),
+  };
+}
+
 async function makeController(
   prisma: ReturnType<typeof prismaMock>,
   pdfObjects: ReturnType<typeof pdfObjectsMock>,
+  storage: ReturnType<typeof storageMock> = storageMock(),
 ) {
   const module = await Test.createTestingModule({
     controllers: [DocumentController],
     providers: [
       { provide: PrismaService, useValue: prisma },
       { provide: PdfObjectService, useValue: pdfObjects },
+      { provide: StorageService, useValue: storage },
     ],
   }).compile();
   return module.get(DocumentController);
@@ -202,6 +212,7 @@ describe('document upload contract', () => {
         providers: [
           { provide: PrismaService, useValue: prisma },
           { provide: PdfObjectService, useValue: pdfObjects },
+          { provide: StorageService, useValue: storageMock() },
         ],
       }).compile();
       const app = module.createNestApplication();
@@ -318,6 +329,7 @@ describe('document upload contract', () => {
         providers: [
           { provide: PrismaService, useValue: prisma },
           { provide: PdfObjectService, useValue: pdfObjects },
+          { provide: StorageService, useValue: storageMock() },
         ],
       }).compile();
       const app = module.createNestApplication();
@@ -332,5 +344,192 @@ describe('document upload contract', () => {
         vi.unstubAllEnvs();
       }
     });
+  });
+});
+
+describe('document file download', () => {
+  it('returns 200 with PDF content for existing document', async () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    const prisma = prismaMock();
+    prisma.document.findUnique.mockResolvedValue({
+      fileUrl: 'pdfs/test.pdf',
+      subject: { status: 'ACTIVE' },
+    });
+    const pdfObjects = pdfObjectsMock(null);
+    const storage = storageMock();
+    const module = await Test.createTestingModule({
+      controllers: [DocumentController],
+      providers: [
+        { provide: PrismaService, useValue: prisma },
+        { provide: PdfObjectService, useValue: pdfObjects },
+        { provide: StorageService, useValue: storage },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    await app.init();
+    try {
+      const res = await request(app.getHttpServer())
+        .get('/documents/123e4567-e89b-12d3-a456-426614174000/file')
+        .set('Host', 'localhost:3000')
+        .expect(200);
+      expect(res.headers['content-type']).toBe('application/pdf');
+      expect(res.headers['cache-control']).toBe('private, no-store');
+      expect(Buffer.isBuffer(res.body)).toBe(true);
+      expect(storage.getObject).toHaveBeenCalledWith('pdfs/test.pdf');
+    } finally {
+      await app.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('returns 400 for invalid UUID', async () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    const prisma = prismaMock();
+    const pdfObjects = pdfObjectsMock(null);
+    const storage = storageMock();
+    const module = await Test.createTestingModule({
+      controllers: [DocumentController],
+      providers: [
+        { provide: PrismaService, useValue: prisma },
+        { provide: PdfObjectService, useValue: pdfObjects },
+        { provide: StorageService, useValue: storage },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    await app.init();
+    try {
+      await request(app.getHttpServer())
+        .get('/documents/not-a-uuid/file')
+        .set('Host', 'localhost:3000')
+        .expect(400);
+      expect(prisma.document.findUnique).not.toHaveBeenCalled();
+      expect(storage.getObject).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('returns 404 for missing document', async () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    const prisma = prismaMock();
+    prisma.document.findUnique.mockResolvedValue(null);
+    const pdfObjects = pdfObjectsMock(null);
+    const storage = storageMock();
+    const module = await Test.createTestingModule({
+      controllers: [DocumentController],
+      providers: [
+        { provide: PrismaService, useValue: prisma },
+        { provide: PdfObjectService, useValue: pdfObjects },
+        { provide: StorageService, useValue: storage },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    await app.init();
+    try {
+      await request(app.getHttpServer())
+        .get('/documents/123e4567-e89b-12d3-a456-426614174000/file')
+        .set('Host', 'localhost:3000')
+        .expect(404);
+      expect(storage.getObject).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('returns 404 for document with DELETING subject', async () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    const prisma = prismaMock();
+    prisma.document.findUnique.mockResolvedValue({
+      fileUrl: 'pdfs/test.pdf',
+      subject: { status: 'DELETING' },
+    });
+    const pdfObjects = pdfObjectsMock(null);
+    const storage = storageMock();
+    const module = await Test.createTestingModule({
+      controllers: [DocumentController],
+      providers: [
+        { provide: PrismaService, useValue: prisma },
+        { provide: PdfObjectService, useValue: pdfObjects },
+        { provide: StorageService, useValue: storage },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    await app.init();
+    try {
+      await request(app.getHttpServer())
+        .get('/documents/123e4567-e89b-12d3-a456-426614174000/file')
+        .set('Host', 'localhost:3000')
+        .expect(404);
+      expect(storage.getObject).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('returns 404 when R2 object does not exist', async () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    const prisma = prismaMock();
+    prisma.document.findUnique.mockResolvedValue({
+      fileUrl: 'pdfs/missing.pdf',
+      subject: { status: 'ACTIVE' },
+    });
+    const pdfObjects = pdfObjectsMock(null);
+    const storage = storageMock();
+    const error = new Error('Not Found');
+    error.name = 'NoSuchKey';
+    storage.getObject.mockRejectedValueOnce(error);
+    const module = await Test.createTestingModule({
+      controllers: [DocumentController],
+      providers: [
+        { provide: PrismaService, useValue: prisma },
+        { provide: PdfObjectService, useValue: pdfObjects },
+        { provide: StorageService, useValue: storage },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    await app.init();
+    try {
+      await request(app.getHttpServer())
+        .get('/documents/123e4567-e89b-12d3-a456-426614174000/file')
+        .set('Host', 'localhost:3000')
+        .expect(404);
+    } finally {
+      await app.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('returns 503 on storage failure', async () => {
+    vi.stubEnv('NODE_ENV', 'test');
+    const prisma = prismaMock();
+    prisma.document.findUnique.mockResolvedValue({
+      fileUrl: 'pdfs/test.pdf',
+      subject: { status: 'ACTIVE' },
+    });
+    const pdfObjects = pdfObjectsMock(null);
+    const storage = storageMock();
+    storage.getObject.mockRejectedValueOnce(new Error('Network down'));
+    const module = await Test.createTestingModule({
+      controllers: [DocumentController],
+      providers: [
+        { provide: PrismaService, useValue: prisma },
+        { provide: PdfObjectService, useValue: pdfObjects },
+        { provide: StorageService, useValue: storage },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    await app.init();
+    try {
+      await request(app.getHttpServer())
+        .get('/documents/123e4567-e89b-12d3-a456-426614174000/file')
+        .set('Host', 'localhost:3000')
+        .expect(503);
+    } finally {
+      await app.close();
+      vi.unstubAllEnvs();
+    }
   });
 });

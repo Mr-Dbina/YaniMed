@@ -3,10 +3,15 @@ import {
   Body,
   ConflictException,
   Controller,
+  Get,
   HttpCode,
   Inject,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
   Post,
   Res,
+  ServiceUnavailableException,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -16,6 +21,7 @@ type MulterFile = { originalname: string; mimetype: string; size: number; buffer
 import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ChatGuard } from '../chat/chat.guard.js';
+import { StorageService } from '../storage/storage.service.js';
 import { validatePdfUpload } from '../storage/storage.service.js';
 import { Optional } from '@nestjs/common';
 import { PdfObjectService } from '../pdf-objects/pdf-object.service.js';
@@ -41,6 +47,7 @@ export class DocumentController {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     private readonly pdfObjects: PdfObjectService,
+    private readonly storage: StorageService,
     @Optional() private readonly processing?: DocumentProcessingService,
   ) {}
 
@@ -155,4 +162,38 @@ export class DocumentController {
       storageKey: finalDocument.fileUrl,
     };
   }
+
+  @Get(':documentId/file')
+  @ApiOperation({ summary: 'Download the original PDF file for a document (local only)' })
+  async file(
+    @Param('documentId', new ParseUUIDPipe()) id: string,
+    @Res() res: Response,
+  ) {
+    const document = await this.prisma.document.findUnique({
+      where: { id },
+      select: { fileUrl: true, subject: { select: { status: true } } },
+    });
+    if (!document || document.subject.status === 'DELETING') {
+      throw new NotFoundException('Document not found.');
+    }
+    let body: Buffer;
+    try {
+      body = await this.storage.getObject(document.fileUrl);
+    } catch (error) {
+      if (isStorageNotFoundError(error)) {
+        throw new NotFoundException('Document file not found.');
+      }
+      throw new ServiceUnavailableException('Document storage unavailable.');
+    }
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(body);
+  }
+}
+
+function isStorageNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === 'NoSuchKey') return true;
+  const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+  return status === 404;
 }

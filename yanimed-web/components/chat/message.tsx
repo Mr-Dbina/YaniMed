@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Children, useEffect, useRef, useState } from "react";
 import { MessageActions } from "@/components/chat/message-actions";
 import type { MessageAction } from "@/components/chat/message-actions";
 import type { ChatMessage, ChatCitation } from "@/lib/types";
@@ -17,7 +17,7 @@ interface MessageProps {
   onReadAloud?: (message: ChatMessage) => void;
   onRegenerate?: (message: ChatMessage) => void;
   actionsDisabled?: boolean;
-  onCitationClick?: (citation: ChatCitation, index: number) => void;
+  onCitationClick?: (citation: ChatCitation, index: number, citations?: ChatCitation[]) => void;
   allCitations?: ChatCitation[];
   activeCitationIndex?: number;
 }
@@ -145,78 +145,44 @@ function deduplicateCitations(citations: ChatCitation[]): ChatCitation[] {
 }
 
 function normalizeMarkdownTables(content: string): string {
-  if (!content.includes('|')) return content;
-  
-  // First, split collapsed "| |" row boundaries onto separate lines
-  let processed = content.replace(/\|\s*\|\s*(?=\S)/g, '|\n|');
-  
-  // Split mid-paragraph tables: insert blank line before table that starts after prose
-  // Matches: text ending with word + space + | at start of table row
-  processed = processed.replace(/(\S)\s+\|(?=\s*\S)/g, '$1\n\n|');
-  
-  const lines = processed.split('\n');
-  const result: string[] = [];
-  let inTable = false;
-  let tableBuffer: string[] = [];
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    const isTableRow = trimmed.startsWith('|') || 
-      (trimmed.includes('|') && (trimmed.match(/\|/g) || []).length >= 2);
-    const isSeparatorRow = trimmed.startsWith('|') && /^[\s\|\-\:]+$/.test(trimmed);
-    
-    if (isTableRow) {
-      if (!inTable) {
-        inTable = true;
-        tableBuffer = [];
-        if (result.length > 0 && result[result.length - 1].trim() !== '') {
-          result.push('');
-        }
-      }
-      let normalized = line.replace(/\|\|+/g, '|');
-      if (!normalized.trim().startsWith('|')) {
-        normalized = '| ' + normalized.trim();
-      }
-      if (!normalized.trim().endsWith('|')) {
-        normalized = normalized.trim() + ' |';
-      }
-      tableBuffer.push(normalized);
-    } else {
-      if (inTable && tableBuffer.length > 0) {
-        if (tableBuffer.length >= 2) {
-          const firstRow = tableBuffer[0];
-          const secondRow = tableBuffer[1];
-          const isHeaderSeparator = secondRow.trim().startsWith('|') && /^[\s\|\-\:]+$/.test(secondRow.trim());
-          if (!isHeaderSeparator) {
-            const colCount = (firstRow.match(/\|/g) || []).length;
-            const separator = '|' + ' --- |'.repeat(colCount - 1);
-            tableBuffer.splice(1, 0, separator);
-          }
-        }
-        result.push(...tableBuffer);
-        tableBuffer = [];
-        inTable = false;
-      }
-      result.push(line);
+  // Drop unmapped [S1]-style markers, in prose and in table cells
+  const text = content
+    .replace(/\[S\d+\][ \t]*,[ \t]*(?=\[)/g, '')
+    .replace(/(?:[ \t]*,)?[ \t]*\[S\d+\]/g, '');
+
+  // The |---|---| line tells us where a table is and how many columns it has
+  const separator = /\|(?:[ \t]*:?-{3,}:?[ \t]*\|){2,}/g;
+  let out = '';
+  let cursor = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = separator.exec(text)) !== null) {
+    const columns = m[0].split('|').length - 2;
+    const parts = text.slice(cursor, m.index).trimEnd().split('|');
+    if (parts.length < columns + 2 || parts[parts.length - 1] !== '') continue;
+
+    const header = parts.slice(-(columns + 1), -1);
+    if (header.some((cell) => cell.includes('\n'))) continue;
+    const prefix = parts.slice(0, -(columns + 1)).join('|').trimEnd();
+
+    const row = new RegExp(`^\\s*(\\|(?:[^|\\n]*\\|){${columns}})`);
+    const rows = [`|${header.join('|')}|`, m[0]];
+    let end = m.index + m[0].length;
+    let r: RegExpExecArray | null;
+    while ((r = row.exec(text.slice(end))) !== null) {
+      rows.push(r[1]);
+      end += r[0].length;
     }
+
+    const head = out + prefix;
+    out = (head.trim() ? head.trimEnd() + '\n\n' : '') + rows.join('\n');
+    const rest = text.slice(end).replace(/^\s+/, '');
+    if (rest) out += '\n\n';
+    cursor = text.length - rest.length;
+    separator.lastIndex = cursor;
   }
-  
-  if (inTable && tableBuffer.length > 0) {
-    if (tableBuffer.length >= 2) {
-      const firstRow = tableBuffer[0];
-      const secondRow = tableBuffer[1];
-      const isHeaderSeparator = secondRow.trim().startsWith('|') && /^[\s\|\-\:]+$/.test(secondRow.trim());
-      if (!isHeaderSeparator) {
-        const colCount = (firstRow.match(/\|/g) || []).length;
-        const separator = '|' + ' --- |'.repeat(colCount - 1);
-        tableBuffer.splice(1, 0, separator);
-      }
-    }
-    result.push(...tableBuffer);
-  }
-  
-  return result.join('\n');
+
+  return out + text.slice(cursor);
 }
 
 function stripUnmappedSourceMarkers(content: string, citations: ChatCitation[]): string {
@@ -225,7 +191,7 @@ function stripUnmappedSourceMarkers(content: string, citations: ChatCitation[]):
   const validIndices = new Set(citations.map((_, i) => i + 1));
   const validSourceIds = new Set(citations.filter(c => c.sourceId).map(c => c.sourceId));
   
-  return content.replace(/\[S(\d+)\]/g, (match, numStr) => {
+  let cleaned = content.replace(/\[S(\d+)\]/g, (match, numStr) => {
     const num = parseInt(numStr, 10);
     if (validIndices.has(num)) {
       return `[${num}]`;
@@ -235,6 +201,13 @@ function stripUnmappedSourceMarkers(content: string, citations: ChatCitation[]):
     }
     return '';
   });
+  
+  // Clean up orphaned punctuation: "[1] , [S4]" -> "[1]" (comma and space left behind)
+  // Also handles: "[1] ," -> "[1]" and "[1]," -> "[1]"
+  cleaned = cleaned.replace(/(\[\d+\])\s*,\s*(?=\[?S\d+\]?|$)/g, '$1');
+  cleaned = cleaned.replace(/(\[\d+\])\s*,\s*(?=\s|$)/g, '$1');
+  
+  return cleaned;
 }
 
 // Apply stripUnmappedSourceMarkers to table cell content as well
@@ -289,9 +262,16 @@ function parseContentWithCitations(content: string, citations: ChatCitation[], o
   return nodes.length > 0 ? nodes : [content];
 }
 
-function CitationMarkers({ content, citations, onCitationClick }: { content: string; citations: ChatCitation[]; onCitationClick: (citation: ChatCitation, index: number) => void }) {
-  const nodes = parseContentWithCitations(content, citations, onCitationClick);
-  return <span>{nodes}</span>;
+function withCitationButtons(
+  children: React.ReactNode,
+  citations: ChatCitation[],
+  onCitationClick: (citation: ChatCitation, index: number) => void,
+): React.ReactNode {
+  return Children.map(children, (child) =>
+    typeof child === "string"
+      ? parseContentWithCitations(child, citations, onCitationClick)
+      : child,
+  );
 }
 
 export function Message({
@@ -408,7 +388,7 @@ export function Message({
   );
 
   const handleCitationClick = (citation: ChatCitation, index: number) => {
-    onCitationClick?.(citation, index);
+    onCitationClick?.(citation, index, citations);
   };
 
   const citations = message.citations ?? [];
@@ -463,10 +443,10 @@ export function Message({
                     </div>
                   ),
                   td: ({ children }) => (
-                    <td>{stripUnmappedSourceMarkersInTable(String(children), citations)}</td>
+                    <td>{withCitationButtons(stripUnmappedSourceMarkersInTable(String(children), citations), citations, handleCitationClick)}</td>
                   ),
                   th: ({ children }) => (
-                    <th>{stripUnmappedSourceMarkersInTable(String(children), citations)}</th>
+                    <th>{withCitationButtons(stripUnmappedSourceMarkersInTable(String(children), citations), citations, handleCitationClick)}</th>
                   ),
                   pre: ({ children }) => (
                     <pre className="chat-markdown__scroll" tabIndex={0} aria-label="Scrollable code block">
@@ -476,14 +456,16 @@ export function Message({
                   img: ({ alt }) => <span>{alt}</span>,
                   p: ({ children }) => (
                     <p style={{ lineHeight: 1.7, fontSize: "15.5px", marginBlock: 12 }}>
-                      {children}
+                      {withCitationButtons(children, citations, handleCitationClick)}
                     </p>
+                  ),
+                  li: ({ children }) => (
+                    <li>{withCitationButtons(children, citations, handleCitationClick)}</li>
                   ),
                 }}
               >
                 {normalizeMarkdownTables(stripUnmappedSourceMarkers(message.content, citations))}
               </ReactMarkdown>
-              <CitationMarkers content={stripUnmappedSourceMarkers(message.content, citations)} citations={citations} onCitationClick={handleCitationClick} />
             </div>
             {showCitations && (
               <div className="subject-chat__sources" role="list" aria-label="Sources">

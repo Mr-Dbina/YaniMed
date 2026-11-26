@@ -47,6 +47,12 @@ const SYSTEM_PROMPT = [
   'Cite every factual statement with source identifiers like [S1], [S2].',
   'Never invent source identifiers, filenames, page numbers, or passages.',
   'Write each source identifier with plain ASCII square brackets exactly like [S1]; never use other bracket characters or symbols around it.',
+  'Begin with one sentence that answers the question directly.',
+  'After that, include only the supporting detail the answer needs, in short paragraphs.',
+  'Use a table only to compare values across groups, and put a blank line before and after the table.',
+  'Do not open with phrases like "Based on the provided PDF passages", and do not repeat the conclusion.',
+  'Never state an interpretation of a table, such as which percentile a range represents, unless a passage states it.',
+  'Use [S1]-style identifiers only as citations; never write [S#] markers outside that citation format.',
 ].join(' ');
 
 const NO_CITATIONS_LOG_TEXT_LIMIT = 500;

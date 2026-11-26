@@ -15,6 +15,9 @@ interface ChatConversationProps {
   onAsked?: (prompt: string) => void;
   disabledReason?: string;
   subjectId?: string;
+  pdfOpen?: boolean;
+  onPdfOpenChange?: (open: boolean) => void;
+  leftHeader?: React.ReactNode;
 }
 
 function subjectChatError(err: unknown): string {
@@ -31,7 +34,7 @@ function createMessageId(): string {
   return crypto.randomUUID();
 }
 
-export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatConversationProps) {
+export function ChatConversation({ onAsked, disabledReason, subjectId, pdfOpen = false, onPdfOpenChange, leftHeader }: ChatConversationProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const chatIdRef = useRef<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
@@ -46,17 +49,19 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
   const [loadedThreadFor, setLoadedThreadFor] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const [pdfOpen, setPdfOpen] = useState(false);
   const [pdfExpanded, setPdfExpanded] = useState(false);
   const [currentPdfPage, setCurrentPdfPage] = useState(1);
-  const [totalPdfPages, setTotalPdfPages] = useState(1);
   const [pdfZoom, setPdfZoom] = useState(100);
   const [activeCitationIndex, setActiveCitationIndex] = useState(0);
-  const [allCitations, setAllCitations] = useState<ChatCitation[]>([]);
+  const [pdfCitations, setPdfCitations] = useState<ChatCitation[]>([]);
   const [documentId, setDocumentId] = useState<string | null>(null);
   const pdfContainerRef = useRef<PDFViewerRef>(null);
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 860;
   const savedScrollTopRef = useRef<number | null>(null);
+
+  const setPdfOpen = useCallback((open: boolean) => {
+    onPdfOpenChange?.(open);
+  }, [onPdfOpenChange]);
 
   const canSend = draft.trim().length > 0 && !isPending && !disabledReason;
 
@@ -73,55 +78,6 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
     setDraft(event.target.value);
     requestAnimationFrame(adjustTextareaHeight);
   }, [adjustTextareaHeight]);
-
-  const handleKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      if (canSend) {
-        void send(draft);
-      }
-    }
-  }, [canSend, draft]);
-
-  useEffect(() => {
-    if (!subjectId) return undefined;
-    let cancelled = false;
-    void loadChatThread(subjectId)
-      .then((thread) => {
-        if (cancelled || !thread) return;
-        chatIdRef.current = chatIdRef.current ?? thread.chatId;
-        setMessages((current) => (current.length === 0 ? thread.messages : current));
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setLoadedThreadFor(subjectId);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [subjectId]);
-
-  useEffect(() => {
-    if (!subjectId || loadedThreadFor !== subjectId) return;
-    void writeChatThread({ subjectId, chatId: chatIdRef.current, messages }).catch(
-      () => undefined,
-    );
-  }, [subjectId, loadedThreadFor, messages]);
-
-  useEffect(() => {
-    if (!messages.length || typeof window === "undefined" || !window.location.hash) return;
-    const targetId = window.location.hash.replace(/^#/, "");
-    const element = document.getElementById(targetId) || document.getElementById(`msg-${targetId}`);
-    if (element) {
-      followLatest.current = false;
-      element.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, [messages]);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (viewport && followLatest.current) viewport.scrollTop = viewport.scrollHeight;
-  }, [messages, isPending, error]);
 
   const send = async (rawPrompt: string, regenerate?: { id: string; prompt: string; assistantId: string }) => {
     const prompt = rawPrompt.trim();
@@ -172,7 +128,7 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
         : [...current, assistant]);
       
       if (result.citations && result.citations.length > 0) {
-        setAllCitations(result.citations);
+        setPdfCitations(result.citations);
         setActiveCitationIndex(0);
         setPdfOpen(true);
         setPdfExpanded(false);
@@ -199,6 +155,55 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
     }
   };
 
+  const handleKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      if (canSend) {
+        void send(draft);
+      }
+    }
+  }, [canSend, draft, send]);
+
+  useEffect(() => {
+    if (!subjectId) return undefined;
+    let cancelled = false;
+    void loadChatThread(subjectId)
+      .then((thread) => {
+        if (cancelled || !thread) return;
+        chatIdRef.current = chatIdRef.current ?? thread.chatId;
+        setMessages((current) => (current.length === 0 ? thread.messages : current));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setLoadedThreadFor(subjectId);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [subjectId]);
+
+  useEffect(() => {
+    if (!subjectId || loadedThreadFor !== subjectId) return;
+    void writeChatThread({ subjectId, chatId: chatIdRef.current, messages }).catch(
+      () => undefined,
+    );
+  }, [subjectId, loadedThreadFor, messages]);
+
+  useEffect(() => {
+    if (!messages.length || typeof window === "undefined" || !window.location.hash) return;
+    const targetId = window.location.hash.replace(/^#/, "");
+    const element = document.getElementById(targetId) || document.getElementById(`msg-${targetId}`);
+    if (element) {
+      followLatest.current = false;
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport && followLatest.current) viewport.scrollTop = viewport.scrollHeight;
+  }, [messages, isPending, error]);
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSend) return;
@@ -215,11 +220,16 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
     if (question) void send(question.content, { id: question.id, prompt: question.content, assistantId: message.id });
   };
 
-  const handleCitationClick = (citation: ChatCitation, index: number) => {
+  const handleCitationClick = (citation: ChatCitation, index: number, citations?: ChatCitation[]) => {
+    if (citations && citations.length > 0) {
+      setPdfCitations(citations);
+    }
     setActiveCitationIndex(index);
     setCurrentPdfPage(citation.page);
     if (citation.documentId) {
       setDocumentId(citation.documentId);
+    } else {
+      setDocumentId(null);
     }
     if (!pdfOpen) {
       const viewport = viewportRef.current;
@@ -240,6 +250,8 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
     setPdfOpen(false);
     setPdfExpanded(false);
     setActiveCitationIndex(0);
+    setPdfCitations([]);
+    setDocumentId(null);
   };
 
   const handleToggleExpand = () => {
@@ -268,17 +280,7 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
         e.preventDefault();
       }
     }
-    if (pdfOpen && !isMobile) {
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        if (currentPdfPage > 1) setCurrentPdfPage(currentPdfPage - 1);
-      }
-      if (e.key === "ArrowRight") {
-        e.preventDefault();
-        if (currentPdfPage < totalPdfPages) setCurrentPdfPage(currentPdfPage + 1);
-      }
-    }
-  }, [pdfOpen, pdfExpanded, isMobile, currentPdfPage, totalPdfPages]);
+  }, [pdfOpen, pdfExpanded]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDownGlobal as EventListener);
@@ -297,8 +299,6 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
   }, [pdfExpanded]);
 
   const hasThread = messages.length > 0;
-  const latestAssistantMessage = [...messages].reverse().find(m => m.role === "assistant");
-  const citationsToShow = latestAssistantMessage?.citations ?? [];
 
   return (
     <div className={`subject-chat${hasThread ? " subject-chat--thread" : ""} ${pdfOpen ? " pdf-open" : ""} ${pdfExpanded ? " pdf-expanded" : ""}`}>
@@ -308,6 +308,8 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
         </p>
       )}
       <div className="subject-chat__left">
+        {leftHeader && <div className="subject-chat__left-header">{leftHeader}</div>}
+        {!leftHeader && !pdfOpen && <div className="subject-chat__left-header" style={{ padding: 0, border: 0 }} />}
         <div className="subject-chat__viewport" ref={viewportRef} onScroll={(event) => {
         const element = event.currentTarget;
         const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
@@ -336,7 +338,7 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
               onFeedback={(item, rating) => setMessages(current => current.map(entry => entry.id === item.id ? { ...entry, rating: entry.rating === rating ? null : rating } : entry))}
               onRegenerate={regenerateMessage} actionsDisabled={isPending || Boolean(disabledReason)}
               onCitationClick={handleCitationClick}
-              allCitations={allCitations}
+              allCitations={pdfCitations}
               activeCitationIndex={activeCitationIndex}
             />
           ))}
@@ -411,18 +413,16 @@ export function ChatConversation({ onAsked, disabledReason, subjectId }: ChatCon
       {pdfOpen && subjectId && (
         <PDFViewer
           ref={pdfContainerRef}
-          citations={citationsToShow}
+          citations={pdfCitations}
           activeCitationIndex={activeCitationIndex}
           onPageChange={setCurrentPdfPage}
           onClose={handleClosePdf}
           onToggleExpand={handleToggleExpand}
           isExpanded={pdfExpanded}
-          totalPages={totalPdfPages}
           currentPage={currentPdfPage}
           zoom={pdfZoom}
           onZoomChange={setPdfZoom}
           documentId={documentId ?? ''}
-          subjectId={subjectId}
         />
       )}
 
