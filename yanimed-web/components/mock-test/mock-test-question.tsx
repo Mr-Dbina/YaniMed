@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ArrowLeft, ArrowRight, SkipForward, Flag } from "lucide-react";
-import type { MockQuestion } from "@/lib/mock-test-api";
+import type { MockQuestion, QuestionReportReason } from "@/lib/mock-test-api";
 import { ReportQuestionModal } from "@/components/mock-test/report-question-modal";
 
 interface MockTestQuestionProps {
@@ -20,7 +20,7 @@ interface MockTestQuestionProps {
   onRetryAnswer: () => void;
   onSkip: () => void;
   onExit: () => void;
-  onReport: (reason: string, details: string) => Promise<void>;
+  onReport: (reason: QuestionReportReason, details: string) => Promise<void>;
 }
 
 export function MockTestQuestion({
@@ -49,7 +49,7 @@ export function MockTestQuestion({
       ? 0
       : Math.min(100, Math.round((answeredCount / question.total) * 100));
 
-  const handleReportSubmit = async (reason: string, details: string) => {
+  const handleReportSubmit = async (reason: QuestionReportReason, details: string) => {
     setReportBusy(true);
     setReportError(null);
     try {

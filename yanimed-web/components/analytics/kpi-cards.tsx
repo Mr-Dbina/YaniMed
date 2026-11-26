@@ -5,7 +5,7 @@ import type { AnalyticsByTopicItem } from "@/lib/analytics-api";
 interface KpiCardsProps {
   totalAnswered: number;
   correctCount: number;
-  accuracyPercent: number;
+  accuracyPercent: number | null;
   completedTestsCount: number;
   byTopic: AnalyticsByTopicItem[];
 }
@@ -50,9 +50,9 @@ export function KpiCards({ totalAnswered, correctCount, accuracyPercent, complet
         <span className={subtitle}>Overall Accuracy</span>
         <div className="flex items-baseline gap-2">
           <span className="text-[28px] font-medium text-[hsl(var(--foreground))] tabular">
-            {accuracyPercent.toFixed(1)}%
+            {accuracyPercent === null ? "—" : `${accuracyPercent.toFixed(1)}%`}
           </span>
-          <MasteryBadge accuracy={accuracyPercent} />
+          {accuracyPercent !== null && <MasteryBadge accuracy={accuracyPercent} />}
         </div>
       </div>
 

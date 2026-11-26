@@ -92,7 +92,7 @@ export function ReportQuestionModal({
         <div className="report-modal__body">
           <p className="report-modal__description">
             Your report helps improve the question bank. The question will be
-            quarantined immediately so it won't appear in future tests until reviewed.
+            quarantined immediately so it won&apos;t appear in future tests until reviewed.
           </p>
 
           <fieldset className="report-modal__fieldset">

@@ -17,13 +17,14 @@ import {
   skipQuestion,
   startAttempt,
   submitAttempt,
-  reportQuestion,
+  reportAttemptQuestion,
   type ExamResult,
   type ExamReview,
   type GenerationJobSummary,
   type MockAttemptStatus,
   type MockQuestion,
   type NavigatorItem,
+  type QuestionReportReason,
   type SubjectOverview,
 } from "@/lib/mock-test-api";
 import {
@@ -801,9 +802,16 @@ function MockTestSession({
     }
   };
 
-  const handleReport = async (reason: string, details: string) => {
-    if (!question || !attemptId) return;
-    await reportQuestion(question.attemptId, { reason: reason as any, details });
+  const handleReport = async (
+    position: number,
+    reason: QuestionReportReason,
+    details: string,
+  ) => {
+    if (!attemptId) return;
+    await reportAttemptQuestion(attemptId, position, {
+      reason,
+      details: details || undefined,
+    });
   };
 
   const saveEdit = async (position: number, choiceId: string, key: string) => {
@@ -976,7 +984,7 @@ function MockTestSession({
         onRetryAnswer={handleRetryAnswer}
         onSkip={() => void handleSkip()}
         onExit={handleExit}
-        onReport={handleReport}
+        onReport={(reason, details) => handleReport(question.position, reason, details)}
       />
     );
   } else if (phase === "review") {

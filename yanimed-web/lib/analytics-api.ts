@@ -7,25 +7,40 @@ export interface AnalyticsBySubjectItem {
   subject: string;
   totalAnswered: number;
   correctCount: number;
-  accuracyPercent: number;
+  accuracyPercent: number | null;
 }
 
 export interface AnalyticsByTopicItem {
+  subjectId: string;
   subject: string;
+  topicKey: string;
   topic: string;
   totalAnswered: number;
   correctCount: number;
-  accuracyPercent: number;
+  accuracyPercent: number | null;
+}
+
+export interface AnalyticsAvailableTopicItem {
+  topicKey: string;
+  topic: string;
+}
+
+export interface AnalyticsOverall {
+  totalAnswered: number;
+  correctCount: number;
+  accuracyPercent: number | null;
+  completedTestsCount: number;
 }
 
 export interface AnalyticsSummaryResponse {
-  totalAnswered: number;
-  correctCount: number;
-  accuracyPercent: number;
-  completedTestsCount: number;
+  generatedAt: string;
+  range: AnalyticsRange;
+  subjectId: string | null;
+  topic: string | null;
+  overall: AnalyticsOverall;
   bySubject: AnalyticsBySubjectItem[];
   byTopic: AnalyticsByTopicItem[];
-  availableTopics: string[];
+  availableTopics: AnalyticsAvailableTopicItem[];
 }
 
 export class AnalyticsApiError extends Error {
@@ -39,6 +54,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isAnalyticsRange(value: unknown): value is AnalyticsRange {
+  return value === "7" || value === "30" || value === "90" || value === "all";
+}
+
 function isAnalyticsBySubjectItem(value: unknown): value is AnalyticsBySubjectItem {
   if (!isRecord(value)) return false;
   return (
@@ -46,34 +69,52 @@ function isAnalyticsBySubjectItem(value: unknown): value is AnalyticsBySubjectIt
     typeof value.subject === "string" &&
     typeof value.totalAnswered === "number" &&
     typeof value.correctCount === "number" &&
-    typeof value.accuracyPercent === "number"
+    isNullableNumber(value.accuracyPercent)
   );
 }
 
 function isAnalyticsByTopicItem(value: unknown): value is AnalyticsByTopicItem {
   if (!isRecord(value)) return false;
   return (
+    typeof value.subjectId === "string" &&
     typeof value.subject === "string" &&
+    typeof value.topicKey === "string" &&
     typeof value.topic === "string" &&
     typeof value.totalAnswered === "number" &&
     typeof value.correctCount === "number" &&
-    typeof value.accuracyPercent === "number"
+    isNullableNumber(value.accuracyPercent)
   );
 }
 
-function isAnalyticsSummaryResponse(value: unknown): value is AnalyticsSummaryResponse {
+function isAnalyticsAvailableTopicItem(value: unknown): value is AnalyticsAvailableTopicItem {
+  if (!isRecord(value)) return false;
+  return typeof value.topicKey === "string" && typeof value.topic === "string";
+}
+
+function isAnalyticsOverall(value: unknown): value is AnalyticsOverall {
   if (!isRecord(value)) return false;
   return (
     typeof value.totalAnswered === "number" &&
     typeof value.correctCount === "number" &&
-    typeof value.accuracyPercent === "number" &&
-    typeof value.completedTestsCount === "number" &&
+    isNullableNumber(value.accuracyPercent) &&
+    typeof value.completedTestsCount === "number"
+  );
+}
+
+export function isAnalyticsSummaryResponse(value: unknown): value is AnalyticsSummaryResponse {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.generatedAt === "string" &&
+    isAnalyticsRange(value.range) &&
+    (value.subjectId === null || typeof value.subjectId === "string") &&
+    (value.topic === null || typeof value.topic === "string") &&
+    isAnalyticsOverall(value.overall) &&
     Array.isArray(value.bySubject) &&
     value.bySubject.every(isAnalyticsBySubjectItem) &&
     Array.isArray(value.byTopic) &&
     value.byTopic.every(isAnalyticsByTopicItem) &&
     Array.isArray(value.availableTopics) &&
-    value.availableTopics.every((item): item is string => typeof item === "string")
+    value.availableTopics.every(isAnalyticsAvailableTopicItem)
   );
 }
 

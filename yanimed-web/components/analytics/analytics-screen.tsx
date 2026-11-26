@@ -8,15 +8,11 @@ import { TopicBreakdown } from "@/components/analytics/topic-breakdown";
 import {
   AnalyticsApiError,
   getAnalyticsSummary,
-  type AnalyticsBySubjectItem,
-  type AnalyticsByTopicItem,
   type AnalyticsRange,
   type AnalyticsSummaryResponse,
 } from "@/lib/analytics-api";
-import type { Subject } from "@/lib/types";
 
 const panel = "rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4";
-const cardTitle = "m-0 text-[15px] font-semibold text-[hsl(var(--foreground))]";
 const subtitle = "text-[13px] text-[hsl(var(--muted-foreground))]";
 
 export function AnalyticsScreen() {
@@ -76,8 +72,6 @@ export function AnalyticsScreen() {
     setRange(newRange);
   };
 
-  const empty = data !== null && data.totalAnswered === 0;
-
   return (
     <div className="mx-auto flex w-full max-w-[920px] flex-col gap-4">
       <header>
@@ -119,14 +113,14 @@ export function AnalyticsScreen() {
       {data && (
         <>
           <KpiCards
-            totalAnswered={data.totalAnswered}
-            correctCount={data.correctCount}
-            accuracyPercent={data.accuracyPercent}
-            completedTestsCount={data.completedTestsCount}
+            totalAnswered={data.overall.totalAnswered}
+            correctCount={data.overall.correctCount}
+            accuracyPercent={data.overall.accuracyPercent}
+            completedTestsCount={data.overall.completedTestsCount}
             byTopic={data.byTopic}
           />
 
-          <TopicBreakdown byTopic={data.byTopic} totalAnswered={data.totalAnswered} />
+          <TopicBreakdown byTopic={data.byTopic} totalAnswered={data.overall.totalAnswered} />
         </>
       )}
     </div>

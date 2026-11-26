@@ -484,6 +484,20 @@ export async function reportQuestion(
   });
 }
 
+export async function reportAttemptQuestion(
+  attemptId: string,
+  position: number,
+  input: ReportQuestionInput,
+): Promise<QuestionReport> {
+  return request<QuestionReport>(
+    `${attemptPath(attemptId)}/questions/${encodeURIComponent(String(position))}/report`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export async function getQuarantinedQuestions(): Promise<QuarantinedQuestion[]> {
   return request<QuarantinedQuestion[]>(`${questionsPath()}/quarantined`);
 }

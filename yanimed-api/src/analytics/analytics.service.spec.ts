@@ -238,4 +238,85 @@ describe('AnalyticsService', () => {
       expect(params).not.toContain(90);
     });
   });
+
+  it('returns the nested AnalyticsSummaryResponse shape expected by the web client', async () => {
+    mockDefault();
+
+    const result: AnalyticsSummaryResponse = await service.getSummary({
+      subjectId: SUBJECT_1,
+      topic: 'cardiology-basics',
+      range: '30',
+    });
+
+    expect(result).toEqual({
+      generatedAt: expect.any(String),
+      range: '30',
+      subjectId: SUBJECT_1,
+      topic: 'cardiology-basics',
+      overall: {
+        totalAnswered: 50,
+        correctCount: 40,
+        accuracyPercent: 80,
+        completedTestsCount: 2,
+      },
+      bySubject: [
+        {
+          subjectId: SUBJECT_1,
+          subject: 'Cardiology',
+          totalAnswered: 30,
+          correctCount: 25,
+          accuracyPercent: 83,
+        },
+        {
+          subjectId: SUBJECT_2,
+          subject: 'Neurology',
+          totalAnswered: 20,
+          correctCount: 15,
+          accuracyPercent: 75,
+        },
+      ],
+      byTopic: [
+        {
+          subjectId: SUBJECT_2,
+          subject: 'Neurology',
+          topicKey: 'neurology-basics',
+          topic: 'Neurology Basics',
+          totalAnswered: 15,
+          correctCount: 10,
+          accuracyPercent: 67,
+        },
+        {
+          subjectId: SUBJECT_1,
+          subject: 'Cardiology',
+          topicKey: 'cardiology-advanced',
+          topic: 'Advanced Cardiology',
+          totalAnswered: 10,
+          correctCount: 7,
+          accuracyPercent: 70,
+        },
+        {
+          subjectId: SUBJECT_1,
+          subject: 'Cardiology',
+          topicKey: 'cardiology-basics',
+          topic: 'Cardiology Basics',
+          totalAnswered: 20,
+          correctCount: 18,
+          accuracyPercent: 90,
+        },
+        {
+          subjectId: SUBJECT_2,
+          subject: 'Neurology',
+          topicKey: 'neurology-advanced',
+          topic: 'Advanced Neurology',
+          totalAnswered: 5,
+          correctCount: 5,
+          accuracyPercent: 100,
+        },
+      ],
+      availableTopics: [
+        { topicKey: 'cardiology-basics', topic: 'Cardiology Basics' },
+        { topicKey: 'cardiology-advanced', topic: 'Advanced Cardiology' },
+      ],
+    });
+  });
 });

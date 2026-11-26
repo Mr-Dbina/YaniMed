@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsInt,
+  IsOptional,
   IsString,
   IsUUID,
   Max,
@@ -308,6 +309,7 @@ export class ReportQuestionBody {
   reason!: QuestionReportReason;
 
   @ApiProperty({ required: false, maxLength: 2000 })
+  @IsOptional()
   @IsString()
   @MaxLength(2000)
   @MinLength(1)

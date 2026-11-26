@@ -9,8 +9,8 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['**/*.spec.ts'],
-    // M3 database specs need .env.test and its guard, so they run only through
-    // the dedicated vitest.config.m3.ts / npm run test:m3.
-    exclude: [...configDefaults.exclude, 'test/m3/**', 'test/m4/**', 'test/m5/**'],
+    // M3-M6 database specs need .env.test and its guard, so they run only through
+    // their dedicated vitest.config.m*.ts / npm run test:m* scripts.
+    exclude: [...configDefaults.exclude, 'test/m3/**', 'test/m4/**', 'test/m5/**', 'test/m6/**'],
   },
 });

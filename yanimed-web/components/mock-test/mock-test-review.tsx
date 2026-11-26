@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Flag } from "lucide-react";
-import type { NavigatorItem } from "@/lib/mock-test-api";
+import type { NavigatorItem, QuestionReportReason } from "@/lib/mock-test-api";
 import { ReportQuestionModal } from "@/components/mock-test/report-question-modal";
 
 interface PendingEdit {
@@ -24,7 +24,7 @@ interface MockTestReviewProps {
   onRetryEdit: () => void;
   onRequestSubmit: () => void;
   onExit: () => void;
-  onReport: (reason: string, details: string) => Promise<void>;
+  onReport: (position: number, reason: QuestionReportReason, details: string) => Promise<void>;
 }
 
 export function MockTestReview({
@@ -48,11 +48,17 @@ export function MockTestReview({
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
 
-  const handleReportSubmit = async (reason: string, details: string) => {
+  const ordered = items ? [...items].sort((a, b) => a.position - b.position) : [];
+  const current =
+    ordered.find((item) => item.position === (currentPosition ?? ordered[0]?.position)) ??
+    null;
+
+  const handleReportSubmit = async (reason: QuestionReportReason, details: string) => {
+    if (!current) return;
     setReportBusy(true);
     setReportError(null);
     try {
-      await onReport(reason, details);
+      await onReport(current.position, reason, details);
       setReportOpen(false);
     } catch (err) {
       setReportError(err instanceof Error ? err.message : "Failed to submit report");
@@ -60,11 +66,6 @@ export function MockTestReview({
       setReportBusy(false);
     }
   };
-
-  const ordered = items ? [...items].sort((a, b) => a.position - b.position) : [];
-  const current =
-    ordered.find((item) => item.position === (currentPosition ?? ordered[0]?.position)) ??
-    null;
 
   if (loading) {
     return (

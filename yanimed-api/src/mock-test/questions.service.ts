@@ -78,32 +78,75 @@ export class QuestionsService {
         attemptId = latestAttempt.id;
       }
 
-      const existingReport = await tx.questionReport.findUnique({
-        where: { attemptId_questionId: { attemptId, questionId } },
-      });
-      if (existingReport) {
-        throw new MockTestError('QUESTION_NOT_FOUND', {
-          details: { alreadyReported: 1 },
-        });
-      }
-
-      const report = await tx.questionReport.create({
-        data: {
-          attemptId,
-          questionId,
-          reason,
-          details: details ?? null,
-          status: 'OPEN',
-        },
-      });
-
-      await tx.mockQuestion.update({
-        where: { id: questionId },
-        data: { status: 'QUARANTINED' },
-      });
-
-      return this.toReportDto(report);
+      return this.createReportAndQuarantine(tx, attemptId, questionId, reason, details);
     });
+  }
+
+  /**
+   * Resolves (attemptId, position) to the real questionId on the server so
+   * exam-safe DTOs never need to expose questionId during an active attempt.
+   */
+  async reportAttemptQuestion(
+    attemptId: string,
+    position: number,
+    reason: QuestionReportReason,
+    details: string | undefined,
+  ): Promise<QuestionReportDto> {
+    return this.prisma.$transaction(async (tx) => {
+      const attempt = await tx.mockAttempt.findUnique({
+        where: { id: attemptId },
+        select: { id: true },
+      });
+      if (!attempt) throw new MockTestError('ATTEMPT_NOT_FOUND');
+
+      const attemptQuestion = await tx.attemptQuestion.findUnique({
+        where: { attemptId_position: { attemptId, position } },
+        select: { questionId: true },
+      });
+      if (!attemptQuestion) throw new MockTestError('QUESTION_NOT_FOUND');
+
+      return this.createReportAndQuarantine(
+        tx,
+        attemptId,
+        attemptQuestion.questionId,
+        reason,
+        details,
+      );
+    });
+  }
+
+  private async createReportAndQuarantine(
+    tx: Prisma.TransactionClient,
+    attemptId: string,
+    questionId: string,
+    reason: QuestionReportReason,
+    details: string | undefined,
+  ): Promise<QuestionReportDto> {
+    const existingReport = await tx.questionReport.findUnique({
+      where: { attemptId_questionId: { attemptId, questionId } },
+    });
+    if (existingReport) {
+      throw new MockTestError('QUESTION_NOT_FOUND', {
+        details: { alreadyReported: 1 },
+      });
+    }
+
+    const report = await tx.questionReport.create({
+      data: {
+        attemptId,
+        questionId,
+        reason,
+        details: details ?? null,
+        status: 'OPEN',
+      },
+    });
+
+    await tx.mockQuestion.update({
+      where: { id: questionId },
+      data: { status: 'QUARANTINED' },
+    });
+
+    return this.toReportDto(report);
   }
 
   /**

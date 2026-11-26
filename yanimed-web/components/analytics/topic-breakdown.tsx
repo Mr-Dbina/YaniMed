@@ -64,14 +64,14 @@ function ProgressBar({ accuracy }: { accuracy: number }) {
   );
 }
 
-function ActionButtons({ subject, topic }: { subject: string; topic: string }) {
-  const encodedSubject = encodeURIComponent(subject);
+function ActionButtons({ subjectId, topic }: { subjectId: string; topic: string }) {
+  const encodedSubjectId = encodeURIComponent(subjectId);
   const encodedTopic = encodeURIComponent(topic);
 
   return (
     <div className="flex items-center gap-2">
       <Link
-        href={`/mock-test?subjectId=${encodedSubject}`}
+        href={`/mock-test?subjectId=${encodedSubjectId}`}
         className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-1.5 text-[12px] font-medium text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))]"
         title={`Start Mock Test for ${topic}`}
       >
@@ -79,7 +79,7 @@ function ActionButtons({ subject, topic }: { subject: string; topic: string }) {
         <span>Mock Test</span>
       </Link>
       <Link
-        href={`/subjects/${encodedSubject}?topic=${encodedTopic}`}
+        href={`/subjects/${encodedSubjectId}?topic=${encodedTopic}`}
         className="inline-flex items-center gap-1.5 rounded-lg bg-[hsl(var(--primary))] px-3 py-1.5 text-[12px] font-semibold text-[hsl(var(--primary-foreground))] hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))]"
         title={`Practice ${topic}`}
       >
@@ -125,8 +125,10 @@ export function TopicBreakdown({ byTopic, totalAnswered }: TopicBreakdownProps) 
             </tr>
           </thead>
           <tbody className="divide-y divide-[hsl(var(--border))]">
-            {byTopic.map((item) => (
-              <tr key={`${item.subject}-${item.topic}`} className="hover:bg-[hsl(var(--muted))/50]">
+            {byTopic.map((item) => {
+              const accuracy = item.accuracyPercent ?? 0;
+              return (
+              <tr key={`${item.subjectId}-${item.topicKey}`} className="hover:bg-[hsl(var(--muted))/50]">
                 <td className="p-3 text-[13px] font-medium text-[hsl(var(--foreground))]">
                   {item.topic}
                 </td>
@@ -138,20 +140,21 @@ export function TopicBreakdown({ byTopic, totalAnswered }: TopicBreakdownProps) 
                 </td>
                 <td className="p-3">
                   <div className="flex items-center gap-3">
-                    <ProgressBar accuracy={item.accuracyPercent} />
+                    <ProgressBar accuracy={accuracy} />
                     <span className="text-[13px] font-medium text-[hsl(var(--foreground))] tabular w-[50px] text-right">
-                      {item.accuracyPercent.toFixed(1)}%
+                      {item.accuracyPercent === null ? "—" : `${item.accuracyPercent.toFixed(1)}%`}
                     </span>
                   </div>
                 </td>
                 <td className="p-3 text-center">
-                  <MasteryBadge accuracy={item.accuracyPercent} />
+                  <MasteryBadge accuracy={accuracy} />
                 </td>
                 <td className="p-3 text-right">
-                  <ActionButtons subject={item.subject} topic={item.topic} />
+                  <ActionButtons subjectId={item.subjectId} topic={item.topic} />
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

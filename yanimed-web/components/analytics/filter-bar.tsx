@@ -2,12 +2,12 @@
 
 import { ChevronDown } from "lucide-react";
 import type { Subject } from "@/lib/types";
-import type { AnalyticsBySubjectItem } from "@/lib/analytics-api";
+import type { AnalyticsAvailableTopicItem, AnalyticsBySubjectItem } from "@/lib/analytics-api";
 
 interface FilterBarProps {
   subjects: Subject[];
   bySubject: AnalyticsBySubjectItem[];
-  availableTopics: string[];
+  availableTopics: AnalyticsAvailableTopicItem[];
   selectedSubjectId: string | null;
   selectedTopic: string | null;
   selectedRange: "7" | "30" | "90" | "all";
@@ -39,9 +39,20 @@ export function FilterBar({
   onTopicChange,
   onRangeChange,
 }: FilterBarProps) {
+  const subjectMap = new Map<string, string>();
+  for (const subject of subjects) {
+    if (subject.backendSubjectId) {
+      subjectMap.set(subject.backendSubjectId, subject.name);
+    }
+  }
+  for (const s of bySubject) {
+    if (!subjectMap.has(s.subjectId)) {
+      subjectMap.set(s.subjectId, s.subject);
+    }
+  }
   const subjectOptions = [
     { id: null, name: "All Subjects" },
-    ...bySubject.map((s) => ({ id: s.subjectId, name: s.subject })),
+    ...Array.from(subjectMap.entries()).map(([id, name]) => ({ id, name })),
   ];
 
   return (
@@ -72,8 +83,8 @@ export function FilterBar({
         >
           <option value="">All Topics</option>
           {availableTopics.map((topic) => (
-            <option key={topic} value={topic}>
-              {topic}
+            <option key={topic.topicKey} value={topic.topicKey}>
+              {topic.topic}
             </option>
           ))}
         </select>
